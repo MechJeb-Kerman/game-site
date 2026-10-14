@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>记忆翻牌 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;padding:12px;
+    background:radial-gradient(circle at 50% 0%,#241a4d,#080a18 70%);color:#ece9ff;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;max-width:560px;height:100%;max-height:780px;display:flex;flex-direction:column;gap:10px;margin:auto}
+  .hud{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:#b9b2f0}
+  .stat{background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.35);
+    padding:6px 12px;border-radius:10px}
+  .stat b{color:#fff;margin-left:3px;font-size:15px}
+  .levels{margin-left:auto;display:flex;gap:6px}
+  .levels button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
+    color:#cfc9ff;border-radius:9px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
+  .levels button.on{background:linear-gradient(135deg,#8b5cf6,#6366f1);border-color:transparent;color:#fff;font-weight:700}
+  .board{position:relative;display:grid;gap:8px;width:100%;flex:1 1 auto;min-height:0}
+  .card{position:relative;height:100%;min-height:0;perspective:800px;cursor:pointer}
+  .inner{position:relative;width:100%;height:100%;transition:transform .34s cubic-bezier(.4,.2,.2,1);
+    transform-style:preserve-3d}
+  .card.flip .inner{transform:rotateY(180deg)}
+  .face{position:absolute;inset:0;border-radius:12px;display:flex;align-items:center;
+    justify-content:center;backface-visibility:hidden;-webkit-backface-visibility:hidden;
+    font-size:min(9vw,40px)}
+  .back{background:linear-gradient(135deg,#4c3fa8,#2b2470);border:1px solid rgba(160,140,255,.45);
+    box-shadow:0 4px 14px rgba(0,0,0,.35) inset;color:rgba(255,255,255,.35);font-size:min(7vw,30px)}
+  .front{background:linear-gradient(135deg,#f8f7ff,#ddd8ff);transform:rotateY(180deg);
+    border:1px solid #fff}
+  .card.done .front{background:linear-gradient(135deg,#a7f3d0,#6ee7b7);border-color:#34d399}
+  .card.done{animation:okpop .4s ease}
+  @keyframes okpop{0%{transform:scale(1)}45%{transform:scale(1.09)}100%{transform:scale(1)}}
+  .card.wrong .front{background:linear-gradient(135deg,#fecaca,#fca5a5);border-color:#f87171}
+  .overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
+    justify-content:center;gap:12px;background:rgba(10,10,26,.9);border-radius:14px;
+    text-align:center;padding:18px;z-index:9}
+  .overlay.on{display:flex}
+  .overlay h2{margin:0;font-size:26px}
+  .overlay p{margin:0;color:#b9b2f0;font-size:14px;line-height:1.8}
+  .overlay b{color:#fff;font-size:18px}
+  .btn{background:linear-gradient(135deg,#8b5cf6,#6366f1);border:0;color:#fff;font-weight:700;
+    padding:11px 26px;border-radius:11px;cursor:pointer;font-size:15px;font-family:inherit}
+  .btn:active{transform:scale(.97)}
+  .tip{font-size:12.5px;color:#8b86bd;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div class="stat">步数<b id="moves">0</b></div>
+    <div class="stat">用时<b id="time">0:00</b></div>
+    <div class="stat">配对<b id="pairs">0/8</b></div>
+    <div class="levels">
+      <button data-lv="6" type="button">简单</button>
+      <button data-lv="8" class="on" type="button">普通</button>
+      <button data-lv="12" type="button">困难</button>
+    </div>
+  </div>
+  <div class="board" id="board">
+    <div class="overlay" id="ov">
+      <h2>🎉 全部配对成功</h2>
+      <p id="ovText"></p>
+      <button class="btn" id="again" type="button">再来一局</button>
+    </div>
+  </div>
+  <p class="tip">点击卡片翻开，找出所有相同图案</p>
+</div>
+<script>
+(function () {
+  'use strict';
+  var POOL = ['🍎','🍌','🍇','🍓','🍑','🍒','🍍','🥝','🍉','🍊','🥥','🍋'];
+  var board = document.getElementById('board');
+  var movesEl = document.getElementById('moves');
+  var timeEl = document.getElementById('time');
+  var pairsEl = document.getElementById('pairs');
+  var ov = document.getElementById('ov');
+  var ovText = document.getElementById('ovText');
+  var again = document.getElementById('again');
+
+  var cols, pairs, first, lock, moves, matched, started, timer, t0, elapsed;
+
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+  function layoutFor(n) {
+    if (n === 6) return { cols: 4, rows: 3 };
+    if (n === 12) return { cols: 6, rows: 4 };
+    return { cols: 4, rows: 4 };
+  }
+
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function newGame(n) {
+    pairs = n;
+    var conf = layoutFor(n);
+    cols = conf.cols;
+    board.style.gridTemplateColumns = 'repeat(' + conf.cols + ',1fr)';
+    board.style.gridTemplateRows = 'repeat(' + conf.rows + ',1fr)';
+    board.querySelectorAll('.card').forEach(function (c) { c.remove(); });
+    ov.classList.remove('on');
+
+    first = null; lock = false; moves = 0; matched = 0; started = false; elapsed = 0;
+    clearInterval(timer);
+    movesEl.textContent = '0'; timeEl.textContent = '0:00';
+    pairsEl.textContent = '0/' + n;
+
+    var picks = POOL.slice(0, n).concat(POOL.slice(0, n));
+    for (var i = picks.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = picks[i]; picks[i] = picks[j]; picks[j] = tmp;
+    }
+
+    picks.forEach(function (sym) {
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.sym = sym;
+      card.innerHTML = '<div class="inner">' +
+        '<div class="face back">?</div>' +
+        '<div class="face front">' + sym + '</div></div>';
+      board.appendChild(card);
+    });
+  }
+
+  function startTimer() {
+    started = true;
+    t0 = Date.now();
+    timer = setInterval(function () {
+      elapsed = Math.floor((Date.now() - t0) / 1000);
+      timeEl.textContent = fmt(elapsed);
+    }, 250);
+  }
+
+  board.addEventListener('click', function (e) {
+    var card = e.target.closest('.card');
+    if (!card || lock || card.classList.contains('flip') || card.classList.contains('done')) return;
+    if (!started) startTimer();
+
+    card.classList.add('flip');
+    if (!first) { first = card; return; }
+
+    moves++;
+    movesEl.textContent = moves;
+
+    if (first.dataset.sym === card.dataset.sym) {
+      first.classList.add('done'); card.classList.add('done');
+      first = null;
+      matched++;
+      pairsEl.textContent = matched + '/' + pairs;
+      if (matched === pairs) win();
+    } else {
+      lock = true;
+      var a = first, b = card;
+      a.classList.add('wrong'); b.classList.add('wrong');
+      first = null;
+      setTimeout(function () {
+        a.classList.remove('flip', 'wrong');
+        b.classList.remove('flip', 'wrong');
+        lock = false;
+      }, 720);
+    }
+  });
+
+  function win() {
+    clearInterval(timer);
+    var key = 'memory.best.' + pairs;
+    var prev = parseInt(store(key), 10);
+    var isBest = isNaN(prev) || moves < prev;
+    if (isBest) store(key, String(moves));
+    var stars = moves <= pairs * 1.6 ? '⭐⭐⭐' : moves <= pairs * 2.2 ? '⭐⭐' : '⭐';
+    ovText.innerHTML = '难度 ' + pairs + ' 对 · 步数 <b>' + moves + '</b> · 用时 <b>' +
+      fmt(elapsed) + '</b><br>' + stars + (isBest ? '<br>🏆 新纪录！' : '<br>历史最佳 ' + prev + ' 步');
+    ov.classList.add('on');
+  }
+
+  document.querySelectorAll('.levels button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.levels button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      newGame(Number(b.dataset.lv));
+    });
+  });
+
+  again.addEventListener('click', function () { newGame(pairs); });
+  newGame(8);
+})();
+</script>
+</body>
+</html>

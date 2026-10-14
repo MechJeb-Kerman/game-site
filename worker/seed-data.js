@@ -1,0 +1,158 @@
+/** D1 版种子数据：由 src/seed.js 导出生成，两边内容必须保持一致。 */
+
+export const CATEGORIES = [
+  {
+    "slug": "puzzle",
+    "name": "益智",
+    "icon": "🧩",
+    "sort": 1
+  },
+  {
+    "slug": "action",
+    "name": "动作",
+    "icon": "⚡",
+    "sort": 2
+  },
+  {
+    "slug": "casual",
+    "name": "休闲",
+    "icon": "🍀",
+    "sort": 3
+  },
+  {
+    "slug": "board",
+    "name": "棋牌",
+    "icon": "♟️",
+    "sort": 4
+  }
+];
+
+/** 游戏元数据：game_url 指向 games/ 下自包含的 HTML5 游戏 */
+export const GAMES = [
+  {
+    "slug": "2048",
+    "title": "2048",
+    "subtitle": "合并数字，冲击 2048",
+    "description": "用方向键或滑动把相同数字合并，每合并一次数字翻倍。目标是凑出 2048，越往后棋盘越紧张，考验你的规划能力。",
+    "category": "puzzle",
+    "game_url": "/games/2048/index.html",
+    "width": 600,
+    "height": 700,
+    "orientation": "portrait",
+    "tags": [
+      "数字",
+      "合成",
+      "经典",
+      "单机"
+    ],
+    "emoji": "🔢",
+    "accent": "#f59e0b",
+    "accent2": "#ef4444",
+    "license": "自研"
+  },
+  {
+    "slug": "snake",
+    "title": "贪吃蛇",
+    "subtitle": "越吃越长，别咬到自己",
+    "description": "经典诺基亚贪吃蛇。吃下果实身体变长、速度逐渐加快，撞墙或咬到自己即结束。支持方向键与触屏滑动。",
+    "category": "action",
+    "game_url": "/games/snake/index.html",
+    "width": 640,
+    "height": 640,
+    "orientation": "square",
+    "tags": [
+      "经典",
+      "反应",
+      "怀旧",
+      "单机"
+    ],
+    "emoji": "🐍",
+    "accent": "#22c55e",
+    "accent2": "#15803d",
+    "license": "自研"
+  },
+  {
+    "slug": "memory",
+    "title": "记忆翻牌",
+    "subtitle": "找出所有相同的图案",
+    "description": "翻开卡片记住图案位置，用最少的步数配对全部卡片。可选难度，轻松又动脑。",
+    "category": "puzzle",
+    "game_url": "/games/memory/index.html",
+    "width": 640,
+    "height": 700,
+    "orientation": "square",
+    "tags": [
+      "记忆",
+      "益智",
+      "休闲",
+      "单机"
+    ],
+    "emoji": "🃏",
+    "accent": "#8b5cf6",
+    "accent2": "#6366f1",
+    "license": "自研"
+  },
+  {
+    "slug": "whack",
+    "title": "打地鼠",
+    "subtitle": "30 秒极限手速挑战",
+    "description": "地鼠随机冒头，砸中得分，砸空扣时间。30 秒内比拼谁的反应更快，还会出现金色地鼠翻倍加分。",
+    "category": "action",
+    "game_url": "/games/whack/index.html",
+    "width": 640,
+    "height": 640,
+    "orientation": "square",
+    "tags": [
+      "反应",
+      "手速",
+      "休闲",
+      "单机"
+    ],
+    "emoji": "🔨",
+    "accent": "#f97316",
+    "accent2": "#dc2626",
+    "license": "自研"
+  },
+  {
+    "slug": "tictactoe",
+    "title": "井字棋",
+    "subtitle": "挑战三种 AI 难度",
+    "description": "经典三连棋。可选简单、普通、无敌三档 AI，无敌档使用极小化极大算法，你最多只能逼平它。",
+    "category": "board",
+    "game_url": "/games/tictactoe/index.html",
+    "width": 600,
+    "height": 700,
+    "orientation": "portrait",
+    "tags": [
+      "对战",
+      "AI",
+      "经典",
+      "单机"
+    ],
+    "emoji": "⭕",
+    "accent": "#06b6d4",
+    "accent2": "#0ea5e9",
+    "license": "自研"
+  },
+  {
+    "slug": "tetris",
+    "title": "俄罗斯方块",
+    "subtitle": "消行不停，速度不停",
+    "description": "七种方块随机落下，填满整行即可消除。等级越高下落越快，带下一个方块预览与硬降功能。",
+    "category": "casual",
+    "game_url": "/games/tetris/index.html",
+    "width": 480,
+    "height": 720,
+    "orientation": "portrait",
+    "tags": [
+      "经典",
+      "消除",
+      "怀旧",
+      "单机"
+    ],
+    "emoji": "🧱",
+    "accent": "#ef4444",
+    "accent2": "#f59e0b",
+    "license": "自研"
+  }
+];

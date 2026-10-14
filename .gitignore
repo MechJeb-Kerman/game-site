@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+
+# 本地数据库：里面有账号、会话、评论，别提交
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/worker*.db*
+
+# 构建产物：Cloudflare 的构建命令会重新生成，不用提交
+# （如果按 DEPLOY-GITHUB-PAGES.md 的路线上传产物，用 git add -f dist 强制添加）
+dist/
+dist-cf/
+cloudflare-pages.zip
+
+# wrangler 的本地状态与本地密钥文件（.dev.vars 里通常放着管理员口令，绝不能提交）
+.wrangler/
+.dev.vars
+
+# 系统垃圾
+.DS_Store
+Thumbs.db

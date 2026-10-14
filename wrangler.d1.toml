@@ -1,0 +1,37 @@
+# Cloudflare Workers + D1 配置：完整版（账号 / 评分 / 评论 / 收藏 / 投稿 / 后台）
+#
+#   npx wrangler d1 create game-site-db                      # 建库，把返回值里的 database_id 填到下面
+#   npx wrangler d1 migrations apply game-site-db --remote    # 建表（本地预览用 --local）
+#   node tools/build-pages.mjs --cf --base=/ --origin=https://<你的域名> --out=dist-cf
+#   npx wrangler deploy --config wrangler.d1.toml
+#
+# 只想看静态站效果、不碰 D1：npx wrangler deploy（用根目录 wrangler.toml + worker/index.js）。
+# 两个 Worker 用不同 name，可以同时存在、互不覆盖。
+
+name = "game-site-d1"        # 想直接替换掉静态版那个 Worker 就改成 "game-site"
+main = "worker/app.js"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist-cf"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+not_found_handling = "404-page"
+# 必须让请求先进 Worker：/games 这种路径既可能是动态页面，又存在同名的静态文件
+# （dist-cf/games.html）。若这一行不被识别，删掉它站点仍能打开，但会退化成纯静态站，
+# 账号、评分、评论、后台全部失效。
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"               # worker/app.js 里读 env.DB，别改这个值
+database_name = "game-site-db"
+database_id = "00000000-0000-0000-0000-000000000000"   # ← 换成 wrangler d1 create 返回的 id
+migrations_dir = "migrations"
+
+[vars]
+# 可选：绑定自定义域名后写上，用于 canonical / og / JSON-LD 里的绝对地址。
+# 不写就用请求本身带的域名，一般也对。
+# SITE_ORIGIN = "https://games.example.com"
+
+[observability]
+enabled = true

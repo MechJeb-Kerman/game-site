@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>2048 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;padding:12px;background:#faf8ef;
+    color:#776e65;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;max-width:440px;display:flex;flex-direction:column;gap:10px}
+  .head{display:flex;align-items:center;gap:10px}
+  .title{font-size:30px;font-weight:800;margin:0;letter-spacing:1px}
+  .scores{margin-left:auto;display:flex;gap:8px}
+  .score{background:#bbada0;padding:5px 14px;border-radius:6px;text-align:center;min-width:80px}
+  .score span{display:block;font-size:11px;letter-spacing:1px;color:#eee4da}
+  .score b{font-size:19px;color:#fff}
+  .board{position:relative;width:100%;aspect-ratio:1;background:#bbada0;border-radius:10px;
+    padding:var(--gap);touch-action:none;--gap:12px}
+  .cells{position:absolute;inset:var(--gap);display:grid;gap:var(--gap);
+    grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(4,1fr)}
+  .cell{background:rgba(238,228,218,.35);border-radius:6px}
+  .tiles{position:absolute;inset:var(--gap)}
+  .tile{position:absolute;width:calc((100% - 3*var(--gap))/4);height:calc((100% - 3*var(--gap))/4);
+    transition:transform .12s ease-in-out;will-change:transform}
+  .ti{width:100%;height:100%;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:min(8.5vw,32px);background:#eee4da;color:#776e65;
+    transition:background .1s linear}
+  .v2{background:#eee4da}.v4{background:#ede0c8}
+  .v8{background:#f2b179;color:#f9f6f2}.v16{background:#f59563;color:#f9f6f2}
+  .v32{background:#f67c5f;color:#f9f6f2}.v64{background:#f65e3b;color:#f9f6f2}
+  .v128{background:#edcf72;color:#f9f6f2;font-size:min(7vw,28px)}
+  .v256{background:#edcc61;color:#f9f6f2;font-size:min(7vw,28px)}
+  .v512{background:#edc850;color:#f9f6f2;font-size:min(7vw,28px)}
+  .v1024{background:#edc53f;color:#f9f6f2;font-size:min(6vw,24px)}
+  .v2048{background:#edc22e;color:#f9f6f2;font-size:min(6vw,24px);box-shadow:0 0 28px rgba(237,194,46,.8)}
+  .super{background:#3c3a32;color:#f9f6f2;font-size:min(5.5vw,22px)}
+  @keyframes pop{from{transform:scale(.1);opacity:.4}to{transform:scale(1);opacity:1}}
+  .ti.pop{animation:pop .15s ease-out}
+  .foot{display:flex;align-items:center;gap:10px;font-size:12.5px;color:#9b8d82}
+  .btn{background:#8f7a66;color:#f9f6f2;border:0;border-radius:6px;padding:9px 18px;
+    font-weight:700;font-size:14px;cursor:pointer;font-family:inherit}
+  .btn:active{transform:scale(.97)}
+  .foot .btn{margin-left:auto}
+  .overlay{position:absolute;inset:0;border-radius:10px;background:rgba(238,228,218,.9);
+    display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+    z-index:5;text-align:center;padding:18px}
+  .overlay.on{display:flex}
+  .overlay h2{margin:0;font-size:28px}
+  .overlay p{margin:0;color:#8f7a66;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1 class="title">2048</h1>
+    <div class="scores">
+      <div class="score"><span>得分</span><b id="score">0</b></div>
+      <div class="score"><span>最高</span><b id="best">0</b></div>
+    </div>
+  </div>
+  <div class="board" id="board">
+    <div class="cells" id="cells"></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="overlay" id="overlay">
+      <h2 id="ovTitle">游戏结束</h2>
+      <p id="ovText"></p>
+      <button class="btn" id="ovBtn" type="button">再来一局</button>
+    </div>
+  </div>
+  <div class="foot">
+    <span>方向键 / WASD / 滑动屏幕</span>
+    <button class="btn" id="newBtn" type="button">新游戏</button>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var N = 4;
+  var boardEl = document.getElementById('board');
+  var tilesLayer = document.getElementById('tiles');
+  var cellsLayer = document.getElementById('cells');
+  var scoreEl = document.getElementById('score');
+  var bestEl = document.getElementById('best');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovText = document.getElementById('ovText');
+  var ovBtn = document.getElementById('ovBtn');
+
+  var grid, els, score, best, idc, over, won, busy, winShown;
+
+  for (var i = 0; i < N * N; i++) {
+    var c = document.createElement('div');
+    c.className = 'cell';
+    cellsLayer.appendChild(c);
+  }
+
+  function pos(x, y) {
+    return 'translate(calc(' + x + ' * (100% + var(--gap))), calc(' + y + ' * (100% + var(--gap))))';
+  }
+  function vclass(v) { return v <= 2048 ? 'v' + v : 'super'; }
+
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+  function readBest() { var b = parseInt(store('g2048.best'), 10); return isNaN(b) ? 0 : b; }
+
+  function newGame() {
+    grid = [];
+    for (var x = 0; x < N; x++) { var row = []; for (var y = 0; y < N; y++) row.push(null); grid.push(row); }
+    els = new Map();
+    tilesLayer.innerHTML = '';
+    score = 0; idc = 1; over = false; won = false; busy = false; winShown = false;
+    best = readBest();
+    overlay.classList.remove('on');
+    spawn(); spawn();
+    paint();
+    updateScore();
+  }
+
+  function spawn() {
+    var empty = [];
+    for (var x = 0; x < N; x++) for (var y = 0; y < N; y++) if (!grid[x][y]) empty.push([x, y]);
+    if (!empty.length) return;
+    var p = empty[Math.floor(Math.random() * empty.length)];
+    var t = { id: idc++, value: Math.random() < 0.9 ? 2 : 4, x: p[0], y: p[1] };
+    grid[p[0]][p[1]] = t;
+  }
+
+  function paint() {
+    for (var x = 0; x < N; x++) for (var y = 0; y < N; y++) {
+      var t = grid[x][y];
+      if (!t) continue;
+      var el = els.get(t.id), isNew = false;
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'tile';
+        el.appendChild(document.createElement('div'));
+        el.style.transform = pos(t.x, t.y);
+        tilesLayer.appendChild(el);
+        els.set(t.id, el);
+        isNew = true;
+      }
+      var inner = el.firstChild;
+      if (inner.textContent !== String(t.value)) inner.textContent = t.value;
+      inner.className = 'ti ' + vclass(t.value) + (isNew ? ' pop' : '');
+      el.style.transform = pos(t.x, t.y);
+    }
+  }
+
+  function updateScore() {
+    scoreEl.textContent = score;
+    if (score > best) { best = score; store('g2048.best', String(best)); }
+    bestEl.textContent = best;
+  }
+
+  function canMove() {
+    for (var x = 0; x < N; x++) for (var y = 0; y < N; y++) {
+      var t = grid[x][y];
+      if (!t) return true;
+      if (x + 1 < N && grid[x + 1][y] && grid[x + 1][y].value === t.value) return true;
+      if (y + 1 < N && grid[x][y + 1] && grid[x][y + 1].value === t.value) return true;
+    }
+    return false;
+  }
+
+  function showOverlay(title, text, btn) {
+    ovTitle.textContent = title;
+    ovText.textContent = text;
+    ovBtn.textContent = btn;
+    overlay.classList.add('on');
+  }
+
+  function move(dir) {
+    if (busy || over) return;
+    var vec = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }][dir];
+    var xs = [0, 1, 2, 3], ys = [0, 1, 2, 3];
+    if (vec.x > 0) xs = [3, 2, 1, 0];
+    if (vec.y > 0) ys = [3, 2, 1, 0];
+
+    for (var a = 0; a < N; a++) for (var b = 0; b < N; b++) if (grid[a][b]) grid[a][b].merged = false;
+
+    var moved = false, dying = [];
+    xs.forEach(function (x) {
+      ys.forEach(function (y) {
+        var t = grid[x][y];
+        if (!t) return;
+        var fx = x, fy = y;
+        while (true) {
+          var nx = fx + vec.x, ny = fy + vec.y;
+          if (nx < 0 || nx >= N || ny < 0 || ny >= N) break;
+          if (grid[nx][ny]) break;
+          fx = nx; fy = ny;
+        }
+        var tx = fx + vec.x, ty = fy + vec.y;
+        var next = (tx >= 0 && tx < N && ty >= 0 && ty < N) ? grid[tx][ty] : null;
+        if (next && next.value === t.value && !next.merged) {
+          grid[x][y] = null;
+          grid[tx][ty] = null;
+          var m = { id: idc++, value: t.value * 2, x: tx, y: ty, merged: true };
+          grid[tx][ty] = m;
+          dying.push({ id: t.id, x: tx, y: ty });
+          dying.push({ id: next.id, x: tx, y: ty });
+          score += m.value;
+          if (m.value >= 2048) won = true;
+          moved = true;
+        } else if (fx !== x || fy !== y) {
+          grid[x][y] = null;
+          grid[fx][fy] = t;
+          t.x = fx; t.y = fy;
+          moved = true;
+        }
+      });
+    });
+
+    if (!moved) return;
+
+    busy = true;
+    dying.forEach(function (d) {
+      var el = els.get(d.id);
+      if (el) el.style.transform = pos(d.x, d.y);
+    });
+    paint();
+    updateScore();
+
+    if (won && !winShown) {
+      winShown = true;
+      showOverlay('🎉 达成 2048！', '当前得分 ' + score + '，可以继续挑战更高分', '继续挑战');
+    }
+
+    setTimeout(function () {
+      dying.forEach(function (d) {
+        var el = els.get(d.id);
+        if (el) { el.remove(); els.delete(d.id); }
+      });
+      spawn();
+      paint();
+      busy = false;
+      if (!canMove()) {
+        over = true;
+        showOverlay('游戏结束', '最终得分 ' + score + '，再来一局？', '重新开始');
+      }
+    }, 125);
+  }
+
+  /* ---------- 输入 ---------- */
+  var KEYS = {
+    ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3,
+    w: 0, d: 1, s: 2, a: 3, W: 0, D: 1, S: 2, A: 3
+  };
+  document.addEventListener('keydown', function (e) {
+    if (!(e.key in KEYS)) return;
+    e.preventDefault();
+    move(KEYS[e.key]);
+  });
+
+  var sx = 0, sy = 0, tracking = false;
+  boardEl.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
+  }, { passive: true });
+  boardEl.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+  boardEl.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 22) return;
+    move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0));
+  }, { passive: true });
+
+  document.getElementById('newBtn').addEventListener('click', newGame);
+  ovBtn.addEventListener('click', function () {
+    if (won && !over && ovTitle.textContent.indexOf('2048') >= 0) { overlay.classList.remove('on'); return; }
+    newGame();
+  });
+
+  newGame();
+})();
+</script>
+</body>
+</html>

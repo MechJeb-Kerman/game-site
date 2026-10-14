@@ -1,0 +1,24 @@
+# Cloudflare Workers 配置：静态资源托管（Workers Static Assets）+ 边缘 Worker
+#
+#   npx wrangler deploy          # 部署到 https://game-site.<账号>.workers.dev
+#   npx wrangler dev             # 本地起 workerd 预览（需要网络装依赖）
+#
+# 部署前先构建静态产物：
+#   node tools/build-pages.mjs --cf --base=/ --origin=https://game-site.<账号>.workers.dev --out=dist-cf
+
+name = "game-site"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist-cf"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+not_found_handling = "404-page"
+# 让每个请求都先进 Worker，这样安全响应头与缓存策略才会生效。
+# 如果你的 wrangler 版本还不认识这一行，删掉它也能部署（站点照常工作，
+# 只是静态资源会绕过 Worker 直接返回，安全头不再注入）。
+run_worker_first = true
+
+[observability]
+enabled = true

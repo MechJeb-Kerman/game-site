@@ -1,0 +1,27 @@
+{
+  "name": "game-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "类 4399 的在线小游戏聚合站 — 纯 HTML + Express + node:sqlite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "reset": "node src/seed.js --force",
+    "smoke": "node tools/browser-smoke.mjs",
+    "test:account": "node tools/account-test.mjs",
+    "build:pages": "node tools/build-pages.mjs",
+    "serve:dist": "node tools/serve-dist.mjs",
+    "smoke:pages": "node tools/pages-smoke.mjs",
+    "test:worker": "node tools/worker-test.mjs",
+    "serve:worker": "node tools/serve-worker.mjs",
+    "test:worker-app": "node tools/worker-app-test.mjs"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "express": "^4.22.3"
+  }
+}

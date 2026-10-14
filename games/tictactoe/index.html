@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>井字棋 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;padding:12px;
+    background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;max-width:440px;display:flex;flex-direction:column;gap:12px}
+  .hud{display:flex;align-items:center;gap:8px;font-size:13px;color:#7dd3fc;flex-wrap:wrap}
+  .stat{background:rgba(6,182,212,.13);border:1px solid rgba(6,182,212,.35);
+    padding:6px 12px;border-radius:10px}
+  .stat b{color:#fff;margin-left:3px}
+  .levels{margin-left:auto;display:flex;gap:6px}
+  .levels button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
+    color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer}
+  .levels button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;color:#fff;font-weight:700}
+  .status{text-align:center;font-size:15px;color:#a5e9ff;min-height:24px;font-weight:600}
+  .board{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%;
+    aspect-ratio:1;padding:10px;border-radius:16px;
+    background:linear-gradient(160deg,rgba(6,182,212,.14),rgba(14,165,233,.06));
+    border:1px solid rgba(6,182,212,.3);box-shadow:0 12px 34px rgba(0,0,0,.45)}
+  .cell{display:flex;align-items:center;justify-content:center;border-radius:12px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+    font-size:min(15vw,62px);font-weight:800;cursor:pointer;transition:.15s;line-height:1}
+  .cell:hover{background:rgba(6,182,212,.18)}
+  .cell.x{color:#22d3ee;text-shadow:0 0 18px rgba(34,211,238,.8)}
+  .cell.o{color:#f472b6;text-shadow:0 0 18px rgba(244,114,182,.8)}
+  .cell.win{background:rgba(250,204,21,.22);border-color:rgba(250,204,21,.7);
+    animation:wp .6s ease infinite alternate}
+  @keyframes wp{from{transform:scale(1)}to{transform:scale(1.06)}}
+  .cell.pop{animation:pp .18s ease-out}
+  @keyframes pp{from{transform:scale(.5);opacity:.3}to{transform:scale(1);opacity:1}}
+  .foot{display:flex;gap:8px}
+  .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+    color:#dbf8ff;border-radius:11px;padding:11px;cursor:pointer;font:inherit;font-size:14px}
+  .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
+  .btn:active{transform:scale(.98)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div class="stat">胜<b id="w">0</b></div>
+    <div class="stat">平<b id="d">0</b></div>
+    <div class="stat">负<b id="l">0</b></div>
+    <div class="levels">
+      <button data-lv="easy" type="button">简单</button>
+      <button data-lv="normal" class="on" type="button">普通</button>
+      <button data-lv="hard" type="button">无敌</button>
+    </div>
+  </div>
+  <div class="status" id="status">你先手，落子吧</div>
+  <div class="board" id="board"></div>
+  <div class="foot">
+    <button class="btn primary" id="reset" type="button">重新开局</button>
+    <button class="btn" id="swap" type="button">换我先手 / 后手</button>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  var board = document.getElementById('board');
+  var statusEl = document.getElementById('status');
+  var wEl = document.getElementById('w'), dEl = document.getElementById('d'), lEl = document.getElementById('l');
+
+  var cells = [], state, human, ai, level, locked, turn, wins = 0, draws = 0, losses = 0;
+
+  for (var i = 0; i < 9; i++) {
+    var c = document.createElement('div');
+    c.className = 'cell';
+    c.dataset.i = String(i);
+    board.appendChild(c);
+    cells.push(c);
+  }
+
+  function winnerOf(s) {
+    for (var i = 0; i < LINES.length; i++) {
+      var L = LINES[i];
+      if (s[L[0]] && s[L[0]] === s[L[1]] && s[L[1]] === s[L[2]]) return { p: s[L[0]], line: L };
+    }
+    return s.indexOf('') === -1 ? { p: 'draw', line: null } : null;
+  }
+
+  function available(s) {
+    var out = [];
+    for (var i = 0; i < 9; i++) if (!s[i]) out.push(i);
+    return out;
+  }
+
+  function minimax(s, turn, depth) {
+    var r = winnerOf(s);
+    if (r) {
+      if (r.p === 'draw') return { score: 0 };
+      return { score: r.p === ai ? 10 - depth : depth - 10 };
+    }
+    var moves = [];
+    var opts = available(s);
+    for (var k = 0; k < opts.length; k++) {
+      var i = opts[k];
+      s[i] = turn;
+      var sub = minimax(s, turn === 'X' ? 'O' : 'X', depth + 1);
+      s[i] = '';
+      moves.push({ i: i, score: sub.score });
+    }
+    moves.sort(function (a, b) { return turn === ai ? b.score - a.score : a.score - b.score; });
+    return moves[0];
+  }
+
+  function randomMove(s) {
+    var opts = available(s);
+    return opts[Math.floor(Math.random() * opts.length)];
+  }
+
+  function aiMove() {
+    var free = available(state);
+    if (!free.length) return;
+    var pick;
+    if (level === 'easy') {
+      pick = randomMove(state);
+    } else if (level === 'normal') {
+      if (Math.random() < 0.35) pick = randomMove(state);
+      else pick = minimax(state.slice(), ai, 0).i;
+    } else {
+      pick = minimax(state.slice(), ai, 0).i;
+    }
+    place(pick, ai);
+  }
+
+  function place(i, p) {
+    if (state[i]) return;
+    state[i] = p;
+    var el = cells[i];
+    el.textContent = p === 'X' ? '✕' : '◯';
+    el.classList.add(p === 'X' ? 'x' : 'o', 'pop');
+    setTimeout(function () { el.classList.remove('pop'); }, 200);
+    finishTurn();
+  }
+
+  function finishTurn() {
+    var r = winnerOf(state);
+    if (r) return endGame(r);
+    turn = turn === 'X' ? 'O' : 'X';
+    nextTurn();
+  }
+
+  // 关键：只在轮到电脑时才让它落子，否则电脑会连走多步
+  function nextTurn() {
+    if (turn !== ai) {
+      locked = false;
+      statusEl.textContent = '轮到你落子';
+      return;
+    }
+    locked = true;
+    statusEl.textContent = '电脑思考中…';
+    setTimeout(function () {
+      if (turn !== ai) return;
+      locked = false;
+      aiMove();
+    }, 280);
+  }
+
+  function endGame(r) {
+    locked = true;
+    turn = '';
+    if (r.p === 'draw') {
+      draws++; dEl.textContent = draws;
+      statusEl.textContent = '平局！';
+    } else if (r.p === human) {
+      wins++; wEl.textContent = wins;
+      statusEl.textContent = '🎉 你赢了！';
+      (r.line || []).forEach(function (i) { cells[i].classList.add('win'); });
+    } else {
+      losses++; lEl.textContent = losses;
+      statusEl.textContent = '💻 电脑赢了';
+      (r.line || []).forEach(function (i) { cells[i].classList.add('win'); });
+    }
+  }
+
+  function newGame() {
+    state = ['', '', '', '', '', '', '', '', ''];
+    turn = 'X';
+    locked = true;
+    cells.forEach(function (c) {
+      c.textContent = '';
+      c.className = 'cell';
+    });
+    statusEl.textContent = '你先手，落子吧';
+    nextTurn();
+  }
+
+  board.addEventListener('click', function (e) {
+    var c = e.target.closest('.cell');
+    if (!c || locked || turn !== human) return;
+    var i = Number(c.dataset.i);
+    if (state[i]) return;
+    place(i, human);
+  });
+
+  document.querySelectorAll('.levels button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.levels button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      level = b.dataset.lv;
+      human = 'X'; ai = 'O';
+      newGame();
+    });
+  });
+
+  document.getElementById('reset').addEventListener('click', newGame);
+  document.getElementById('swap').addEventListener('click', function () {
+    var t = human; human = ai; ai = t;
+    newGame();
+  });
+
+  level = 'normal'; human = 'X'; ai = 'O';
+  newGame();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>打地鼠 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;padding:12px;
+    background:radial-gradient(circle at 50% 110%,#3a2410,#0d0a06 70%);color:#ffeede;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;max-width:520px;display:flex;flex-direction:column;gap:10px}
+  .hud{display:flex;align-items:center;gap:8px;font-size:13px;color:#ffc899}
+  .stat{background:rgba(249,115,22,.14);border:1px solid rgba(249,115,22,.38);
+    padding:6px 12px;border-radius:10px;min-width:74px;text-align:center}
+  .stat b{color:#fff;margin-left:3px;font-size:15px}
+  .timebar{flex:1;height:10px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;min-width:60px}
+  .timebar i{display:block;height:100%;width:100%;border-radius:99px;
+    background:linear-gradient(90deg,#f97316,#facc15);transition:width .1s linear}
+  .field{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+    padding:16px;border-radius:16px;aspect-ratio:1;width:100%;
+    background:linear-gradient(180deg,#4b2e14,#2a190a);border:1px solid rgba(249,115,22,.35);
+    box-shadow:0 10px 34px rgba(0,0,0,.5) inset}
+  .hole{position:relative;display:flex;align-items:flex-end;justify-content:center;overflow:hidden}
+  .hole::after{content:'';position:absolute;bottom:6%;left:6%;right:6%;height:34%;border-radius:50%;
+    background:radial-gradient(ellipse at 50% 30%,#120a04,#000);box-shadow:0 0 0 3px rgba(120,80,40,.5)}
+  .mole{position:relative;z-index:2;width:70%;aspect-ratio:1;border-radius:50% 50% 42% 42%;
+    display:flex;align-items:center;justify-content:center;font-size:min(9vw,40px);
+    background:linear-gradient(180deg,#c98a52,#8a5a2e);
+    box-shadow:0 6px 0 rgba(0,0,0,.35) inset;
+    transform:translateY(115%);transition:transform .13s cubic-bezier(.34,1.4,.64,1);
+    cursor:pointer;margin-bottom:8%}
+  .mole.up{transform:translateY(6%)}
+  .mole.gold{background:linear-gradient(180deg,#ffe082,#f2b705);box-shadow:0 0 18px rgba(255,215,0,.75)}
+  .mole.hit{transform:translateY(6%) scale(.82)}
+  .float{position:absolute;z-index:5;font-weight:800;font-size:20px;color:#fff;
+    text-shadow:0 2px 8px rgba(0,0,0,.7);pointer-events:none;
+    animation:fly .7s ease-out forwards}
+  .float.gold{color:#ffd54a}
+  @keyframes fly{from{opacity:1;transform:translateY(0) scale(.8)}to{opacity:0;transform:translateY(-46px) scale(1.25)}}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:12px;background:rgba(14,9,4,.9);border-radius:16px;
+    text-align:center;padding:20px;z-index:10}
+  .overlay.hide{display:none}
+  .overlay h2{margin:0;font-size:26px}
+  .overlay p{margin:0;color:#ffc899;font-size:14px;line-height:1.9}
+  .overlay b{color:#fff;font-size:20px}
+  .btn{background:linear-gradient(135deg,#f97316,#dc2626);border:0;color:#fff;font-weight:700;
+    padding:12px 30px;border-radius:11px;cursor:pointer;font-size:15px;font-family:inherit}
+  .btn:active{transform:scale(.97)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div class="stat">得分<b id="score">0</b></div>
+    <div class="stat">最高<b id="best">0</b></div>
+    <div class="timebar"><i id="bar"></i></div>
+    <div class="stat" style="min-width:64px">时间<b id="time">30</b></div>
+  </div>
+  <div class="field" id="field">
+    <div class="overlay" id="ov">
+      <h2>🔨 打地鼠</h2>
+      <p>30 秒内砸中尽可能多的地鼠<br>金色地鼠 <b>+3</b> 分，普通 <b>+1</b> 分<br>砸到空洞扣 <b>1</b> 秒</p>
+      <button class="btn" id="start" type="button">开始挑战</button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var HOLES = 9, DURATION = 30;
+  var field = document.getElementById('field');
+  var ov = document.getElementById('ov');
+  var scoreEl = document.getElementById('score');
+  var bestEl = document.getElementById('best');
+  var timeEl = document.getElementById('time');
+  var bar = document.getElementById('bar');
+
+  var holes = [], score, best, left, playing, spawnTimer, tickTimer, round;
+
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  function readBest() { var b = parseInt(store('whack.best'), 10); return isNaN(b) ? 0 : b; }
+
+  for (var i = 0; i < HOLES; i++) {
+    var h = document.createElement('div');
+    h.className = 'hole';
+    var m = document.createElement('div');
+    m.className = 'mole';
+    m.dataset.hole = String(i);
+    h.appendChild(m);
+    field.appendChild(h);
+    holes.push(m);
+  }
+
+  best = readBest();
+  bestEl.textContent = best;
+  scoreEl.textContent = '0';
+  timeEl.textContent = String(DURATION);
+
+  function floatText(holeEl, text, gold) {
+    var hole = holeEl.parentNode;
+    var f = document.createElement('span');
+    f.className = 'float' + (gold ? ' gold' : '');
+    f.textContent = text;
+    f.style.left = '50%';
+    f.style.top = '18%';
+    f.style.transform = 'translateX(-50%)';
+    hole.appendChild(f);
+    setTimeout(function () { f.remove(); }, 720);
+  }
+
+  field.addEventListener('pointerdown', function (e) {
+    if (!playing) return;
+    var m = e.target.closest('.mole');
+    if (!m) return;
+    if (m.classList.contains('up')) {
+      var gold = m.classList.contains('gold');
+      var gain = gold ? 3 : 1;
+      score += gain;
+      scoreEl.textContent = score;
+      m.classList.remove('up');
+      floatText(m, '+' + gain, gold);
+    } else {
+      left = Math.max(0, left - 1);
+      timeEl.textContent = String(Math.ceil(left));
+    }
+  });
+
+  function spawn() {
+    var free = holes.filter(function (m) { return !m.classList.contains('up'); });
+    if (!free.length) return;
+    var m = free[Math.floor(Math.random() * free.length)];
+    var gold = Math.random() < 0.14;
+    var upTime = Math.max(520, 1000 - (DURATION - left) * 18);
+    m.classList.toggle('gold', gold);
+    m.textContent = gold ? '⭐' : '🐹';
+    m.classList.add('up');
+    setTimeout(function () {
+      m.classList.remove('up');
+      setTimeout(function () { m.classList.remove('gold'); m.textContent = ''; }, 200);
+    }, upTime + Math.random() * 260);
+  }
+
+  function start() {
+    score = 0; left = DURATION; playing = true; round = 0;
+    scoreEl.textContent = '0';
+    timeEl.textContent = String(DURATION);
+    bar.style.width = '100%';
+    ov.classList.add('hide');
+    holes.forEach(function (m) { m.classList.remove('up', 'gold'); m.textContent = ''; });
+
+    spawnTimer = setInterval(function () {
+      round++;
+      spawn();
+      if (round > 12) setTimeout(spawn, 180);
+    }, Math.max(340, 620 - round * 6));
+
+    tickTimer = setInterval(function () {
+      left -= 0.1;
+      if (left <= 0) { left = 0; timeEl.textContent = '0'; bar.style.width = '0%'; end(); return; }
+      timeEl.textContent = String(Math.ceil(left));
+      bar.style.width = (left / DURATION * 100) + '%';
+    }, 100);
+  }
+
+  function end() {
+    playing = false;
+    clearInterval(spawnTimer);
+    clearInterval(tickTimer);
+    holes.forEach(function (m) { m.classList.remove('up', 'gold'); });
+    var isBest = score > best;
+    if (isBest) { best = score; store('whack.best', String(best)); bestEl.textContent = best; }
+    var rank = score >= 40 ? '🏆 神之手速' : score >= 28 ? '🥇 反应高手' : score >= 18 ? '🥈 不错哦' : score >= 10 ? '🥉 再练练' : '🐢 慢半拍';
+    ov.innerHTML = '<h2>时间到！</h2><p>本局得分 <b>' + score + '</b><br>' + rank +
+      (isBest ? '<br>🎉 打破最高纪录！' : '<br>历史最高 ' + best) +
+      '</p><button class="btn" type="button" id="start">再玩一次</button>';
+    ov.classList.remove('hide');
+    ov.querySelector('#start').addEventListener('click', start);
+  }
+
+  document.getElementById('start').addEventListener('click', start);
+})();
+</script>
+</body>
+</html>
