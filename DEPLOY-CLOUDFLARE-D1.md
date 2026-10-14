@@ -67,7 +67,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM users WHERE use
 
 ### 1. 先把仓库推上 GitHub
 
-本机目前**没有 git**（`git` 命令不存在，也没有 `.git` 目录），要么装一个，要么在别的机器 / 网页上把文件传上去。仓库根放哪儿都行，但记住两点：
+本机的 git 在 `D:\CODE\git\cmd\git.exe`（v2.55.0，只是没进 PATH，用全路径调用、或把它的 `cmd` 目录加进 PATH 即可）；本地仓库已经初始化好了（`D:\CODE\game-site\.git`，`main` 分支，首次提交 `20d822d`）。注意这台机器**只连得通 GitHub**（`gitlab.com` 的 443 超时），而且 git 访问 GitHub 建议先 `git config --global http.version HTTP/1.1`（默认路径要 35 秒，换成 HTTP/1.1 后 4~7 秒）。仓库根放哪儿都行，但记住两点：
 
 - 仓库根如果是整个 `D:\CODE` 目录（里面还有别的东西），面板里的 **Root directory** 要填 `game-site`；
 - 仓库里已经有 `.gitignore`，会挡掉 `node_modules/`、`dist/`、`dist-cf/`、`data/*.db`、`.wrangler/`、`.dev.vars`。构建命令会在云端重新生成 `dist-cf/`，产物不用提交；`.dev.vars` 里通常放着管理员口令，**绝不能提交**。
