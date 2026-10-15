@@ -67,7 +67,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM users WHERE use
 
 ### 1. 先把仓库推上 GitHub
 
-本机的 git 在 `D:\CODE\git\cmd\git.exe`（v2.55.0，只是没进 PATH，用全路径调用、或把它的 `cmd` 目录加进 PATH 即可）；本地仓库已经初始化好了（`D:\CODE\game-site\.git`，`main` 分支，首次提交 `20d822d`）。注意这台机器**只连得通 GitHub**（`gitlab.com` 的 443 超时），而且 git 访问 GitHub 建议先 `git config --global http.version HTTP/1.1`（默认路径要 35 秒，换成 HTTP/1.1 后 4~7 秒）。仓库根放哪儿都行，但记住两点：
+本机的 git 在 `D:\CODE\git\cmd\git.exe`（v2.55.0，只是没进 PATH，用全路径调用、或把它的 `cmd` 目录加进 PATH 即可）；本地仓库已经初始化好了（`D:\CODE\game-site\.git`，`main` 分支，当前提交 `ee99992`）。注意这台机器**只连得通 GitHub**（`gitlab.com` 的 443 超时），而且 git 访问 GitHub 建议先 `git config --global http.version HTTP/1.1`（默认路径要 35 秒，换成 HTTP/1.1 后 4~7 秒）。仓库根放哪儿都行，但记住两点：
 
 - 仓库根如果是整个 `D:\CODE` 目录（里面还有别的东西），面板里的 **Root directory** 要填 `game-site`；
 - 仓库里已经有 `.gitignore`，会挡掉 `node_modules/`、`dist/`、`dist-cf/`、`data/*.db`、`.wrangler/`、`.dev.vars`。构建命令会在云端重新生成 `dist-cf/`，产物不用提交；`.dev.vars` 里通常放着管理员口令，**绝不能提交**。
@@ -88,13 +88,17 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 
 | 设置项 | 值 |
 |---|---|
-| Root directory | `game-site`（仓库根就是本站的话留空） |
+| Root directory | 留空（本仓库根目录就是本站；只有把本站塞进一个更大的仓库时，才填 `game-site`） |
 | Build command | `node tools/build-pages.mjs --cf --base=/ --origin=https://game-site-d1.<账号>.workers.dev --out=dist-cf` |
 | Deploy command | `npx wrangler deploy --config wrangler.d1.toml` |
 | 环境变量 | `NODE_VERSION=22` |
 | 环境变量（可选） | `SITE_ORIGIN=https://你的域名`（想固定 canonical / og / JSON-LD 的域名时用；也可以靠 build 的 `--origin`） |
 
 绑了自定义域名之后，把 Build command 里的 `--origin` 换成真实域名（或干脆删掉 `--origin`、改用 `SITE_ORIGIN`），再 push 一次即可。
+
+> **Build command 千万别留空**：`dist-cf/` 被 `.gitignore` 挡着、仓库里没有这个目录，不跑构建命令的话 deploy 会直接报
+> `The directory specified by the "assets.directory" field in your configuration file does not exist: /opt/buildhome/repo/dist-cf`。
+> 判断方法：构建日志里如果没有 Build 步骤、`pnpm install` 之后直接 `Executing user deploy command`，就是漏填了。
 
 ### 5. 建表（两种做法任选）
 

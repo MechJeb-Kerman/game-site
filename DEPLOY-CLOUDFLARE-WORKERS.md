@@ -55,6 +55,15 @@ wrangler deploy
 
 之后每次 push 都自动重建 + 重新部署。
 
+> **踩坑：`assets.directory` 不存在（构建日志里没有 Build 步骤）**
+> 如果日志是这样的：`Installing project dependencies: pnpm install --frozen-lockfile` → 直接跳到
+> `Executing user deploy command: npx wrangler deploy`，然后报
+> `✘ [ERROR] The directory specified by the "assets.directory" field in your configuration file does not exist: /opt/buildhome/repo/dist-cf`：
+> 说明 **Build command 是空的**。`dist-cf/` 在 `.gitignore` 里、仓库中并不存在，只能靠构建命令现场生成。
+> 把第 2 步那条命令填进项目的 **Settings → Build → Build command**，重新部署即可。
+> `tools/build-pages.mjs` 内部自己会跑 `migrate()` + `seed()`，`data/` 目录和 `data/games.db` 都是自动创建的，
+> 构建机上不需要预置数据库（`data/*.db` 本来就被 git 忽略）。
+
 ## 路线 C：CI / 脚本化部署
 
 ```bash
