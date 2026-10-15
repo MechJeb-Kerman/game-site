@@ -33,7 +33,7 @@ run_worker_first = true
 [[d1_databases]]
 binding = "DB"               # worker/app.js 里读 env.DB，别改这个值
 database_name = "game-site-db"
-database_id = "00000000-0000-0000-0000-000000000000"   # ← 换成 wrangler d1 create 返回的 id
+database_id = "2ece1fae-6e05-4506-a9d0-927e204ffecf"   # game-site-db（控制台 D1 SQL database 里建的），不是密钥，写进仓库没有风险
 migrations_dir = "migrations"
 
 [vars]

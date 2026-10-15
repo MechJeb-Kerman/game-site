@@ -75,7 +75,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM users WHERE use
 ### 2. 建 D1 库，把 id 写进配置
 
 ```bash
-npx wrangler d1 create game-site-db      # 输出里的 database_id 填进 wrangler.d1.toml 第 32 行
+npx wrangler d1 create game-site-db      # 输出里的 database_id 填进 wrangler.d1.toml 的 database_id 一行
 ```
 
 本机连不上 Cloudflare 的 API 时（拿不到 `wrangler login` 的浏览器授权），也可以完全在控制台建库：
