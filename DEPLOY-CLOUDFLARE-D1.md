@@ -75,8 +75,11 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM users WHERE use
 ### 2. 建 D1 库，把 id 写进配置
 
 ```bash
-npx wrangler d1 create game-site-db      # 输出里的 database_id 填进 wrangler.d1.toml
+npx wrangler d1 create game-site-db      # 输出里的 database_id 填进 wrangler.d1.toml 第 32 行
 ```
+
+本机连不上 Cloudflare 的 API 时（拿不到 `wrangler login` 的浏览器授权），也可以完全在控制台建库：
+**Workers & Pages → D1 SQL database → Create database** → 名字填 `game-site-db` → 建好后在详情页复制 **Database ID**（一串 UUID），填进 `wrangler.d1.toml`。
 
 `wrangler.d1.toml` 是要提交的，里面用的是真实 `database_id`（它不是密钥，公开没有风险）。不想把 id 写进仓库，就把 `[[d1_databases]]` 删掉、改在面板里手动加绑定（Binding 名必须是 `DB`）；但**推荐写进配置**——面板绑定和配置文件不一致时以面板的产物设置为准，很容易出现「部署成功却报 503」。
 
@@ -95,6 +98,13 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 | 环境变量（可选） | `SITE_ORIGIN=https://你的域名`（想固定 canonical / og / JSON-LD 的域名时用；也可以靠 build 的 `--origin`） |
 
 绑了自定义域名之后，把 Build command 里的 `--origin` 换成真实域名（或干脆删掉 `--origin`、改用 `SITE_ORIGIN`），再 push 一次即可。
+
+> **已经有静态版在线上（同一个域名），想原地换成完整版**：
+> 1. 让 `wrangler.d1.toml` 的 `name` 与静态版一致（本仓库静态版是 `game-site`，见 `wrangler.toml:9`，D1 配置里已经这么写了）；
+> 2. 把 Deploy command 从 `npx wrangler deploy` 改成 `npx wrangler deploy --config wrangler.d1.toml`；
+> 3. 填好 `database_id` 后 push —— 同一个 Worker 名，所以 `game-site.fishport.cn` 与 `*.workers.dev` 地址不变，只是内容从静态站变成带账号/评分/评论/后台的完整版。
+>
+> 想让两个版本并存：把 `name` 改回 `game-site-d1`（会新建一个 Worker），部署完再在 Settings → Domains & Routes 里把域名挪过去、旧 Worker 删掉。
 
 > **Build command 千万别留空**：`dist-cf/` 被 `.gitignore` 挡着、仓库里没有这个目录，不跑构建命令的话 deploy 会直接报
 > `The directory specified by the "assets.directory" field in your configuration file does not exist: /opt/buildhome/repo/dist-cf`。

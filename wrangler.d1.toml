@@ -6,9 +6,13 @@
 #   npx wrangler deploy --config wrangler.d1.toml
 #
 # 只想看静态站效果、不碰 D1：npx wrangler deploy（用根目录 wrangler.toml + worker/index.js）。
-# 两个 Worker 用不同 name，可以同时存在、互不覆盖。
 
-name = "game-site-d1"        # 想直接替换掉静态版那个 Worker 就改成 "game-site"
+# 这里的 name 与 wrangler.toml:9 的静态版同名，于是
+#   npx wrangler deploy --config wrangler.d1.toml
+# 是「原地把已经上线的静态站升级成完整版」：自定义域名、DNS 记录、*.workers.dev 地址都跟着
+# Worker 名走，不用重新绑定。想让两个版本并存，就把名字改回 game-site-d1（会新建一个 Worker），
+# 然后自己去 Settings → Domains & Routes 把域名挪过来。
+name = "game-site"
 main = "worker/app.js"
 compatibility_date = "2026-10-01"
 

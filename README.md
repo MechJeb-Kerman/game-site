@@ -284,9 +284,9 @@ node tools/worker-test.mjs      # 没有 wrangler / 没有网络时的离线自�
 
 ```bash
 node tools/build-pages.mjs --cf --base=/ --origin=https://你的域名 --out=dist-cf
-wrangler d1 create game-site-db                  # 把返回的 database_id 填进 wrangler.d1.toml
-wrangler d1 migrations apply game-site-db --remote
-wrangler deploy --config wrangler.d1.toml
+wrangler d1 create game-site-db                  # 把返回的 database_id 填进 wrangler.d1.toml（也能在控制台 D1 里建库、复制 Database ID）
+wrangler d1 migrations apply game-site-db --remote   # 可选：首次访问时 Worker 也会自己建表灌种子
+wrangler deploy --config wrangler.d1.toml        # 与静态版同名，等于原地升级，域名不用重绑
 ```
 
 本机不需要 Cloudflare 账号、不需要外网也能验证（Node 22 的 `node:sqlite` 冒充 D1，见 `tools/d1-local.mjs`）：
