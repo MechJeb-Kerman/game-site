@@ -58,7 +58,7 @@ ${noindex ? '<meta name="robots" content="noindex,follow">' : ''}
 <meta property="og:image" content="${esc(origin)}/static/img/og.svg">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
-<link rel="stylesheet" href="/static/css/style.css?v=3">
+<link rel="stylesheet" href="/static/css/style.css?v=4">
 ${preload}${ld}
 </head>
 <body>
@@ -66,7 +66,7 @@ ${preload}${ld}
 ${header(user)}
 <main id="main">${content}</main>
 ${footer()}
-<script src="/static/js/app.js?v=3" defer></script>
+<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=4" defer></script>
 </body>
 </html>`;
 }

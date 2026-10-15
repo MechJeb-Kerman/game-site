@@ -208,7 +208,8 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 | 页面正常但没有登录入口、不能评分 | 请求没进 Worker，被当成纯静态站 | 确认用的是 `--config wrangler.d1.toml`（`main = worker/app.js`）且 `run_worker_first = true` |
 | 纯文本 503「这个 Worker 需要 D1」 | 没绑定 DB | `wrangler.d1.toml` 里补 `[[d1_databases]]` 或控制台加绑定 |
 | 登录后一刷新又变游客 | Cookie 没写进去 | 必须用 https 域名访问，不要用 IP；确认浏览器没屏蔽第三方 Cookie 扩展 |
-| 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两处 `?v=3` 改成 `?v=4`，重新构建 + 部署 |
+| 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两个 `?v=` 的版本号 +1（现为 `?v=4`），重新构建 + 部署 |
+| 游玩次数不变、打不了星、发不出评论，页面却看着一切正常 | `dist-cf/static/js/app.js` 被静态版前端顶掉了：Workers/D1 把 `dist-cf/` 当 ASSETS 目录，动态页面加载到的是没有 `/api/...` 逻辑的 `app-static.js` | 重新 `pnpm build:pages`（构建自检会直接拦住）；规则是 `static/js/app.js` = 动态版（来自 `public/js/app.js`）、`app-static.js` = 静态版，静态页面只引后者 |
 | `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql` 在里面 |
 | `wrangler deploy` 报 assets 目录不存在 | 没构建 | 先跑第二步的 `build-pages` |
 | 打开就「重定向次数过多」/ `ERR_TOO_MANY_REDIRECTS` | `html_handling` 不是 `none`，资源层把 `.html` 路径 308 回去了 | 把 `wrangler*.toml` 改回 `html_handling = "none"` 再部署；`node tools/worker-test.mjs` 会拦住这个改错 |

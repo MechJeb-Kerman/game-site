@@ -173,7 +173,7 @@ const TARGETS = [
   },
   {
     n: "pages-detail", w: 1280, h: 1100, u: BASE + "game/tetris.html",
-    js: `(function(){ var f = document.getElementById("gameFrame"); var ld = document.querySelector("script[type='application/ld+json']"); return { h1: document.querySelector(".game-title").textContent, fav: !!document.getElementById("favBtn"), cmt: !!document.getElementById("cmtPanel"), stars: !!document.getElementById("stars"), tip: (document.querySelector("#ratePanel .rate-tip")||{}).textContent || "", info: (document.querySelector("#ratePanel .rate-info")||{}).textContent || "", views: !!document.querySelector(".player-views"), related: document.querySelectorAll(".game-side .card").length, iframe: f ? f.getAttribute("src") : "", ld: ld ? ld.textContent.slice(0, 80) : "" }; })()`,
+    js: `(function(){ var f = document.getElementById("gameFrame"); var ld = document.querySelector("script[type='application/ld+json']"); return { h1: document.querySelector(".game-title").textContent, fav: !!document.getElementById("favBtn"), cmt: !!document.getElementById("cmtPanel"), stars: !!document.getElementById("stars"), tip: (document.querySelector("#ratePanel .rate-tip")||{}).textContent || "", info: (document.querySelector("#ratePanel .rate-info")||{}).textContent || "", views: !!document.querySelector(".player-views"), related: document.querySelectorAll(".game-side .card").length, iframe: f ? f.getAttribute("src") : "", ld: ld ? ld.textContent.slice(0, 80) : "", scripts: [].slice.call(document.querySelectorAll("script[src]")).map(function(x){ return x.getAttribute("src"); }).join(" ") }; })()`,
     want: function (s) {
       var e = [];
       if (s.fav || s.cmt || s.stars || s.views) e.push("静态版不该渲染收藏/评论/可点星级/游玩次数：" + [s.fav, s.cmt, s.stars, s.views].join(","));
@@ -182,6 +182,8 @@ const TARGETS = [
       if (!has(s.iframe, base + "games/")) e.push("iframe 地址没重写：" + s.iframe);
       if (s.related < 1) e.push("没有相关推荐");
       if (!has(s.ld, "VideoGame")) e.push("缺少 VideoGame 结构化数据");
+      if (s.scripts.indexOf("app-static.js") < 0) e.push("静态页面没有引用 static/js/app-static.js：" + s.scripts);
+      if (new RegExp("js/app[.]js").test(String(s.scripts).replace(new RegExp("app-static[.]js", "g"), ""))) e.push("静态页面引用了动态前端 static/js/app.js：" + s.scripts);
       return e;
     }
   },

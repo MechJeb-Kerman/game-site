@@ -179,9 +179,29 @@ const TARGETS = [
         " return { score: document.getElementById('score').textContent, tiles: document.querySelectorAll('.tile').length }; })()"
   },
   {
+    // 2026-10 线上事故：贪吃蛇初始化没给遮罩加 on，开始按钮 display:none、主循环永远不进，
+    // 画面静止、按键全无效。这里必须断言「真能开局、真的在跑」，只看 score 抓不到这种 bug。
     n: 'game-snake', w: 560, h: 700, u: BASE + '/games/snake/index.html',
-    js: '(async function(){' + press(['ArrowDown', 'ArrowRight', 'ArrowDown', 'ArrowRight']) +
-        " return { score: document.getElementById('score').textContent, paused: !!document.querySelector('.overlay.on') }; })()"
+    js: '(async function(){' +
+        " var ov = document.querySelector('.overlay');" +
+        " var btn = document.getElementById('ovBtn');" +
+        " var startVisible = !!(btn && ov.classList.contains('on') && btn.getBoundingClientRect().height > 5);" +
+        " if (btn) btn.click();" +
+        " await new Promise(function(r){setTimeout(r,350)});" +
+        " var started = !document.querySelector('.overlay.on');" +
+        press(['ArrowDown', 'ArrowRight']) +
+        " document.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));" +
+        " await new Promise(function(r){setTimeout(r,300)});" +
+        " var pausedTitle = document.getElementById('ovTitle').textContent;" +
+        " document.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));" +
+        " await new Promise(function(r){setTimeout(r,300)});" +
+        " var res = { startVisible: startVisible, started: started, pausedTitle: pausedTitle," +
+        "   running: !document.querySelector('.overlay.on'), score: document.getElementById('score').textContent };" +
+        " if (!res.startVisible) throw new Error('开局没有可见的开始按钮 ' + JSON.stringify(res));" +
+        " if (!res.started) throw new Error('点了开始按钮遮罩没消失 ' + JSON.stringify(res));" +
+        " if (res.pausedTitle !== '已暂停') throw new Error('运行中按空格没暂停，主循环没跑 ' + JSON.stringify(res));" +
+        " if (!res.running) throw new Error('恢复后遮罩还在 ' + JSON.stringify(res));" +
+        " return res; })()"
   },
   {
     n: 'game-tetris', w: 560, h: 760, u: BASE + '/games/tetris/index.html',

@@ -169,7 +169,11 @@ put(".nojekyll", "");
 for (const g of games) put("cover/" + g.slug + ".svg", coverSvg(g));
 put("static/img/og.svg", ogSvg());
 put("static/css/style.css", fs.readFileSync(path.join(PUBLIC_DIR, "css", "style.css"), "utf8"));
-put("static/js/app.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app-static.js"), "utf8"));
+/* 注意：静态版前端叫 app-static.js，动态版叫 app.js，两个文件名不能互相顶掉。
+   以前这里把 app-static.js 写成 app.js —— 纯 Pages 上没问题，但 dist/ 同时还是 Workers/D1 版的
+   ASSETS 目录，动态页面上就会加载到静态版前端，导致游玩上报、评分、评论、收藏全部静默失效。 */
+put("static/js/app.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app.js"), "utf8"));
+put("static/js/app-static.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app-static.js"), "utf8"));
 const FAVICON = "<svg xmlns=" + Q + "http://www.w3.org/2000/svg" + Q + " viewBox=" + Q + "0 0 64 64" + Q + "><rect width=" + Q + "64" + Q + " height=" + Q + "64" + Q + " rx=" + Q + "22" + Q + " fill=" + Q + "#6366f1" + Q + "/><text x=" + Q + "32" + Q + " y=" + Q + "43" + Q + " font-size=" + Q + "34" + Q + " text-anchor=" + Q + "middle" + Q + ">🎮</text></svg>";
 put("favicon.svg", FAVICON);
 
@@ -242,6 +246,43 @@ if (CF_MODE) {
     ""
   ].join(NL));
 }
+
+/* ---------- 构建自检 ----------
+   2026-10 线上事故：以前这里把「静态版前端」写成了 static/js/app.js，而 dist-cf 同时又是
+   Workers/D1 版（wrangler.d1.toml 的 [assets] directory）的 ASSETS 目录 → 动态页面上加载到的
+   是没有 /play 上报、没有评分/评论/收藏逻辑的 app-static.js，于是「游玩次数不变、打不了星、发不出评论」，
+   而本机 Express 版直接服务 public/js/app.js、完全正常 —— 测试全过、线上全废。
+   规则：static/js/app.js = 动态版（public/js/app.js），static/js/app-static.js = 静态版；
+   静态页面（STATIC_MODE）只能引 app-static.js。改坏了就在这里直接失败。 */
+(function verifyAssets() {
+  const problems = [];
+  const rels = written.map(function (w) { return w[0]; });
+  if (rels.indexOf("static/js/app.js") < 0) problems.push("没有产出 static/js/app.js");
+  else {
+    const dyn = fs.readFileSync(path.join(OUT, "static", "js", "app.js"), "utf8");
+    if (dyn.indexOf("/api/games/") < 0 || dyn.indexOf("ratePanel") < 0) {
+      problems.push("static/js/app.js 不是动态前端（缺 /api/games/ 上报或 ratePanel 评分逻辑）—— 它必须是 public/js/app.js");
+    }
+  }
+  if (rels.indexOf("static/js/app-static.js") < 0) problems.push("没有产出 static/js/app-static.js");
+  rels.forEach(function (rel) {
+    if (!/.html$/.test(rel)) return;
+    if (rel.indexOf("games/") === 0) return; // 游戏本体是自包含的单文件页，不引主站前端
+    const html = fs.readFileSync(path.join(OUT, rel), "utf8");
+    if (html.indexOf("app-static.js") < 0) problems.push(rel + " 没有引用 static/js/app-static.js");
+    if (new RegExp("js/app[.]js").test(html.replace(new RegExp("app-static[.]js", "g"), ""))) {
+      problems.push(rel + " 引用了动态前端 static/js/app.js（静态页面应该只引 app-static.js）");
+    }
+  });
+  if (problems.length) {
+    console.error("");
+    console.error("构建自检失败：");
+    problems.forEach(function (p) { console.error("  - " + p); });
+    process.exitCode = 1;
+  } else {
+    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js");
+  }
+})();
 
 /* ---------- 汇报 ---------- */
 const totalBytes = written.reduce(function (s, w) { return s + w[1]; }, 0);

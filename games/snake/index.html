@@ -242,9 +242,14 @@
 
   var KEYS = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3, w: 0, d: 1, s: 2, a: 3, W: 0, D: 1, S: 2, A: 3 };
   document.addEventListener('keydown', function (e) {
-    if (e.key === ' ') { e.preventDefault(); togglePause(); return; }
+    if (e.key === ' ') {
+      e.preventDefault();
+      if (!running || dead) start(); else togglePause();
+      return;
+    }
     if (!(e.key in KEYS)) return;
     e.preventDefault();
+    if (!running || dead) start();   // 第一次按键就开局，别让玩家对着静止画面发呆
     turn(KEYS[e.key]);
   });
 
@@ -264,7 +269,9 @@
 
   document.getElementById('dpad').addEventListener('click', function (e) {
     var b = e.target.closest('[data-dir]');
-    if (b) turn(Number(b.dataset.dir));
+    if (!b) return;
+    if (!running || dead) start();
+    turn(Number(b.dataset.dir));
   });
 
   var sx = 0, sy = 0, tracking = false;
@@ -280,12 +287,19 @@
     var t = e.changedTouches[0];
     var dx = t.clientX - sx, dy = t.clientY - sy;
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
+    if (!running || dead) start();
     turn(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0));
   }, { passive: true });
 
   reset();
   running = false;
   resize();
+  // 一开始就得把「开始游戏」遮罩亮出来：遮罩默认 display:none，少了 on 按钮点不到，
+  // 而 loop 又要求 running 为真才走格子 —— 结果就是画面静止、怎么按都没反应（用户报的「贪吃蛇玩不了」）。
+  ovTitle.textContent = '准备好了吗？';
+  ovText.innerHTML = '方向键 / WASD 控制方向<br>吃掉果实变长，别撞墙也别咬到自己';
+  ovBtn.textContent = '开始游戏';
+  ov.classList.add('on');
   requestAnimationFrame(loop);
 })();
 </script>

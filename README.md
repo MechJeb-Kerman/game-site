@@ -84,9 +84,9 @@ game-site/
 ├── tools/
 │   ├── browser-smoke.mjs  无头 Chrome 真实交互冒烟测试（零依赖，pnpm smoke）
 │   ├── account-test.mjs   账号系统 57 项断言测试（pnpm test:account）
-│   ├── build-pages.mjs    静态导出：GitHub Pages / Cloudflare Pages（pnpm build:pages）
+│   ├── build-pages.mjs    静态导出：GitHub Pages / Cloudflare Pages + 构建自检（pnpm build:pages）
 │   ├── serve-dist.mjs     本地预览 dist（模拟子路径部署，pnpm serve:dist）
-│   ├── pages-smoke.mjs    静态版无头 Chrome 冒烟 + 截图（pnpm smoke:pages）
+│   ├── pages-smoke.mjs    静态版无头 Chrome 冒烟 + 截图 + 前端引用断言（pnpm smoke:pages）
 │   ├── worker-test.mjs    Cloudflare Worker 离线自测：静态版 23 项 + html_handling 配置守卫（pnpm test:worker）
 │   ├── d1-local.mjs       本机 D1 假实现：node:sqlite 冒充 D1（prepare/bind/first/all/run/batch）
 │   ├── serve-worker.mjs   本机把 worker/app.js 跑起来（pnpm serve:worker，默认 :4400）
@@ -253,6 +253,13 @@ node tools/pages-smoke.mjs --base=/仓库名/              # 无头 Chrome 冒�
 
 参数含义、发布步骤、`.nojekyll` 与中文文件名等坑，见 **[DEPLOY-GITHUB-PAGES.md](DEPLOY-GITHUB-PAGES.md)**。
 
+> **静态版前端与动态版前端是两个文件，别写混**：`public/js/app-static.js` 是静态版（列表排序、前端搜索），
+> `public/js/app.js` 是动态版（游玩上报、评分、评论、收藏）。静态导出后 `dist/static/js/` 下**两个都要有**，
+> 静态页面引 `app-static.js`；而 Workers / D1 版把 `dist-cf/` 直接当 ASSETS 目录，动态页面必须能拿到 `app.js`。
+> `pnpm build:pages` 结束时会自检（`app.js` 必须含 `/api/games/` 与 `ratePanel`，每个 HTML 只能引 `app-static.js`），
+> 写错直接 `exit 1`。2026-10 线上「游玩次数不变 / 打不了星 / 发不出评论」就是这个文件被顶掉造成的：
+> 本机 Express 版直接服务 `public/js/app.js`，所以怎么测都正常，只有部署到 Workers / D1 才暴露。
+
 ## 静态版（部署到 Cloudflare Pages）
 
 同一份代码换个前缀就是 Cloudflare 版：Pages 默认挂在域名根（`https://项目名.pages.dev/`），所以 `--base=/`，并多输出一个 Cloudflare 专属的 `_headers`（安全响应头 + 静态资源分级缓存）。
@@ -304,6 +311,10 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 - 全部页面 / API 路由返回 200，不存在的游戏与路径正确返回 404。
 - 6 款游戏均在无头 Chrome 中**真实交互**通过：2048 合出分数、贪吃蛇可转向移动、俄罗斯方块开始后消行计分、记忆翻牌连配 2 对、打地鼠命中计分、井字棋人机交替落子。
 - 页面无 console 报错、无 404 资源。
+- 线上四连（无法评论 / 贪吃蛇玩不了 / 无法打星 / 游玩次数不变）的回归断言已固化：
+  `pnpm smoke` 的 `game-snake` 会断言「开局有可见的开始按钮 → 点完遮罩消失 → 运行中按空格标题变`已暂停` → 恢复后继续跑」；
+  `pnpm build:pages` 会自检 `static/js/app.js` 必须是动态前端、且每个 HTML 只引 `app-static.js`（写错 exit 1）；
+  `pnpm smoke:pages` 会断言静态详情页引的是 `app-static.js`。
 - 账号系统 `pnpm test:account` 共 **57 项断言全部通过**：
   游客评分/收藏/评论一律 401、未登录访问 `/submit` 与 `/admin` 跳登录页、
   注册 201 且重名 409 / 非法用户名 400 / 短密码 400、错密码 401 文案统一、

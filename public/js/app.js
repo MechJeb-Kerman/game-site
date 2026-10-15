@@ -119,6 +119,14 @@
     });
   }
 
+  /* 1.5.1) 游客：星级是只读的（服务端给游客渲染的是 .stars.locked，没有 #stars / #rateInfo，
+     所以上面的整块逻辑会被跳过），点一下直接送去登录页 —— 免得星星看着能点、点了却没反应（用户报的「无法打星」）。 */
+  var lockedStars = document.querySelector(".stars.locked");
+  if (lockedStars) {
+    lockedStars.addEventListener("click", function () {
+      location.href = "/login?next=" + encodeURIComponent(location.pathname);
+    });
+  }
 
   /* 1.6) 收藏：登录才能用，未登录引导去登录页 */
   var favBtn = document.getElementById('favBtn');
