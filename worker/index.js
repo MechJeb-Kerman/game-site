@@ -10,6 +10,10 @@
  *   4. 404 回 404.html 并加 noindex；/favicon.ico 302 到 /favicon.svg
  *   5. 非 GET / HEAD 一律 405（静态站没有服务端接口）
  *
+ * 注意：wrangler.toml 里的 html_handling 必须是 "none"。Worker 是显式去取 /xxx.html
+ * 的，如果资源层开着 auto-trailing-slash 之类，它会把 /xxx.html 308 回 /xxx，
+ * 原样透传就成了浏览器无限重定向。
+ *
  * 部署：npx wrangler deploy            本地自测：node tools/worker-test.mjs
  */
 
@@ -114,13 +118,21 @@ export default {
 
     const pathname = normalizePath(incoming.pathname);
     const tries = candidates(pathname);
+    // 跳转也算未命中：资源层不该发跳转（html_handling = "none"），
+    // 万一配置被改回去，宁可给 404，也不要把浏览器拖进重定向死循环。
+    const isMiss = (r) => r.status === 404 || (r.status >= 300 && r.status < 400);
     let res = null;
     for (let i = 0; i < tries.length; i++) {
       const hit = await env.ASSETS.fetch(assetRequest(request, tries[i]));
-      if (hit.status !== 404) { res = hit; break; }
-      if (i === 0) res = hit;
+      if (!isMiss(hit)) { res = hit; break; }
+      if (hit.status === 404 && !res) res = hit;
     }
-    if (!res) res = await env.ASSETS.fetch(assetRequest(request, '/index.html'));
+    if (!res) {
+      const home = await env.ASSETS.fetch(assetRequest(request, '/index.html'));
+      res = isMiss(home)
+        ? new Response('Not Found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+        : home;
+    }
     return decorate(res, request, pathname);
   }
 };

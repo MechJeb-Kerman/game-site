@@ -13,7 +13,11 @@ compatibility_date = "2026-10-01"
 [assets]
 directory = "./dist-cf"
 binding = "ASSETS"
-html_handling = "auto-trailing-slash"
+# html_handling 必须是 "none"：Worker 自己会把 /games 映射成 /games.html 再取资源，
+# 而 auto-trailing-slash / force-trailing-slash / drop-trailing-slash 这三种模式会把 .html
+# 路径重定向掉（/games.html -> /games、/index.html -> /）。Worker 原样透传那个 308，
+# 浏览器就在 / 与 /index.html 之间无限打转（ERR_TOO_MANY_REDIRECTS / 重定向次数过多）。
+html_handling = "none"
 not_found_handling = "404-page"
 # 让每个请求都先进 Worker，这样安全响应头与缓存策略才会生效。
 # 如果你的 wrangler 版本还不认识这一行，删掉它也能部署（站点照常工作，

@@ -15,7 +15,11 @@ compatibility_date = "2026-10-01"
 [assets]
 directory = "./dist-cf"
 binding = "ASSETS"
-html_handling = "auto-trailing-slash"
+# html_handling 必须是 "none"：Worker 自己会把 /games 映射成 /games.html 再取资源，
+# 而 auto-trailing-slash / force-trailing-slash / drop-trailing-slash 这三种模式会把 .html
+# 路径重定向掉（/games.html -> /games、/index.html -> /）。Worker 原样透传那个 308，
+# 浏览器就在 / 与 /index.html 之间无限打转（ERR_TOO_MANY_REDIRECTS / 重定向次数过多）。
+html_handling = "none"
 not_found_handling = "404-page"
 # 必须让请求先进 Worker：/games 这种路径既可能是动态页面，又存在同名的静态文件
 # （dist-cf/games.html）。若这一行不被识别，删掉它站点仍能打开，但会退化成纯静态站，

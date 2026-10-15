@@ -151,6 +151,9 @@ node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**57 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
   **14 个页面浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页），无 console 报错、无资源 404。
+- 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
+  首页 / 列表 / 详情 / 分类 / 标签 / 搜索 / 注册 / 登录 / 404 / sitemap / robots 全部 200，`/favorites`、`/admin` 未登录正确 302 到 `/login?next=…`，
+  `BASE=http://127.0.0.1:8790 node tools/account-test.mjs` **57 项断言全过**。这一步捞出两个只在真运行时才暴露的 bug，见第九节。
 
 ## 八、本机假实现与真实 D1 的差异（别忽略）
 
@@ -159,6 +162,18 @@ node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.
 | 事务 | `batch()` 用 `BEGIN`/`COMMIT` | D1 的 batch 是隐式事务 |
 | 限额 | 无 | 有（库大小、每日读写行数、单次查询复杂度等，**具体数字以 Cloudflare 官网为准**，本机无网络无法核对） |
 | 读延迟 | 本地文件，微秒级 | 有读复制延迟 |
+| `exec()` | 按换行拆语句逐条执行（对齐真实 D1），多行 DDL 会被切坏 | 一样按换行切 |
+
+### 两个只在真运行时才暴露的 bug（都已修）
+
+1. **`db.exec(多行 DDL)` 在真 D1 上直接失败**。真实 D1 的 `exec()` 是**按换行切语句**再逐条执行的，所以原来 `worker/schema.js` 里 `await db.exec(DDL)`（二十多个跨多行的 `CREATE TABLE`）报：
+
+   ```
+   D1_EXEC_ERROR: Error in line 1: CREATE TABLE IF NOT EXISTS categories (: incomplete input: SQLITE_ERROR
+   ```
+
+   配合 `run_worker_first = true`，每个请求都会 500。现在 `migrate()` 改成按 `;` 拆开、逐条 `db.prepare(sql).run()`；`tools/d1-local.mjs` 的 `exec()` 也改成同样的按行切分，免得再出现「本地过、线上 500」。
+2. **`html_handling` 不是 `none` 会死循环**（浏览器报 `ERR_TOO_MANY_REDIRECTS`）：资源层把 `/index.html`、`/games.html` 这类 `.html` 路径 308 跳回无后缀地址，而 Worker 正是显式去取这些路径的。`wrangler.toml` 与 `wrangler.d1.toml` 都已改成 `html_handling = "none"`，细节见 `DEPLOY-CLOUDFLARE-WORKERS.md` 的「踩坑：打开就 ERR_TOO_MANY_REDIRECTS」。
 
 另外一处**需要你实测的点**：口令哈希用的是 PBKDF2-SHA256、10 万次迭代（`worker/auth.js` 的 `ITERATIONS`），
 在低配的 Workers 免费计划里可能撞上单请求 CPU 时间上限（登录 / 注册那一下会很慢或直接 1102）。
@@ -186,6 +201,9 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 | 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两处 `?v=3` 改成 `?v=4`，重新构建 + 部署 |
 | `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql` 在里面 |
 | `wrangler deploy` 报 assets 目录不存在 | 没构建 | 先跑第二步的 `build-pages` |
+| 打开就「重定向次数过多」/ `ERR_TOO_MANY_REDIRECTS` | `html_handling` 不是 `none`，资源层把 `.html` 路径 308 回去了 | 把 `wrangler*.toml` 改回 `html_handling = "none"` 再部署；`node tools/worker-test.mjs` 会拦住这个改错 |
+| 每个页面都 500，日志里 `D1_EXEC_ERROR: ... incomplete input` | 用了 `db.exec()` 执行多行 DDL | 逐条 `prepare().run()`（`worker/schema.js` 已改好，不要回退成 `exec`） |
+| 游戏 iframe 白屏 | 同上，`/games/xxx/index.html` 被 308 或 404 | 同上：静态资源一律由 Worker 精确取路径 |
 
 ## 十一、我没法在本机验证的部分（照实说）
 
@@ -194,5 +212,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（57 项账号断言）、14 个页面的浏览器渲染与交互、
-静态资源与安全响应头（22 项断言，见 `tools/worker-test.mjs`）。
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（57 项账号断言，且在真 workerd + 真 D1 语义下复跑通过）、
+14 个页面的浏览器渲染与交互、静态资源与安全响应头（23 项断言，见 `tools/worker-test.mjs`）。

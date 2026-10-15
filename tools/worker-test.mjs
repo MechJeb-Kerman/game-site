@@ -4,7 +4,7 @@
  *   node tools/worker-test.mjs [--out=dist-cf]
  *
  * 做法：造一个假的 env.ASSETS（直接读磁盘，行为对齐 Cloudflare 的
- * html_handling=auto-trailing-slash / not_found_handling=404-page），
+ * html_handling="none" / not_found_handling="404-page"），并先读 wrangler*.toml 确认 html_handling 还是 none
  * 把请求交给真正的 Worker fetch handler，然后断言状态码、响应头、正文，
  * 最后把主要页面的所有站内链接爬一遍确认没有断链。
  */
@@ -37,6 +37,24 @@ function opt(name, fallback) {
 }
 
 const OUT = path.resolve(opt('out', path.join(ROOT, 'dist-cf')));
+
+/**
+ * 资源层的 html_handling 必须是 none。
+ * 如果是 auto-trailing-slash 之类，Cloudflare 会把 .html 路径 308 回去
+ * （/index.html -> /、/games.html -> /games），而 Worker 正是显式去取 .html 的，
+ * 原样透传就成了浏览器无限重定向（ERR_TOO_MANY_REDIRECTS）。
+ */
+function htmlHandlingProblems() {
+  const bad = [];
+  for (const name of ['wrangler.toml', 'wrangler.d1.toml']) {
+    const file = path.join(ROOT, name);
+    if (!fs.existsSync(file)) continue;
+    const m = /html_handling\s*=\s*"([^"]*)"/.exec(fs.readFileSync(file, 'utf8'));
+    if (!m) bad.push(name + '：没有写 html_handling（默认的 auto-trailing-slash 会引发重定向循环），应显式写 "none"');
+    else if (m[1] !== 'none') bad.push(name + '：html_handling = "' + m[1] + '"，必须是 "none"');
+  }
+  return bad;
+}
 
 /** 假的 env.ASSETS：行为对齐 Cloudflare 的静态资源服务 */
 function createAssets(dir) {
@@ -113,6 +131,12 @@ const CSP = [
 async function main() {
   if (!fs.existsSync(path.join(OUT, 'index.html'))) {
     console.error('没找到 ' + path.join(OUT, 'index.html') + '，先跑：node tools/build-pages.mjs --cf --base=/ --out=dist-cf');
+    process.exit(1);
+  }
+  const badCfg = htmlHandlingProblems();
+  if (badCfg.length) {
+    console.error('wrangler 配置会让线上陷入重定向循环（ERR_TOO_MANY_REDIRECTS），先改回来：');
+    badCfg.forEach(function (b) { console.error('  ' + b); });
     process.exit(1);
   }
   console.log('Worker 自测   产物 ' + OUT + '   主机 ' + ORIGIN);
@@ -243,6 +267,18 @@ async function main() {
     eq(W.cacheFor('/games/2048/index.html', 'text/html; charset=utf-8'), 'public, max-age=3600');
     eq(W.cacheFor('/games.html', 'text/html; charset=utf-8'), 'public, max-age=0, must-revalidate');
     eq(W.cacheFor('/sitemap.xml', 'application/xml'), 'public, max-age=3600');
+  });
+
+  // ---- 静态路径一个跳转都不该有（有就是 html_handling 配错了/代码被改坏了）----
+  await t('静态路径不产生任何跳转', async function () {
+    const list = ['/', '/index.html', '/games', '/games.html', '/games/', '/game/2048', '/game/2048.html',
+      '/category/puzzle', '/category/puzzle/', '/tag/' + encodeURIComponent('益智'), '/static/css/style.css'];
+    const bad = [];
+    for (const p of list) {
+      const r = await call(p);
+      if (r.status >= 300 && r.status < 400) bad.push(p + ' -> ' + r.status + ' ' + (r.headers.get('location') || ''));
+    }
+    ok(!bad.length, '资源层发出了跳转，线上会 ERR_TOO_MANY_REDIRECTS：' + bad.join('；'));
   });
 
   // ---- 站内链接全量爬一遍 ----

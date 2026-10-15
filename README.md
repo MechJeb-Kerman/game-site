@@ -87,7 +87,7 @@ game-site/
 │   ├── build-pages.mjs    静态导出：GitHub Pages / Cloudflare Pages（pnpm build:pages）
 │   ├── serve-dist.mjs     本地预览 dist（模拟子路径部署，pnpm serve:dist）
 │   ├── pages-smoke.mjs    静态版无头 Chrome 冒烟 + 截图（pnpm smoke:pages）
-│   ├── worker-test.mjs    Cloudflare Worker 离线自测：静态版 22 项（pnpm test:worker）
+│   ├── worker-test.mjs    Cloudflare Worker 离线自测：静态版 23 项 + html_handling 配置守卫（pnpm test:worker）
 │   ├── d1-local.mjs       本机 D1 假实现：node:sqlite 冒充 D1（prepare/bind/first/all/run/batch）
 │   ├── serve-worker.mjs   本机把 worker/app.js 跑起来（pnpm serve:worker，默认 :4400）
 │   └── worker-app-test.mjs 一条命令跑 Worker + D1 的 57 项账号验收（pnpm test:worker-app）
@@ -297,7 +297,7 @@ node tools/worker-app-test.mjs         # 一条命令跑 57 项账号验收（pn
 node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
-完整步骤（建库、绑自定义域名、改默认站长密码、备份与重置、排错），以及**我没能在本机验证的部分**（wrangler 命令本身、真实 Workers 上 PBKDF2 的 CPU 时间、D1 限额）都写在 **[DEPLOY-CLOUDFLARE-D1.md](DEPLOY-CLOUDFLARE-D1.md)**。
+完整步骤（建库、绑自定义域名、改默认站长密码、备份与重置、排错），以及**我没能在本机验证的部分**（需要账号的 `wrangler login` / `wrangler deploy`、真实 Workers 上 PBKDF2 的 CPU 时间、D1 限额）都写在 **[DEPLOY-CLOUDFLARE-D1.md](DEPLOY-CLOUDFLARE-D1.md)**；`wrangler dev`（真 workerd）后来已经在本机跑通，命令见 **[DEPLOY-CLOUDFLARE-WORKERS.md](DEPLOY-CLOUDFLARE-WORKERS.md)** 文末。
 
 ## 已验证
 
@@ -319,8 +319,10 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   **在详情页 iframe 里按键真的把 2048 从 0 玩到 16 分**、俄罗斯方块本体可玩、404 页、390x844 手机端无横向溢出。
   截图：`docs/screens/pages-home.png`、`pages-list.png`、`pages-search.png`、`pages-tag.png`、`pages-detail.png`、`pages-play.png`、`pages-game-tetris.png`、`pages-404.png`、`pages-mobile.png`。
 - Cloudflare 版产物 `pnpm smoke:pages` 同样 **9 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟。
-- Workers 版 `pnpm test:worker` **22 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄，外加 8 个页面 **53 条站内链接全部 200**。
+- Workers 版 `pnpm test:worker` **23 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄、「静态路径不产生任何跳转」（防 `html_handling` 配错导致重定向死循环）、外加 8 个页面 **53 条站内链接全部 200**。
 - Workers + D1 完整版 `pnpm test:worker-app` **57 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **14 个页面全过**（含 6 款游戏真操作、后台、收藏、投稿），无 console 报错、无资源 404；出厂态复核：首页 12 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
+- 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **57 项断言全过**。
+  这一步捞出并修掉了两个只有真运行时才暴露的问题：`html_handling` 配成 `auto-trailing-slash` 会让站点陷入 `ERR_TOO_MANY_REDIRECTS`；真实 D1 的 `exec()` 按换行切语句，导致多行建表 SQL 直接 500。细节见两份 Cloudflare 部署文档。
 - 后台与账号相关的页面在无头 Chrome 里截图确认过：`docs/screens/login.png`、`register.png`、`submit.png`、`admin.png`、`favorites.png`、`rating.png`。
   > `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
   > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿。跑完想干净就按上面「彻底回到出厂状态」删库重启。

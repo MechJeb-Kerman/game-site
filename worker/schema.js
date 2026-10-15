@@ -99,9 +99,16 @@ export const DDL = [
   "CREATE INDEX IF NOT EXISTS idx_comments_game ON comments(game_id, status);"
 ].join("\n");
 
-/** D1 的 exec() 支持一次执行多条语句（和 Express 版 db.exec 一致） */
+/**
+ * 建表。注意不能用 db.exec(DDL)：D1 的 exec() 是按换行切语句再执行的，
+ * 我们这种跨多行的 CREATE TABLE 会被切坏，线上报
+ *   D1_EXEC_ERROR: Error in line 1: CREATE TABLE IF NOT EXISTS categories (: incomplete input
+ * （本地 tools/d1-local.mjs 用的是 node:sqlite 的 exec，能吃多行语句，所以之前测不出来）。
+ * 这里自己按分号拆成单条，逐条 prepare().run()。
+ */
 export async function migrate(db) {
-  await db.exec(DDL);
+  const stmts = DDL.split(';').map((s) => s.trim()).filter(Boolean);
+  for (const sql of stmts) await db.prepare(sql).run();
 }
 
 /** 空库才灌种子数据，语义与 seed(false) 相同 */

@@ -47,7 +47,25 @@ export class LocalD1 {
     this.db.exec('PRAGMA foreign_keys = ON');
   }
   prepare(sql) { return new Stmt(this.db, sql, []); }
-  async exec(sql) { this.db.exec(sql); return { count: 0, duration: 0 }; }
+  /**
+   * 对齐真实 D1（这一点很坑，但必须照抄）：exec() 是按换行切语句后逐条执行的。
+   * 所以跨多行的 CREATE TABLE 会被切坏，真机上报
+   *   D1_EXEC_ERROR: Error in line 1: CREATE TABLE IF NOT EXISTS categories (: incomplete input
+   * 用 node:sqlite 的 exec 一把梭能吃多行语句，本地过、线上 500 —— 这里改成同样的行为。
+   */
+  async exec(sql) {
+    const lines = String(sql).split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      try {
+        this.db.exec(line);
+      } catch (err) {
+        throw new Error('Error in line ' + (i + 1) + ': ' + line + ': ' + ((err && err.message) ? err.message : String(err)));
+      }
+    }
+    return { count: lines.length, duration: 0 };
+  }
   async batch(stmts) {
     const out = [];
     this.db.exec('BEGIN');

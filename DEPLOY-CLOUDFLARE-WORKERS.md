@@ -86,7 +86,7 @@ wrangler deploy
 
 ## 本地预览
 
-- **有 wrangler**：`wrangler dev` —— 跑真实的 workerd，最接近线上（本机装不了，没验过）。
+- **有 wrangler**：`wrangler dev` —— 跑真实的 workerd，最接近线上。本机已经装了 wrangler 4.151.0 实测过一轮（命令见文末）：`/`、`/index.html`、`/games`、`/games.html`、`/games/`、`/game/2048`、`/category/puzzle/`、`/static/*`、`/nope`、`/favicon.ico` 的行为都与线上预期一致。
 - **没有 wrangler / 没有网络**：`node tools/worker-test.mjs` —— 用假的 `env.ASSETS` 直接调用 Worker 的 `fetch`，断言状态码、响应头、正文，并把 8 个页面的全部站内链接爬一遍。
 
 ## 关于 `wrangler.toml` 里的 `run_worker_first`
@@ -99,6 +99,32 @@ run_worker_first = true
 ```
 
 如果你的 wrangler 版本还不支持这个字段，删掉它也能部署成功：站点照常能开，只是静态资源会绕过 Worker 直接返回，安全响应头不会注入（`dist-cf/_headers` 是给 Pages 用的，Workers 不读它）。报错信息里会提到 `run_worker_first`，认准这一行即可。
+
+## 踩坑：打开就 ERR_TOO_MANY_REDIRECTS（重定向次数过多）
+
+线上真实踩到的：`https://你的域名/` 与 `*.workers.dev/` 都刷不出来，浏览器报「重定向次数过多」。原因在 `wrangler.toml` 的 `html_handling` —— 它原来是 `auto-trailing-slash`。
+
+| 配置 | `/` 的资源层行为 | Worker 拿到什么 | 结果 |
+| --- | --- | --- | --- |
+| `auto-trailing-slash`（错） | 把 `/index.html` **308** 回 `/` | 一个 308，被 `decorate()` 原样透传 | 浏览器回到 `/`，无限环 |
+| `none`（对） | 精确返回 `/index.html` | 200 + 正文 | 正常 |
+
+`auto-trailing-slash` 会把所有 `.html` 路径 308 跳回无后缀地址（`/index.html` → `/`、`/games.html` → `/games`），偏偏 `worker/index.js:60-68` 的 `candidates()` 就是显式去取 `xxx.html` 的路径，于是 `/` → 取 `/index.html` → 308 → `/` 打转。修法是让资源层只按精确路径发文件：
+
+```toml
+[assets]
+html_handling = "none"      # 不能用 auto-trailing-slash / force-trailing-slash / drop-trailing-slash
+not_found_handling = "404-page"
+```
+
+干净地址不受影响：`/games` → `/games.html` 这段映射本来就是 Worker 自己做的。改完必须重新部署（`wrangler deploy`，或在 Git 集成里 Retry deployment）才生效。
+
+两层保险已经加进代码：
+
+- `worker/index.js` 的候选循环把 3xx 也算「未命中」，宁可回 404 也不再透传跳转；
+- `tools/worker-test.mjs` 开跑前先读 `wrangler*.toml`，`html_handling` 不是 `none` 直接失败退出；另有一条断言「静态路径不产生任何跳转」。
+
+为什么之前 22 项断言全过还是漏了：`tools/worker-test.mjs` 里的假 `env.ASSETS` 只读磁盘、**不模拟 `html_handling` 语义**，等于一直按 `none` 在测。这个差异只有 `wrangler dev`（或线上）才暴露得出来。
 
 ## 部署完的自查清单
 
@@ -131,5 +157,30 @@ node tools/worker-test.mjs
   → 站内链接全部可访问（53 条）
 ```
 
-没验证的（沙箱没网络、没 wrangler）：`wrangler deploy` 本身、`wrangler dev` 下 workerd 的真实行为、Cloudflare 对 `run_worker_first` 的处理、以及线上真实响应头。这些都在上面的自查清单里给出了核对命令。
+```
+    node tools/worker-test.mjs               → 23 项断言全部通过（含「静态路径不产生任何跳转」）
+    node tools/worker-app-test.mjs           → 57 项账号断言全部通过
+    wrangler dev（真 workerd，端口 8788）     → 逐路径实测：无跳转，安全头 / 缓存头 / 404 / favicon 302 全部正确
+    wrangler dev -c wrangler.d1.toml（8790）  → D1 版逐页面 200，/favorites 与 /admin 正确 302 到登录
+    BASE=http://127.0.0.1:8790 node tools/account-test.mjs → 57 项断言全部通过（这次跑在真 workerd + 真 D1 语义上）
+```
+
+没验证的：`wrangler login` / `wrangler deploy` 本身（要用你的 Cloudflare 账号），以及线上真实的缓存命中与免费额度数字。
+
+## 本机怎么跑 wrangler（我用的命令）
+
+本机没有全局 node / npm，所以把 wrangler 装在一个仓库外的探针目录里（不污染仓库、不改 `pnpm-lock.yaml`）：
+
+```powershell
+# $node、$pnpm 见 README「环境要求」里的 DSH 运行时路径
+& $node $pnpm add --save-dev wrangler@4 --dir D:\CODE\_wprobe --registry=https://registry.npmmirror.com
+
+# 静态版（在 D:\CODE\game-site 下执行）
+& $node D:\CODE\_wprobe\node_modules\wrangler\bin\wrangler.js dev --port 8788 --ip 127.0.0.1
+
+# 完整版 Workers + D1（本地 D1 会自动建表、灌种子；库在 .wrangler/state 下）
+& $node D:\CODE\_wprobe\node_modules\wrangler\bin\wrangler.js dev -c wrangler.d1.toml --port 8790 --ip 127.0.0.1
+```
+
+`wrangler dev` 只在本机跑 workerd，不联网、不需要登录，是目前最接近线上的一层验证。
 

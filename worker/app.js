@@ -511,7 +511,9 @@ async function serveAsset(ctx) {
   try {
     const req = new Request(ctx.url.origin + ctx.pathname + ctx.url.search, { method: 'GET' });
     const r = await ctx.env.ASSETS.fetch(req);
-    if (r.status === 404 || r.status === 405) return null;
+    // 跳转也当作没有这个资源：资源层不该发跳转（wrangler 配置里 html_handling = "none"），
+    // 透传给浏览器会让它陷入重定向循环。
+    if (r.status === 404 || r.status === 405 || (r.status >= 300 && r.status < 400)) return null;
     const h = makeHeaders(ctx, { cache: ASSET_CACHE(ctx.pathname) });
     const ct = r.headers.get('content-type');
     if (ct) h.set('content-type', ct);
