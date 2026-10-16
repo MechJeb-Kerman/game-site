@@ -172,6 +172,37 @@ const TARGETS = [
     n: 'admin', w: 1280, h: 1200, u: BASE + '/admin', auth: true,
     js: "(function(){ return { heading: document.querySelector('h1').textContent, stats: [].slice.call(document.querySelectorAll('.stat')).map(function(s){ return s.textContent.trim(); }), rows: document.querySelectorAll('.tbl tbody tr').length, comments: document.querySelectorAll('.cmt-cell').length }; })()"
   },
+  {
+    n: 'rank', w: 1280, h: 1100, u: BASE + '/rank',
+    js: "(function(){ var tabs = [].slice.call(document.querySelectorAll('.tabs .tab'));" +
+        " if (!/排行榜/.test(document.querySelector('h1').textContent)) throw new Error('榜单页没有标题');" +
+        " if (tabs.length !== 7) throw new Error('榜单切换应为 7 个，实际 ' + tabs.length);" +
+        " var bad = tabs.filter(function(a){ return (a.getAttribute('href') || '').indexOf('/rank?kind=') < 0; });" +
+        " if (bad.length) throw new Error('榜单切换链接不对：' + bad.map(function(a){ return a.getAttribute('href'); }).join(','));" +
+        " var rows = document.querySelectorAll('.rk-row');" +
+        " if (!rows.length && !document.querySelector('.empty')) throw new Error('榜单既没有排行行也没有空状态');" +
+        " if (rows.length && !document.querySelector('.rk-val small')) throw new Error('排行行缺少单位');" +
+        " return { tabs: tabs.length, rows: rows.length, on: (document.querySelector('.tab.on') || {}).textContent || ''," +
+        "   first: (document.querySelector('.rk-title') || {}).textContent || '', mv: (document.querySelector('.mv') || {}).textContent || '' }; })()"
+  },
+  {
+    n: 'search-suggest', w: 1280, h: 1000, u: HOME,
+    js: "(async function(){" +
+        " function type(v){ var i = document.querySelector('.search input[name=q]'); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }" +
+        " function read(){ var b = document.getElementById('sug'); return { hidden: b.hidden, rows: [].slice.call(b.querySelectorAll('a')).map(function(a){ return { t: (a.querySelector('.s-t') || {}).textContent || '', href: a.getAttribute('href') }; }) }; }" +
+        " function must(one, how){ if (one.hidden) throw new Error(how + '：建议框没出现');" +
+        "   if (!one.rows.some(function(r){ return /贪吃蛇/.test(r.t); })) throw new Error(how + '：建议里没有贪吃蛇 ' + JSON.stringify(one.rows)); }" +
+        " type('tcs'); await new Promise(function(r){ setTimeout(r, 700); }); var a = read();" +
+        " type('tanchishe'); await new Promise(function(r){ setTimeout(r, 600); }); var b = read();" +
+        " type('贪吃蛇'); await new Promise(function(r){ setTimeout(r, 600); }); var c = read();" +
+        " type('2048'); await new Promise(function(r){ setTimeout(r, 600); }); var e = read();" +
+        " type('zzzz'); await new Promise(function(r){ setTimeout(r, 600); }); var d = read();" +
+        " must(a, '首字母 tcs'); must(b, '全拼 tanchishe'); must(c, '中文');" +
+        " if (!/snake/.test(a.rows[0].href)) throw new Error('建议链接不对：' + a.rows[0].href);" +
+        " if (!e.rows.length || !/2048/.test(e.rows[0].t)) throw new Error('相关度排序不对，2048 应排第一：' + JSON.stringify(e.rows));" +
+        " if (d.rows.length) throw new Error('没有结果时不该有建议链接：' + JSON.stringify(d.rows));" +
+        " return { initials: a.rows[0].t, full: b.rows[0].t, cn: c.rows[0].t, top: e.rows[0].t, none: d.hidden ? 'hidden' : 'empty-tip' }; })()"
+  },
   { n: 'mobile', w: 390, h: 844, u: HOME, js: null },
   {
     n: 'game-2048', w: 560, h: 760, u: BASE + '/games/2048/index.html',

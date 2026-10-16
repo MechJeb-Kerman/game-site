@@ -76,7 +76,9 @@ export async function createWorkerServer(opts) {
     ASSETS: { fetch: (req) => assetsFetch(out, req) },
     ADMIN_USER: o.adminUser,
     ADMIN_PASS: o.adminPass,
-    SITE_ORIGIN: o.origin
+    SITE_ORIGIN: o.origin,
+    // 本机验证用：开放 dev 演示登录（Workers 里没有 NODE_ENV，只能靠这个开关）
+    OAUTH_DEV: o.oauthDev === undefined ? '1' : String(o.oauthDev)
   };
 
   const server = http.createServer(async (req, res) => {

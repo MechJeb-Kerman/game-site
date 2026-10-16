@@ -167,6 +167,68 @@ const TARGETS = [
     }
   },
   {
+    n: "pages-rank", w: 1280, h: 1100, u: BASE + "rank/today.html",
+    js: `(function(){ var tabs = [].slice.call(document.querySelectorAll(".tabs .tab")); return { h1: (document.querySelector("h1")||{}).textContent || "", tabs: tabs.map(function(a){ return a.getAttribute("href"); }), on: tabs.filter(function(a){ return a.className.indexOf("on") >= 0; }).length, rows: document.querySelectorAll(".rk-row").length, first: (document.querySelector(".rk-title")||{}).textContent || "", unit: (document.querySelector(".rk-val small")||{}).textContent || "", empty: !!document.querySelector(".empty") }; })()`,
+    want: function (s) {
+      var e = [];
+      if (!has(s.h1, "排行榜")) e.push("榜单页标题不对：" + s.h1);
+      if (s.tabs.length !== 7) e.push("榜单切换应为 7 个，实际 " + s.tabs.length);
+      s.tabs.forEach(function (h) {
+        if (!new RegExp("rank/[a-z]+[.]html$").test(String(h))) e.push("榜单切换链接不是静态页：" + h);
+      });
+      if (s.on !== 1) e.push("榜单高亮项应为 1 个，实际 " + s.on);
+      if (!s.rows && !s.empty) e.push("榜单页既没有排行行也没有空状态");
+      if (s.rows && !s.unit) e.push("排行行缺少数值单位");
+      return e;
+    }
+  },
+  {
+    n: "pages-rank-week", w: 1280, h: 1000, u: BASE + "rank/week.html",
+    js: `(function(){ return { h1: (document.querySelector("h1")||{}).textContent || "", label: (document.querySelector(".page-count b")||{}).textContent || "", on: (document.querySelector(".tab.on")||{}).textContent || "" }; })()`,
+    want: function (s) {
+      var e = [];
+      if (s.on !== "本周热玩") e.push("本周榜的高亮标签不对：" + s.on);
+      if (!has(s.label, "本周热玩")) e.push("本周榜标题里的榜单名不对：" + s.label);
+      return e;
+    }
+  },
+  {
+    n: "pages-search-pinyin", w: 1280, h: 1000, u: BASE + "search.html?q=" + encodeURIComponent("tcs"),
+    js: `(async function(){ function vis(){ var cards = [].slice.call(document.querySelectorAll(".grid .card")); return cards.filter(function(c){ return c.style.display !== "none"; }); } await new Promise(function(r){ setTimeout(r, 900); }); return { h1: document.querySelector(".page-head h1").textContent, count: (document.querySelector(".page-count")||{}).textContent || "", total: document.querySelectorAll(".grid .card").length, shown: vis().map(function(c){ return c.getAttribute("data-title"); }) }; })()`,
+    want: function (s) {
+      var e = [];
+      if (s.shown.indexOf("贪吃蛇") < 0) e.push("首字母 tcs 没能搜到贪吃蛇：" + s.shown.join(","));
+      if (s.shown.length >= s.total) e.push("拼音搜索没有过滤掉任何卡片：" + s.shown.length + "/" + s.total);
+      if (!has(s.count, String(s.shown.length))) e.push("拼音搜索结果计数不对：" + s.count);
+      return e;
+    }
+  },
+  {
+    n: "pages-suggest", w: 1280, h: 1000, u: BASE,
+    js: `(async function(){
+      function type(v){ var inp = document.querySelector(".search input[name=q]"); inp.value = v; inp.dispatchEvent(new Event("input", { bubbles: true })); }
+      function read(){ var box = document.getElementById("sug"); return { hidden: box.hidden, rows: [].slice.call(box.querySelectorAll("a")).map(function(a){ return { t: (a.querySelector(".s-t")||{}).textContent || "", href: a.getAttribute("href") }; }), none: !!box.querySelector(".s-none") }; }
+      type("tcs"); await new Promise(function(r){ setTimeout(r, 700); }); var a = read();
+      type("tanchishe"); await new Promise(function(r){ setTimeout(r, 600); }); var b = read();
+      type("zzzz"); await new Promise(function(r){ setTimeout(r, 600); }); var c = read();
+      return { initials: a, full: b, none: c };
+    })()`,
+    want: function (s) {
+      var e = [];
+      function pick(one, how) {
+        if (one.hidden) { e.push(how + "：建议框没出现"); return; }
+        if (!one.rows.length) { e.push(how + "：没有建议项"); return; }
+        if (!one.rows.some(function (r) { return has(r.t, "贪吃蛇"); })) e.push(how + "：建议里没有贪吃蛇 " + JSON.stringify(one.rows));
+        if (!has(one.rows[0].href, "game/snake.html")) e.push(how + "：建议链接没指向游戏页 " + one.rows[0].href);
+      }
+      pick(s.initials, "首字母 tcs");
+      pick(s.full, "全拼 tanchishe");
+      if (s.none.rows.length) e.push("无结果时不该有建议链接：" + JSON.stringify(s.none.rows));
+      if (!s.none.none) e.push("无结果时应给出「没有匹配」提示");
+      return e;
+    }
+  },
+  {
     n: "pages-tag", w: 1280, h: 1000, u: BASE + "tag/" + encodeURIComponent("益智") + ".html",
     js: `(function(){ return { h1: document.querySelector(".page-head h1").textContent, cards: document.querySelectorAll(".grid .card").length, sub: document.querySelector(".page-sub").textContent }; })()`,
     want: function (s) { var e = []; if (s.h1 !== "#益智") e.push("标签页标题不对：" + s.h1); if (s.cards < 1) e.push("标签页没有游戏"); return e; }

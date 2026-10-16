@@ -21,6 +21,7 @@ import { seed } from "../src/seed.js";
 import { coverSvg, ogSvg } from "../src/cover.js";
 import * as data from "../src/data.js";
 import * as ui from "../src/views.js";
+import { buildSearchIndex } from "../src/pinyin.js";
 
 const NL = String.fromCharCode(10);
 const Q = String.fromCharCode(34);
@@ -60,6 +61,9 @@ function mapRel(p) {
   else if (seg.length === 1 && seg[0] === "search") out = "/search.html";
   else if (seg.length === 1 && seg[0] === "404") out = "/404.html";
   else if (seg.length === 2 && (seg[0] === "category" || seg[0] === "tag" || seg[0] === "game")) out = "/" + seg[0] + "/" + seg[1] + ".html";
+  /* 排行榜：导航里的 /rank 落到今日榜，榜单切换链接是 /rank/<kind>（views.js 在 STATIC_MODE 下这么发） */
+  else if (seg.length === 1 && seg[0] === "rank") out = "/rank/today.html";
+  else if (seg.length === 2 && seg[0] === "rank") out = "/rank/" + seg[1] + ".html";
   else out = "/" + seg.join("/");
   return out + q;
 }
@@ -158,6 +162,16 @@ for (const t of tags) {
   }));
 }
 
+/* 排行榜：热玩/评分/收藏/新作共 7 个榜单，各导出一个静态页（排行榜是纯读快照，静态版完全可用） */
+const boardTabs = Object.entries(data.BOARD_KINDS).map(function (e) { return { kind: e[0], label: e[1].label }; });
+for (const t of boardTabs) {
+  const board = data.leaderboard(t.kind, 20);
+  page("rank/" + t.kind + ".html", ui.rankPage({
+    origin: origin, user: null, kind: board.kind, label: board.label, metric: board.metric,
+    rows: board.rows, boards: boardTabs
+  }));
+}
+
 for (const g of games) {
   page("game/" + g.slug + ".html", ui.gamePage({
     origin: origin, game: g, related: data.relatedGames(g, 6),
@@ -198,10 +212,14 @@ for (const g of games) {
 }
 
 /* ---------- SEO 与数据 ---------- */
-const robots = ["User-agent: *", "Allow: /", "Disallow: /admin", "Sitemap: " + origin + mapRel("/sitemap.xml"), ""].join(NL);
+const robots = ["User-agent: *", "Allow: /",
+  "Disallow: /admin", "Disallow: /account", "Disallow: /forgot", "Disallow: /reset",
+  "Disallow: /auth", "Disallow: /comments",
+  "Sitemap: " + origin + mapRel("/sitemap.xml"), ""].join(NL);
 put("robots.txt", robots);
 
 const locs = [origin + mapRel("/")];
+for (const t of boardTabs) locs.push({ loc: origin + mapRel("/rank/" + t.kind), pri: "0.7", last: "" });
 for (const c of categories) if (c.total) locs.push({ loc: origin + mapRel("/category/" + c.slug), pri: "0.8", last: "" });
 for (const g of games) locs.push({ loc: origin + mapRel("/game/" + g.slug), pri: "0.9", last: String(g.created_at || "").slice(0, 10) });
 const sitemap = ["<?xml version=" + Q + "1.0" + Q + " encoding=" + Q + "UTF-8" + Q + "?>",
@@ -213,10 +231,21 @@ const sitemap = ["<?xml version=" + Q + "1.0" + Q + " encoding=" + Q + "UTF-8" +
   .concat(["</urlset>", ""]).join(NL);
 put("sitemap.xml", sitemap);
 
+/* games.json 里每款游戏多带一个 py（全拼 + 首字母索引）：静态版前端没有服务端搜索，
+   靠它把「拼音 / 首字母 / 中文」三种搜法在浏览器里补齐。 */
+const gamesJson = games.map(function (g) {
+  return Object.assign({}, g, {
+    py: buildSearchIndex([g.title, g.subtitle || "",
+      (Array.isArray(g.tags) ? g.tags.join(" ") : (g.tags || "")),
+      String(g.description || "").slice(0, 120)])
+  });
+});
 put("data/games.json", JSON.stringify({
   site: { name: ui.SITE.name, tagline: ui.SITE.tagline },
   origin: origin, base: base, generated_at: new Date().toISOString(),
-  stats: stats, categories: categories, tags: tags, games: games
+  stats: stats, categories: categories, tags: tags,
+  boards: boardTabs,
+  games: gamesJson
 }, null, 2) + NL);
 
 /* ---------- Cloudflare Pages 专用文件（_headers） ---------- */
@@ -274,6 +303,15 @@ if (CF_MODE) {
   }
   if (rels.indexOf("static/js/app-static.js") < 0) problems.push("没有产出 static/js/app-static.js");
   if (rels.indexOf("static/js/gamepad.js") < 0) problems.push("没有产出 static/js/gamepad.js（手柄支持）");
+  /* 排行榜静态页：标题栏的「排行榜」链接必须落到 rank/today.html，tabs 必须是 /rank/<kind> 静态路径 */
+  if (rels.indexOf("rank/today.html") < 0) problems.push("没有产出 rank/today.html（排行榜静态页）");
+  else {
+    const rk = fs.readFileSync(path.join(OUT, "rank", "today.html"), "utf8");
+    if (rk.indexOf("rk-row") < 0 && rk.indexOf('class="empty"') < 0) problems.push("rank/today.html 里没有榜单内容");
+    if (rk.indexOf(base + "rank/week.html") < 0) problems.push("rank/today.html 的榜单切换链接不是静态路径（应为 " + base + "rank/week.html）");
+  }
+  const idxHtml = fs.readFileSync(path.join(OUT, "index.html"), "utf8");
+  if (idxHtml.indexOf(base + "rank/today.html") < 0) problems.push("首页导航的排行榜链接没有指向 " + base + "rank/today.html");
   const gpWant = base + "static/js/gamepad.js";
   const gamePages = rels.filter(function (r) { return r.indexOf("games/") === 0 && /index[.]html$/.test(r); });
   if (!gamePages.length) problems.push("没有产出任何游戏本体页");
@@ -309,7 +347,7 @@ console.log("静态站点已生成：" + OUT);
 console.log("  base   = " + base);
 console.log("  origin = " + origin + (PLACEHOLDER ? "   <== 占位域名！发布前请用 --origin 换成真实地址" : ""));
 console.log("  文件 " + written.length + " 个，合计 " + (totalBytes / 1024).toFixed(1) + " KB");
-console.log("  页面：index / games / search / 404" + (categories.length ? " / " + categories.filter(function (c) { return c.total; }).length + " 个分类" : "") + " / " + tags.length + " 个标签 / " + games.length + " 个游戏详情");
+console.log("  页面：index / games / search / 404 / " + boardTabs.length + " 个排行榜" + (categories.length ? " / " + categories.filter(function (c) { return c.total; }).length + " 个分类" : "") + " / " + tags.length + " 个标签 / " + games.length + " 个游戏详情");
 console.log("");
 console.log("本地预览：node tools/serve-dist.mjs --base=" + base + "   然后打开 http://127.0.0.1:4173" + base);
 console.log(CF_MODE
