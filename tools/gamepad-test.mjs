@@ -144,6 +144,11 @@ async function ev(expression) {
   }
   return r.result ? r.result.value : undefined;
 }
+/* 截图：SHOTS_DIR 里的 gamepad-*.png，用来人工复核虚拟光标与游戏画面 */
+async function shot(name) {
+  const r = await cdp("Page.captureScreenshot", { format: "png" }, sid);
+  fs.writeFileSync(SHOTS + "/" + name + ".png", Buffer.from(r.data, "base64"));
+}
 async function goto(url) {
   errors.length = 0;
   await cdp("Page.navigate", { url }, sid);
@@ -168,6 +173,7 @@ const CASES = [
     await goto(BASE + "/games/2048/index.html");
     await ev(HELPERS);
     const r = await ev('(async function () { var before = document.getElementById("tiles").innerHTML; var dirs = [15, 12, 14, 13]; for (var i = 0; i < dirs.length; i++) { await window.__hold([dirs[i]], 520); var now = document.getElementById("tiles").innerHTML; if (now !== before) return { ok: true, dir: dirs[i], tiles: document.querySelectorAll(".tile").length }; before = now; } return { ok: false, tiles: document.querySelectorAll(".tile").length }; })()');
+    await shot("gamepad-2048");
     want(r && r.ok, "2048：按了四个方向手柄键，棋盘都没变化");
     return "第 " + r.dir + " 号键生效 · " + r.tiles + " 个方块";
   }
@@ -207,6 +213,7 @@ const CASES = [
     await goto(BASE + "/games/tictactoe/index.html");
     await ev(HELPERS);
     const r = await ev('(async function () { var has = !!document.getElementById("gpCursor"); var st = await window.__tapAt(".cell", 7000); var cell = document.querySelectorAll(".cell")[0]; return { cursor: has, steer: st, cls: cell ? cell.className : "", mark: cell ? cell.textContent : "" }; })()');
+    await shot("gamepad-tictactoe");
     want(r && r.cursor, "井字棋：手柄连上了但没有出现虚拟光标");
     want(r.steer === "ok", "井字棋：光标没能移到棋格上（" + (r && r.steer) + "）");
     want(/x|o/.test(r.cls) || /[✕◯XO]/.test(r.mark), "井字棋：A 键没能在光标处落子（第 1 格 class=" + (r && r.cls) + " 内容「" + (r && r.mark) + "」）");
@@ -220,6 +227,7 @@ const CASES = [
     await goto(BASE + "/games/memory/index.html");
     await ev(HELPERS);
     const r = await ev('(async function () { var st = await window.__tapAt(".card", 7000); var c = document.querySelector(".card"); return { steer: st, cls: c ? c.className : "" }; })()');
+    await shot("gamepad-memory");
     want(r && r.steer === "ok", "记忆翻牌：光标没能移到卡片上（" + (r && r.steer) + "）");
     want(/flip/.test(r.cls), "记忆翻牌：A 键没有翻开卡片（class=" + r.cls + "）");
     return "光标移到卡片按 A 翻牌 → " + r.cls;
@@ -232,6 +240,7 @@ const CASES = [
     await goto(BASE + "/games/whack/index.html");
     await ev(HELPERS);
     const r = await ev('(async function () { await window.__tap(9); await new Promise(function (x) { setTimeout(x, 350); }); var started = document.getElementById("ov").classList.contains("hide"); if (!started) return { started: false, score: 0, tries: 0 }; var t0 = Date.now(), score = 0, tries = 0; while (Date.now() - t0 < 12000) { var up = document.querySelector(".mole.up"); if (!up) { window.__pad.set(0, 0, []); await new Promise(function (x) { setTimeout(x, 70); }); continue; } var q = up.getBoundingClientRect(), c = window.__gp.pos(); var dx = (q.left + q.width / 2) - c.x, dy = (q.top + q.height / 2) - c.y; if (Math.abs(dx) < 32 && Math.abs(dy) < 32) { tries++; await window.__tap(0, 110); score = Number(document.getElementById("score").textContent) || 0; if (score > 0) break; } else { window.__pad.set(Math.max(-1, Math.min(1, dx / 45)), Math.max(-1, Math.min(1, dy / 45)), []); await new Promise(function (x) { setTimeout(x, 30); }); } } window.__pad.set(0, 0, []); return { started: true, score: score, tries: tries }; })()');
+    await shot("gamepad-whack");
     want(r && r.started, "打地鼠：按 Start 没有开始挑战");
     want(r.score > 0, "打地鼠：摇杆追着地鼠按 A，12 秒内一次都没敲中（敲了 " + (r && r.tries) + " 次）");
     return "Start 开始挑战 → 光标追上地鼠按 A，得分 " + r.score;
@@ -243,6 +252,7 @@ const CASES = [
   run: async () => {
     await goto(BASE + "/game/2048");
     const r = await ev('(async function () { var fr = document.getElementById("gameFrame"); if (!fr) return { frame: false }; if (!window.__pad) return { frame: true, pad: false }; for (var i = 0; i < 40; i++) { if (document.activeElement === fr) break; await new Promise(function (x) { setTimeout(x, 250); }); } var focused = document.activeElement === fr; var doc = fr.contentDocument; if (!doc || !doc.getElementById("tiles")) return { frame: true, pad: true, focused: focused, inner: false }; var dirs = [15, 12, 14, 13], used = 0, changed = false; var before = doc.getElementById("tiles").innerHTML; for (var k = 0; k < dirs.length && !changed; k++) { window.__pad.set(0, 0, [dirs[k]]); await new Promise(function (x) { setTimeout(x, 550); }); window.__pad.set(0, 0, []); var now = doc.getElementById("tiles").innerHTML; if (now !== before) { changed = true; used = dirs[k]; } before = now; } return { frame: true, pad: true, inner: true, focused: focused, changed: changed, dir: used, hint: (document.querySelector(".player-hint") || {}).textContent || "" }; })()');
+    await shot("gamepad-detail-iframe");
     want(r && r.frame, "详情页：没有找到 #gameFrame");
     want(r.pad, "详情页：假手柄没注入");
     want(r.focused, "详情页：检测到手柄后没有把焦点交给游戏 iframe");
