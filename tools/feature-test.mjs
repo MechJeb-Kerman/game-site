@@ -65,6 +65,33 @@ async function main() {
   ok('游戏详情页 CSP 放行外站 iframe（frame-src 含 http(s)，否则投稿的外站游戏被拦成「该内容被屏蔽了」）',
     r.status === 200 && /frame-src[^;]*https:/.test(r.csp) && /frame-src[^;]*http:/.test(r.csp), r.csp.slice(0, 120));
 
+  console.log('--- 隐私政策 / 用户协议 / 注册勾选同意 ---');
+  r = await req('/privacy');
+  ok('/privacy 200 且是隐私政策', r.status === 200 && r.text.includes('隐私政策'), r.status);
+  ok('隐私政策写了 Cookie 名、第三方登录与邮件', r.text.includes('oauth_state') && r.text.includes('GitHub') && r.text.includes('密码只保存加盐哈希'), '');
+  r = await req('/terms');
+  ok('/terms 200 且是用户协议', r.status === 200 && r.text.includes('用户协议') && r.text.includes('投稿'), r.status);
+  ok('协议写了最后更新时间与联系方式', r.text.includes('最后更新') && r.text.includes('mailto:'), '');
+  r = await req('/');
+  ok('页脚链到隐私政策 / 用户协议', r.text.includes('href="/privacy"') && r.text.includes('href="/terms"'), '');
+  r = await req('/sitemap.xml');
+  ok('sitemap 收录 /privacy 与 /terms', r.text.includes('/privacy') && r.text.includes('/terms'), '');
+  r = await req('/register');
+  ok('注册页有必填的同意勾选', r.status === 200 && /name="agree"[^>]*required/.test(r.text) && r.text.includes('《隐私政策》'), r.status);
+  const noAgree = 'noag' + STAMP;
+  r = await req('/register', { method: 'POST', form: { username: noAgree, password: 'pass1234', next: '/' }, redirect: 'manual' });
+  ok('没勾同意不给注册（400 且页面提示）', r.status === 400 && r.text.includes('同意'), r.status);
+  r = await req('/api/auth/login', { method: 'POST', json: { username: noAgree, password: 'pass1234' } });
+  ok('没勾同意时不会偷偷建号', r.status === 401, r.status + ' ' + r.text.slice(0, 80));
+  r = await req('/register');
+  ok('勾选框旁边就是两份条款的链接',
+    /name="agree"[\s\S]{0,260}href="\/terms"[\s\S]{0,160}href="\/privacy"/.test(r.text), '');
+  const agreeUser = 'agr' + STAMP;
+  r = await req('/register', { method: 'POST', form: { username: agreeUser, password: 'pass1234', agree: '1', next: '/' }, redirect: 'manual' });
+  ok('勾了同意就能注册（302 回 next）', r.status === 302 && r.location === '/', r.status + ' ' + r.location);
+  r = await req('/api/auth/login', { method: 'POST', json: { username: agreeUser, password: 'pass1234' } });
+  ok('勾同意注册出来的账号能登录', r.status === 200, r.status + ' ' + r.text.slice(0, 80));
+
   console.log('--- 拼音 / 首字母搜索 ---');
   r = await req('/api/search/suggest?q=tcs');
   let s = json(r.text);

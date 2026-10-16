@@ -272,6 +272,16 @@ const TARGETS = [
     want: function (s) { var e = []; if (s.h1 !== "404") e.push("404 页面标题不对：" + s.h1); return e; }
   },
   {
+    n: "pages-privacy", w: 1280, h: 1000, u: BASE + "privacy.html",
+    js: `(function(){ return { h1: (document.querySelector("h1")||{}).textContent || "", h2: document.querySelectorAll(".prose h2").length, mail: !!document.querySelector(".prose a[href^='mailto:']") }; })()`,
+    want: function (s) { var e = []; if (s.h1 !== "隐私政策") e.push("隐私政策标题不对：" + s.h1); if (s.h2 < 8) e.push("隐私政策章节太少：" + s.h2); return e; }
+  },
+  {
+    n: "pages-terms", w: 1280, h: 1000, u: BASE + "terms.html",
+    js: `(function(){ return { h1: (document.querySelector("h1")||{}).textContent || "", h2: document.querySelectorAll(".prose h2").length, mail: !!document.querySelector(".prose a[href^='mailto:']") }; })()`,
+    want: function (s) { var e = []; if (s.h1 !== "用户协议") e.push("用户协议标题不对：" + s.h1); if (s.h2 < 8) e.push("用户协议章节太少：" + s.h2); if (!s.mail) e.push("协议里没有联系方式"); return e; }
+  },
+  {
     n: "pages-mobile", w: 390, h: 844, u: BASE,
     js: `(function(){ return { cards: document.querySelectorAll(".card").length, scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth }; })()`,
     want: function (s) { var e = []; if (s.cards < 1) e.push("手机端没有卡片"); if (s.scrollW > s.clientW + 2) e.push("手机端横向溢出：" + s.scrollW + " > " + s.clientW); return e; }
