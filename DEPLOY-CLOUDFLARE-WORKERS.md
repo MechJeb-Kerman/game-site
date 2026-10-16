@@ -155,15 +155,15 @@ curl -sI https://你的域名/favicon.ico           # 302 -> /favicon.svg
 
 ```
 node tools/worker-test.mjs
-  → worker 冒烟：23 项断言全部通过（含安全头与 server.js:24-45 逐字段比对）
+  → worker 冒烟：24 项断言全部通过（含安全头与 server.js:24-45 逐字段比对）
   → 站内链接全部可访问（54 条，新增了 /rank）
 ```
 
 ```
-    node tools/worker-test.mjs               → 23 项断言全部通过（含「静态路径不产生任何跳转」）
+    node tools/worker-test.mjs               → 24 项断言全部通过（含「静态路径不产生任何跳转」）
     node tools/worker-app-test.mjs           → 58 项账号断言全部通过
-    node tools/worker-feature-test.mjs       → 88 项第二批功能断言全部通过（同一份用例换 D1 数据层，含投稿上传单文件 HTML）
-    BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 17 项浏览器冒烟全部通过
+    node tools/worker-feature-test.mjs       → 89 项第二批功能断言全部通过（同一份用例换 D1 数据层，含投稿上传单文件 HTML）
+    BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 18 项浏览器冒烟全部通过
     wrangler dev（真 workerd，端口 8788）     → 逐路径实测：无跳转，安全头 / 缓存头 / 404 / favicon 302 全部正确
     wrangler dev -c wrangler.d1.toml（8790）  → D1 版逐页面 200，/favorites 与 /admin 正确 302 到登录
     BASE=http://127.0.0.1:8790 node tools/account-test.mjs → 58 项断言全部通过（这次跑在真 workerd + 真 D1 语义上）

@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 88 项功能验收 + 17 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 89 项功能验收 + 18 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -180,16 +180,16 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
 node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
-node tools/worker-feature-test.mjs         # 88 项第二批功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML）
+node tools/worker-feature-test.mjs         # 89 项第二批功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **88 项第二批功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱，以及投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400），
-  **17 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想），无 console 报错、无资源 404。
-  静态产物那边 `node tools/worker-test.mjs` 另有 **23 项断言**（页面 200、站内链接 54 条全通）。
+  **89 项第二批功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱，以及投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400），
+  **18 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想），无 console 报错、无资源 404。
+  静态产物那边 `node tools/worker-test.mjs` 另有 **24 项断言**（页面 200、站内链接 54 条全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
   首页 / 列表 / 详情 / 分类 / 标签 / 搜索 / 注册 / 登录 / 404 / sitemap / robots 全部 200，`/favorites`、`/admin` 未登录正确 302 到 `/login?next=…`，
   `BASE=http://127.0.0.1:8790 node tools/account-test.mjs` **58 项断言全过**。这一步捞出两个只在真运行时才暴露的 bug，见第九节。
@@ -252,5 +252,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 88 项功能断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
-14 个页面的浏览器渲染与交互、静态资源与安全响应头（23 项断言，见 `tools/worker-test.mjs`）。
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 89 项功能断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
+14 个页面的浏览器渲染与交互、静态资源与安全响应头（24 项断言，见 `tools/worker-test.mjs`）。

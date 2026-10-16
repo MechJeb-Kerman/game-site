@@ -59,7 +59,7 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ## `_headers` 里装了什么
 
-- **全站安全头**：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy` 关掉定位/麦克风/摄像头，以及一条 CSP（default-src self、frame-src self、frame-ancestors self，允许 inline/eval 因为游戏本体是自包含的）。与本项目 Express 版 `server.js:24-45` 那套保持一致。
+- **全站安全头**：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`X-Frame-Options: SAMEORIGIN`、`Permissions-Policy` 关掉定位/麦克风/摄像头，以及一条 CSP（default-src self、frame-src self + http(s)（投稿允许嵌外站游戏）、frame-ancestors self，允许 inline/eval 因为游戏本体是自包含的）。与本项目 Express 版 `server.js:24-45` 那套保持一致。
 - **静态资源缓存**：`/static/*` 7 天、`/cover/*` 1 天、`/games/*` 1 小时。
 - **改了 CSS / JS 怎么办**：缓存是 7 天，靠 `?v=3` 这个版本号切换。改样式之后把 `src/views.js` 里两处 `?v=3`（`style.css` 和 `app.js`）一起改成 `?v=4` 再重新构建，用户和边缘节点才会拿新文件。
 - `_headers` 是 Cloudflare Pages / Netlify 这类平台的约定文件，GitHub Pages 用不上（所以只在本目录生成，`dist/` 里没有）。
