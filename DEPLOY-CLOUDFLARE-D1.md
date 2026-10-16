@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（57 项账号验收 + 14 个页面的浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 17 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -149,21 +149,50 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 
 表结构见 `migrations/0001_init.sql`，与 `worker/schema.js` 里的 DDL 完全一致（后者是源，前者由它生成）。
 
+### 老库升级：新表与新列不用手工处理
+
+第二批功能（评论分页 / 楼中楼 / 举报、SQLite 排行榜、拼音与首字母搜索、账号增强、后台增强）多出 4 张表（`comment_reports`、`audit_logs`、`oauth_accounts`、`password_resets`）和几组新列（`games.search_pinyin`、`comments.parent_id`、`users.email / email_verified / banned / banned_reason / verify_token / verify_expires`）。
+
+- **新表**是 `CREATE TABLE IF NOT EXISTS`，Worker 第一次被访问时自动建；
+- **新列不能靠 `CREATE TABLE IF NOT EXISTS` 补**（表已存在时整句会被跳过），所以 `worker/schema.js` 里带了 D1 版的补列助手：启动时 `PRAGMA table_info(<表>)` 查一遍，缺哪列就 `ALTER TABLE ... ADD COLUMN`（对应 `src/db.js` 的 `addColumn`）。已有的线上库**直接重新部署一次就行**，不需要手工跑 SQL。
+- 索引同理，新增了 `idx_games_status`、`idx_comments_parent`、`idx_reports_status`、`idx_audit_recent`、`idx_oauth_user`、`idx_reset_user`。
+- 排行榜的数据来自 `play_logs`，没有引入 Redis 之类的外部存储；表结构不需要额外准备。
+
+### 邮箱与第三方登录要配的变量
+
+| 变量 | 作用 | 不配会怎样 |
+|---|---|---|
+| `RESEND_API_KEY` | 用 Resend 发信（`https://api.resend.com/emails`） | 邮件落「开发发件箱」 |
+| `MAIL_API_URL` + `MAIL_API_KEY` | 走自建/其它 HTTP 发信接口 | 同上 |
+| `MAIL_FROM` | 发件人，默认 `<站点名> <noreply@example.com>` | 用默认值，多数服务商容易判为垃圾 |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub 登录 | 登录页不显示 GitHub 按钮 |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google 登录 | 登录页不显示 Google 按钮 |
+| `OAUTH_DEV` | 值为 `1` 时开放「演示登录」（不连第三方，直接给一个测试身份） | 默认关闭 |
+
+- 这些都是 Workers 的 vars / secret：值不敏感的直接写 `wrangler.d1.toml` 的 `[vars]`，敏感的用 `npx wrangler secret put MAIL_API_KEY`（`GITHUB_CLIENT_SECRET`、`GOOGLE_CLIENT_SECRET`、`RESEND_API_KEY` 同理）。
+- 发信配置一个都没有时，注册 / 找回流程照样能走完：验证链接会打印在 `/admin` 页面的「开发发件箱」区块里（最近 50 封）。
+- 发信失败（配额、域名未验证等）不会把接口打挂，接口只回 `{ ok: true, sent: false }`，页面提示稍后再试。
+- OAuth 回调地址固定是 `<站点域名>/auth/<provider>/callback`，要在 GitHub / Google 后台登记这个地址；`SITE_ORIGIN`（可选）在挂了自定义域名时用来覆盖 Worker 推断出来的 origin。
+- 一个第三方身份只对应一个站内用户（`oauth_accounts` 主键 `(provider, provider_uid)`）；绑定与解绑都在 `/account`。
+
 ## 七、本机怎么验证（不需要 Cloudflare 账号）
 
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
-node tools/worker-app-test.mjs             # 一条命令跑 57 项账号验收（自动挑端口、自动建库）
+node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
+node tools/worker-feature-test.mjs         # 70 项第二批功能验收（同一份用例换成 D1 数据层）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
-- 本机实测结果：**57 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **14 个页面浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页），无 console 报错、无资源 404。
+- 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
+  **70 项第二批功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱），
+  **17 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想），无 console 报错、无资源 404。
+  静态产物那边 `node tools/worker-test.mjs` 另有 **23 项断言**（页面 200、站内链接 54 条全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
   首页 / 列表 / 详情 / 分类 / 标签 / 搜索 / 注册 / 登录 / 404 / sitemap / robots 全部 200，`/favorites`、`/admin` 未登录正确 302 到 `/login?next=…`，
-  `BASE=http://127.0.0.1:8790 node tools/account-test.mjs` **57 项断言全过**。这一步捞出两个只在真运行时才暴露的 bug，见第九节。
+  `BASE=http://127.0.0.1:8790 node tools/account-test.mjs` **58 项断言全过**。这一步捞出两个只在真运行时才暴露的 bug，见第九节。
 
 ## 八、本机假实现与真实 D1 的差异（别忽略）
 
@@ -223,5 +252,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（57 项账号断言，且在真 workerd + 真 D1 语义下复跑通过）、
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言，且在真 workerd + 真 D1 语义下复跑通过）、
 14 个页面的浏览器渲染与交互、静态资源与安全响应头（23 项断言，见 `tools/worker-test.mjs`）。

@@ -115,11 +115,12 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ```
 node tools/build-pages.mjs --cf --base=/ --origin=https://game-site.pages.dev --out=dist-cf
-  → 游戏 6 款 / 分类 4 个 / 标签 13 个；48 个文件，339.6 KB
+  → 游戏 6 款 / 分类 4 个 / 标签 13 个 / 排行榜 7 个；56 个文件，427.6 KB
 
 node tools/pages-smoke.mjs --base=/ --out=dist-cf
   → pages-home / pages-list / pages-search / pages-tag / pages-detail /
-    pages-play / pages-game-tetris / pages-404 / pages-mobile  9 项全部通过
+    pages-play / pages-game-tetris / pages-404 / pages-mobile /
+    pages-rank / pages-rank-week / pages-search-pinyin / pages-suggest  13 项全部通过
     （无 console 报错、无资源 404；含在详情页 iframe 里真按键把 2048 打到 20 分）
 ```
 

@@ -2,7 +2,7 @@
 
 一个**开箱即跑**的在线小游戏聚合站最小原型：纯 HTML + Express 服务端渲染 + `node:sqlite` 存元数据。
 零前端框架、零构建步骤、零图片文件（封面是运行时生成的 SVG），`pnpm install` 后一条命令即可访问。
-自带完整的账号体系（注册登录、收藏、评论）与站长后台（投稿审核、上下架、评论管理），全部落在本地 SQLite，不依赖任何外部服务。
+自带完整的账号体系（注册登录、邮箱验证、找回密码、第三方登录、收藏、评论与楼中楼、举报）与站长后台（投稿审核、批量上下架、举报处理、封禁、操作日志），外加 SQLite 排行榜与拼音搜索，全部落在本地 SQLite，不依赖任何外部服务。
 
 ![首页](docs/screens/home.png)
 
@@ -12,15 +12,18 @@
 | --- | --- |
 | 首页 | Hero（今日最热）、游戏分类、热门推荐、最新上架 |
 | 游戏库 | 分类页 `/category/:slug`、标签页 `/tag/:tag`、全部游戏 `/games`，支持 `sort=hot\|new\|rating\|title` |
-| 搜索 | `/search?q=` 与 `/games?q=`，按标题/副标题/描述/标签模糊匹配（已转义 LIKE 通配符） |
+| 搜索 | `/search?q=` 与 `/games?q=`，按标题/副标题/描述/标签模糊匹配（已转义 LIKE 通配符），并支持**拼音全拼与首字母**（`xiao you xi`、`xyx` 都能搜到「小游戏」），同分时标题命中的排前面；输入框有实时联想 `/api/search/suggest` |
+| 排行榜 | `/rank` 今日 / 本周 / 本月 / 总榜 + 评分榜 / 收藏榜 / 新游榜，数据源是本地 SQLite 的 `play_logs`（**没有引入 Redis**），首页与详情页都有入口 |
 | 详情页 | 玩家信息 + 相关推荐 + 操作提示 + 游玩次数 + 5 星评分 + 收藏 + 玩家评论 |
 | 播放器 | iframe `sandbox` 隔离 + 全屏 + 真·重开 + 新窗口打开 |
 | 手柄 | 6 款游戏全部支持游戏手柄（十字键 / 摇杆 / A / B / Start），零依赖共享 shim，见「手柄支持」 |
 | 6 款自研游戏 | 2048、贪吃蛇、记忆翻牌、打地鼠、井字棋（minimax AI）、俄罗斯方块 |
 | 账号 | 注册 / 登录 / 退出；`scrypt` 加盐哈希存口令，`HttpOnly` 会话 cookie，30 天有效 |
+| 账号增强 | 邮箱验证（`/verify-email`，24 小时有效）、找回密码（`/forgot` → `/reset`，token 30 分钟一次性）、改密码 / 改昵称 / 解绑第三方账号都在 `/account`；封禁用户当场失效 |
+| 第三方登录 | GitHub / Google / 演示登录（`/auth/:provider`），OAuth 2.0 授权码模式，原生 `fetch` 实现、零依赖；同一个第三方账号只绑一个站内用户，已绑过就直接登录 |
 | 收藏 | 详情页一键「♡ 收藏」，`/favorites` 我的收藏夹 |
-| 评论 | 详情页发评论（≤500 字，同一用户同一游戏 10 秒限流），站长可隐藏 / 恢复 |
-| 投稿与后台 | `/submit` 登录后投稿进待审队列；`/admin` 站长审核上架、上下架游戏、管理评论 |
+| 评论 | 详情页发评论（≤500 字，同一用户同一游戏 10 秒限流），**分页**（每页 10 条顶层评论，回复默认折叠成「查看全部 N 条回复」）、**楼中楼两级回复**（回复别人时自动挂到同一顶层并 @昵称）、**举报**（spam / abuse / spoiler / other，同一人同一评论只算一次），站长可隐藏 / 恢复 / 处理举报 |
+| 投稿与后台 | `/submit` 登录后投稿进待审队列；`/admin` 站长审核上架、上下架游戏、管理评论，另有**批量上下架**、**投稿预览**（`/admin/preview/:slug`，按详情页的形状看内容）、**处理举报**、**封禁/解封用户**（可带理由）、**手动标记邮箱已验证**、**操作日志**（`audit_logs`，谁什么时候对什么做了什么）与开发发件箱 |
 | 评分 | 登录后 5 星打分，一人一票、随时改票；均值实时回写数据库（未登录只能看，点星会引导去登录） |
 | SEO | 每页独立 title/description/canonical/OG、JSON-LD（WebSite / CollectionPage / VideoGame，有人评分时才带 AggregateRating）、`/sitemap.xml`、`/robots.txt`；登录/注册/收藏/投稿/后台一律 `noindex` |
 | 统计 | `POST /api/games/:slug/play`，同一 IP + 同一游戏 30 秒内去重 |
@@ -69,23 +72,28 @@ pnpm start                                               # 或 pnpm dev（--watc
 ```
 game-site/
 ├── server.js            Express 入口：安全头、静态目录、页面路由、API、登录守卫
-├── package.json         type: module，scripts: start / dev / reset / smoke / test:account / test:gamepad / build:pages / zip:cf / serve:dist / smoke:pages / test:worker / serve:worker / test:worker-app
+├── package.json         type: module，scripts: start / dev / reset / smoke / test:account / test:gamepad / test:features / build:pages / zip:cf / serve:dist / smoke:pages / test:worker / serve:worker / test:worker-app / test:worker-features
 ├── data/games.db        SQLite 数据库（首次启动自动生成）
 ├── src/
 │   ├── db.js            数据库连接、PRAGMA、建表与索引
 │   ├── auth.js          账号：scrypt 口令哈希、会话 cookie、注册校验、默认站长
 │   ├── seed.js          分类与游戏的种子数据（node src/seed.js --force 可重置）
 │   ├── data.js          所有查询：列表/详情/搜索/评分/收藏/评论/投稿/后台统计
-│   ├── views.js         服务端字符串模板：首页/列表/详情/登录注册/收藏/投稿/后台/404
+│   ├── views.js         服务端字符串模板：首页/列表/详情/登录注册/收藏/投稿/后台/排行榜/账号
+│   ├── mail.js          发信：Resend 或自定义 HTTP 接口，没配就落「开发发件箱」（outbox）
+│   ├── oauth.js         第三方登录：GitHub / Google / 演示登录，授权码 + state 校验
+│   ├── pinyin.js        拼音搜索：标题转全拼 + 首字母，匹配与相关度
+│   ├── pinyin-data.js   拼音表（由 tools/gen-pinyin.mjs 生成，勿手改）
 │   └── cover.js         动态生成封面 SVG 与 OG 图 SVG
 ├── public/
 │   ├── css/style.css    全站样式（暗色玻璃拟态，响应式，含播放器与后台表格样式）
-│   ├── js/app.js        搜索回填、游玩上报、评分、收藏、评论、全屏 / 重开（Express 版）
-│   ├── js/app-static.js 静态版前端：列表排序、前端搜索过滤、播放器全屏 / 重开
+│   ├── js/app.js        搜索回填与联想、游玩上报、评分、收藏、评论（分页 / 楼中楼 / 举报）、全屏 / 重开（Express 版）
+│   ├── js/app-static.js 静态版前端：列表排序、前端搜索（拼音 / 首字母 / 相关度）、播放器全屏 / 重开
 │   └── js/gamepad.js    手柄 shim：keys 模式合成键盘事件、pointer 模式虚拟光标，6 款游戏共用
 ├── tools/
 │   ├── browser-smoke.mjs  无头 Chrome 真实交互冒烟测试（零依赖，pnpm smoke）
-│   ├── account-test.mjs   账号系统 57 项断言测试（pnpm test:account）
+│   ├── account-test.mjs   账号系统 58 项断言测试（pnpm test:account，可反复跑）
+│   ├── feature-test.mjs   第二批功能 70 项断言：评论分页 / 楼中楼 / 举报、排行榜、拼音搜索、账号增强、后台增强（pnpm test:features）
 │   ├── build-pages.mjs    静态导出：GitHub Pages / Cloudflare Pages + 构建自检（pnpm build:pages）
 │   ├── zip-dist.mjs       把产物目录打成 zip：条目名用 /、中文名带 UTF-8 标志（pnpm zip:cf）
 │   ├── serve-dist.mjs     本地预览 dist（模拟子路径部署，pnpm serve:dist）
@@ -93,7 +101,9 @@ game-site/
 │   ├── worker-test.mjs    Cloudflare Worker 离线自测：静态版 23 项 + html_handling 配置守卫（pnpm test:worker）
 │   ├── d1-local.mjs       本机 D1 假实现：node:sqlite 冒充 D1（prepare/bind/first/all/run/batch）
 │   ├── serve-worker.mjs   本机把 worker/app.js 跑起来（pnpm serve:worker，默认 :4400）
-│   ├── worker-app-test.mjs 一条命令跑 Worker + D1 的 57 项账号验收（pnpm test:worker-app）
+│   ├── worker-app-test.mjs 一条命令跑 Worker + D1 的 58 项账号验收（pnpm test:worker-app）
+│   ├── worker-feature-test.mjs 同一份功能用例换成 D1 数据层（pnpm test:worker-features）
+│   ├── gen-pinyin.mjs     重新生成 src/pinyin-data.js 的拼音表（--download 取数据源）
 │   └── gamepad-test.mjs   手柄自测：注入假手柄跑 7 个用例（pnpm test:gamepad）
 ├── worker/index.js      Cloudflare Workers 静态版入口：安全头 / 缓存 / 干净地址 / 404
 ├── worker/app.js        Workers + D1 完整版入口：路由 / 安全头 / 会话（复用 src/views.js）
@@ -101,6 +111,8 @@ game-site/
 ├── worker/auth.js       D1 版账号：PBKDF2 口令、会话表、默认站长
 ├── worker/schema.js     建表 + 灌种子 + 站长自举（首次请求时跑，幂等）
 ├── worker/seed-data.js  4 个分类 / 6 款游戏的种子（由 src/seed.js 生成）
+├── worker/mail.js       D1 版发信：配置从 env 读（RESEND_API_KEY / MAIL_API_URL / MAIL_FROM）
+├── worker/oauth.js      D1 版第三方登录：密钥从 env 读（GITHUB_/GOOGLE_CLIENT_*、OAUTH_DEV）
 ├── wrangler.toml        Workers 静态版配置：[assets] 指向 dist-cf，绑定名 ASSETS
 ├── wrangler.d1.toml     Workers + D1 配置：多一个 [[d1_databases]] 绑定 DB
 ├── migrations/0001_init.sql  D1 建表脚本（由 worker/schema.js 的 DDL 生成）
@@ -136,8 +148,20 @@ game-site/
 | GET | `/admin` | 站长后台：统计 + 待审投稿 + 游戏管理 + 最新评论（需 admin） |
 | POST | `/admin/games/:slug/status` | 上架 / 下架 / 通过 / 拒绝（需 admin） |
 | POST | `/admin/comments/:id/status` | 隐藏 / 恢复评论（需 admin） |
+| GET | `/rank` | 排行榜（`?range=day\|week\|month\|all` 或 `?by=rating\|fav\|new`，默认今日热玩） |
+| GET/POST | `/account` | 账号中心：改昵称 / 改密码 / 绑定解绑第三方登录（需登录） |
+| POST | `/account/email` · `/account/email/resend` | 绑定或换绑邮箱 · 重发验证信 |
+| POST | `/account/password` · `/account/unlink` | 改密码（要旧密码）· 解绑第三方账号 |
+| GET | `/verify-email` | 点邮件里的链接验证邮箱（`?token=`，24 小时内有效） |
+| GET/POST | `/forgot` · `/reset` | 忘密码：申请重置信 · 用 token 设新密码（30 分钟一次性） |
+| GET | `/auth/:provider` · `/auth/:provider/callback` | 第三方登录跳转与回调（`github` / `google` / `dev`） |
+| GET | `/admin/preview/:slug` | 后台按详情页形状预览任意状态的游戏（含待审与已下架） |
+| POST | `/admin/games/batch` | 批量上架 / 下架 / 通过 / 拒绝（`slug` 可重复传多条） |
+| POST | `/admin/reports/:id/status` | 处理 / 忽略一条举报（需 admin） |
+| POST | `/admin/users/:id/ban` | 封禁 / 解封用户（`banned=1\|0`，可带理由）（需 admin） |
+| POST | `/admin/users/:id/verify` | 手动把某个用户标记成邮箱已验证（需 admin） |
 | GET | `/cover/:slug.svg` | 动态封面图 |
-| GET | `/sitemap.xml` / `/robots.txt` / `/favicon.ico` | SEO 与图标（robots 屏蔽了 `/admin` `/login` `/register` `/favorites` `/submit`） |
+| GET | `/sitemap.xml` / `/robots.txt` / `/favicon.ico` | SEO 与图标（robots 屏蔽了 `/admin` `/login` `/register` `/favorites` `/submit` `/account` `/forgot` `/reset` `/auth` `/comments/`） |
 
 **API**
 
@@ -152,7 +176,10 @@ game-site/
 | POST | `/api/auth/register` | 注册并登录，201 返回 `{ user }`；重名 409 `taken` |
 | POST | `/api/auth/logout` | 退出，返回 `{ ok: true }` |
 | POST | `/api/games/:slug/favorite` | 收藏 / 取消收藏（需登录），返回 `{ favorited, count }` |
-| POST | `/api/games/:slug/comments` | 发评论（需登录），body `{"body": "..."}`，返回 `{ id, body, name }`；空白 400 `empty`、超长 400 `too_long`、10 秒内连发 429 `too_fast` |
+| GET | `/api/games/:slug/comments` | 评论分页（`?page=`，每页 10 条顶层），返回 `{ items, total, page, pages, pageSize }`，每条回复带 `replies` / `replyCount` |
+| POST | `/api/games/:slug/comments` | 发评论或回复（需登录），body `{"body": "...", "parent_id": 可选}`，返回 `{ id, body, parent_id, name }`；空白 400 `empty`、超长 400 `too_long`、10 秒内连发 429 `too_fast`、父评论不存在 400 `bad_parent` |
+| POST | `/comments/:id/report` | 举报评论（需登录），body `{"reason": "spam\|abuse\|spoiler\|other"}`；同一人重复举报返回 `{ ok: true, already: true }` |
+| GET | `/api/search/suggest` | 搜索联想（`?q=`，最多 8 条），拼音全拼与首字母同样命中 |
 
 ## 怎么加一个新游戏
 
@@ -225,21 +252,36 @@ categories(id, slug, name, icon, sort)
 games(id, slug, title, subtitle, description, category_id, engine,
       game_url, width, height, orientation, tags /* JSON 字符串 */,
       emoji, accent, accent2, plays, rating, rating_count, license,
+      search_pinyin /* 标题的拼音全拼 + 首字母，搜索时与 LIKE 一起命中 */,
       status /* 1 已上架 / 0 已下架 / 2 待审核 */, submitted_by, created_at)
 play_logs(id, game_id, day, created_at)   -- 按天统计游玩趋势
 ratings(id, game_id, visitor, stars, created_at, updated_at)
       -- UNIQUE(game_id, visitor)：一人一票，可改票；visitor 存登录用户 id 的字符串
       -- CHECK(stars BETWEEN 1 AND 5)；game_id 外键 ON DELETE CASCADE
-users(id, username UNIQUE, display_name, pass_hash, pass_salt, role, created_at)
+users(id, username UNIQUE, display_name, pass_hash, pass_salt, role, created_at,
+      email, email_verified, banned, banned_reason, verify_token, verify_expires)
       -- role: user | admin；pass_hash 是 scrypt(password, salt) 的 64 字节 hex
 sessions(id, token UNIQUE, user_id, created_at, expires_at)
       -- token 是 randomBytes(32) 的 hex，user_id 外键 ON DELETE CASCADE
 favorites(user_id, game_id, created_at)   -- PRIMARY KEY(user_id, game_id)
-comments(id, game_id, user_id, body, status, created_at)
+comments(id, game_id, user_id, body, status, created_at, parent_id)
       -- status 1 显示 / 0 隐藏；JOIN users 取昵称
+      -- parent_id 为 NULL 是顶层评论，非 NULL 指向顶层评论 id（只做两级）
+
+-- 第二批：评论举报 / 操作日志 / 第三方登录 / 找回密码
+comment_reports(id, comment_id, user_id, reason, status, created_at)
+      -- UNIQUE(comment_id, user_id)：一人对一条评论只算一次举报
+      -- status 0 待处理 / 1 已处理 / 2 已忽略；reason: spam | abuse | spoiler | other
+audit_logs(id, actor_id, actor_name, action, target, detail, created_at)
+      -- 后台每个写操作都记一条，action 如 game.status / game.batch / comment.status /
+      -- report.status / user.ban / user.unban / user.verify / email.verify / password.reset
+oauth_accounts(provider, provider_uid, user_id, created_at)
+      -- PRIMARY KEY(provider, provider_uid)：一个第三方身份只绑一个站内用户
+password_resets(token PRIMARY KEY, user_id, created_at, expires_at, used_at)
+      -- 用过就写 used_at，不能再用
 ```
 
-已建索引：`idx_games_cat`、`idx_games_plays`、`idx_logs_game`、`idx_logs_day`、`idx_ratings_game`、`idx_sessions_user`、`idx_fav_user`、`idx_comments_game`。
+已建索引：`idx_games_cat`、`idx_games_plays`、`idx_logs_game`、`idx_logs_day`、`idx_ratings_game`、`idx_sessions_user`、`idx_fav_user`、`idx_comments_game`，以及第二批加的 `idx_games_status`、`idx_comments_parent`、`idx_reports_status`、`idx_audit_recent`、`idx_oauth_user`、`idx_reset_user`。
 数据库开启了 WAL 与 `foreign_keys=ON`。
 
 **评分是怎么算的**：写票用 SQLite 的 UPSERT
@@ -266,6 +308,11 @@ comments(id, game_id, user_id, body, status, created_at)
   加上登录/收藏/评论都走同源 POST，CSRF 风险被这两层压住（真要更严可以再加一次性 token）。
 - 跳转参数走白名单 `safeNext()`，`?next=//evil.com`、`?next=https://evil.com` 一律改写成 `/`，挡掉开放重定向。
 - 受限接口都有守卫：`requireLogin`（页面 302 去登录、接口 401）与 `requireAdmin`（非站长 302 / 403）。
+- **邮箱验证 / 找回密码都是一次性 token**（`randomBytes(32)`）：验证信 24 小时（`VERIFY_HOURS = 24`）、重置信 30 分钟（`RESET_MINUTES = 30`），重置 token 用过就写 `used_at` 作废，重新申请时旧的未用 token 直接删掉。
+- 找回密码**不泄露账号是否存在**：用户名不存在 / 没绑邮箱 / 账号被封，接口一律返回 `{ ok: true }`（内部 `sent:false`），只有真正发了信才 `sent:true`。
+- 第三方登录走 OAuth 2.0 授权码模式，`state` 存 cookie、回调时比对（防 CSRF）；`oauth_accounts` 的主键是 `(provider, provider_uid)`，同一个第三方身份只能绑一个站内用户，已绑过的再次点登录会直接进对应账号（不会新建）。演示登录（`dev`）只在非生产环境或 `OAUTH_DEV=1` 时出现。
+- **封禁即时生效**：封禁时清掉该用户全部 `sessions`，会话恢复那里再兜一道（`activeOrNull`），已登录的当场掉线；登录被拒时文案带上封禁理由。
+- 后台每个写操作都写 `audit_logs`（操作人、动作、目标、明细），后台页直接显示最近 50 条；举报有 `UNIQUE(comment_id, user_id)`，同一人同一条只能算一次。
 
 > **上线前必做**：把游戏资源挪到**独立域名**（例如 `games.example.com`），详情页 iframe 指向该域名，并把 `allow-same-origin` 去掉——这样才能真正隔离第三方游戏，防止它读到主站 cookie。
 > 另外记得改掉默认管理员口令，并在前面挂 HTTPS。
@@ -341,7 +388,7 @@ wrangler deploy --config wrangler.d1.toml        # 与静态版同名，等于�
 
 ```bash
 node tools/serve-worker.mjs --reset    # http://127.0.0.1:4400（pnpm serve:worker）
-node tools/worker-app-test.mjs         # 一条命令跑 57 项账号验收（pnpm test:worker-app）
+node tools/worker-app-test.mjs         # 一条命令跑 58 项账号验收（pnpm test:worker-app）
 node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
@@ -356,7 +403,7 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   `pnpm smoke` 的 `game-snake` 会断言「开局有可见的开始按钮 → 点完遮罩消失 → 运行中按空格标题变`已暂停` → 恢复后继续跑」；
   `pnpm build:pages` 会自检 `static/js/app.js` 必须是动态前端、且每个 HTML 只引 `app-static.js`（写错 exit 1）；
   `pnpm smoke:pages` 会断言静态详情页引的是 `app-static.js`。
-- 账号系统 `pnpm test:account` 共 **57 项断言全部通过**：
+- 账号系统 `pnpm test:account` 共 **58 项断言全部通过**（改造成可以反复跑：注册撞 409 自动改用登录、收藏状态先归零、撞上 10 秒评论限流会等待重发，连跑两次结果一致）：
   游客评分/收藏/评论一律 401、未登录访问 `/submit` 与 `/admin` 跳登录页、
   注册 201 且重名 409 / 非法用户名 400 / 短密码 400、错密码 401 文案统一、
   首评建票、同一人改票票数不涨、非法星数 400、详情页按登录态渲染可点或只读星级、
@@ -365,27 +412,30 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   投稿成功返回编号、非法游戏地址被拒、待审不出现在列表、普通用户改状态 403、
   站长审核上架后出现在列表与详情页、下架后从列表消失、隐藏评论后游客看不到、
   退出后 `/api/me` 归 null、开放重定向被改写成 `/`。
-- 静态版 `pnpm smoke:pages` 共 **9 个页面全部通过**（无 console 报错、无资源 404）：
+- 静态版 `pnpm smoke:pages` 共 **13 个页面全部通过**（无 console 报错、无资源 404）：
   首页 12 张卡片且无投稿入口、列表页按名称排序真的重排、搜索 `?q=2048` 过滤成 1 张卡、标签页、
   详情页确认收藏按钮 / 评论区 / 可点星级 / 游玩次数都不渲染且 iframe 地址带前缀、
-  **在详情页 iframe 里按键真的把 2048 从 0 玩到 16 分**、俄罗斯方块本体可玩、404 页、390x844 手机端无横向溢出。
-  截图：`docs/screens/pages-home.png`、`pages-list.png`、`pages-search.png`、`pages-tag.png`、`pages-detail.png`、`pages-play.png`、`pages-game-tetris.png`、`pages-404.png`、`pages-mobile.png`。
-- Cloudflare 版产物 `pnpm smoke:pages` 同样 **9 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟。
-- Workers 版 `pnpm test:worker` **23 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄、「静态路径不产生任何跳转」（防 `html_handling` 配错导致重定向死循环）、外加 8 个页面 **53 条站内链接全部 200**。
-- Workers + D1 完整版 `pnpm test:worker-app` **57 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **14 个页面全过**（含 6 款游戏真操作、后台、收藏、投稿），无 console 报错、无资源 404；出厂态复核：首页 12 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
-- 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **57 项断言全过**。
+  **在详情页 iframe 里按键真的把 2048 从 0 玩到 16 分**、俄罗斯方块本体可玩、404 页、390x844 手机端无横向溢出，另有新增的排行榜页（今日 / 本周切换）、拼音首字母搜索页（`?q=tcs` 命中的是「贪吃蛇」）与搜索联想下拉。
+  截图：`docs/screens/pages-home.png`、`pages-list.png`、`pages-search.png`、`pages-tag.png`、`pages-detail.png`、`pages-play.png`、`pages-game-tetris.png`、`pages-404.png`、`pages-mobile.png`、`pages-rank.png`、`pages-rank-week.png`、`pages-search-pinyin.png`、`pages-suggest.png`。
+- Cloudflare 版产物 `pnpm smoke:pages` 同样 **13 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟。
+- Workers 版 `pnpm test:worker` **23 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄、「静态路径不产生任何跳转」（防 `html_handling` 配错导致重定向死循环）、外加 8 个页面 **54 条站内链接全部 200**。
+- Workers + D1 完整版 `pnpm test:worker-app` **58 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **17 项全过**（含 6 款游戏真操作、后台、收藏、投稿），无 console 报错、无资源 404；出厂态复核：首页 12 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
+- 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **58 项断言全过**。
   这一步捞出并修掉了两个只有真运行时才暴露的问题：`html_handling` 配成 `auto-trailing-slash` 会让站点陷入 `ERR_TOO_MANY_REDIRECTS`；真实 D1 的 `exec()` 按换行切语句，导致多行建表 SQL 直接 500。细节见两份 Cloudflare 部署文档。
 - 后台与账号相关的页面在无头 Chrome 里截图确认过：`docs/screens/login.png`、`register.png`、`submit.png`、`admin.png`、`favorites.png`、`rating.png`。
   手柄自测也会留下 `docs/screens/gamepad-2048.png`、`gamepad-tictactoe.png`、`gamepad-memory.png`、`gamepad-whack.png`、`gamepad-detail-iframe.png`（能直接看到虚拟光标和底部的「🎮 手柄已连接」提示）。
 - 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**7 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 详情页 iframe 自动聚焦并接收手柄输入）；静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
-  > `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
-  > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿。跑完想干净就按上面「彻底回到出厂状态」删库重启。
+  - **第二批功能（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强）`pnpm test:features` 共 70 项断言全部通过**，同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **70 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）。
+- `pnpm smoke`（Express）**17 项全部通过**，含新增的排行榜页（7 个榜单 tab、名次与「新上榜」标记）与搜索联想（首字母 / 全拼 / 中文三条路径）；`pnpm smoke`（Workers + D1）同样 **17 项全部通过**。
+> `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
+  > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿。
+  > 两份脚本都按「增量」写断言——评分只看自己那一票、收藏只看总数的变化——所以先跑谁、重复跑几轮结果都一样（同一个库上连跑两遍 account-test 仍是 58/58），前提只是 2048 这个 slug 还在；
+  > 跑完想干净就按上面「彻底回到出厂状态」删库重启。
 
 ## 后续可做
 
-- Redis 排行榜（`ZINCRBY` / `ZREVRANGE`）替换现在的 `plays` 计数。
-- Meilisearch 替换 LIKE 搜索，支持拼音/错字/相关度排序。
-- 评论分页与楼中楼回复、@提醒、举报入口。
-- 后台上再加投稿详情预览、批量上下架、操作日志，以及封禁用户。
-- 邮箱验证、找回密码、第三方（GitHub / 微信）登录。
+- 排行榜现在是「SQLite 实时算」，量大了可以换成 Redis 的 `ZINCRBY` / `ZREVRANGE`（`/rank` 这一层不用改，只换数据源）。
+- 搜索仍是 LIKE + 拼音表（覆盖 `U+4E00..U+9FFF`）；要错字容错、词义相关性就换 Meilisearch 之类，接口形状已经收在 `searchGames()` 里。
+- 微信登录需要企业主体与审核，代码里留的是 GitHub / Google 两条线；再加 Provider 只需往 `src/oauth.js` 的 `META` 里填一组地址即可。
+- 邮件现在支持 Resend 或自定义 `MAIL_API_URL`；正式发信还该配好 SPF/DKIM 与退信处理。
 - 图片/视频素材、真实 OG 截图。

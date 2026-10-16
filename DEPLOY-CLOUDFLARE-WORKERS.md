@@ -147,22 +147,26 @@ curl -sI https://你的域名/favicon.ico           # 302 -> /favicon.svg
 3. **页面**：`src/views.js` 是纯字符串模板、没有用到 Node API，理论上可以直接被 Worker 复用；`src/data.js` 那层把同步的 `node:sqlite` 调用改成 `await env.DB.prepare(...).all()`。
 4. **静态与动态混合**：列表 / 详情页改成在 Worker 里实时渲染（`run_worker_first` 按路径放行），游戏本体仍走静态资源。
 
-这套改造的核心工作是把数据层从同步 SQLite 换成异步 D1、把 `express` 的路由换成 Worker 里的 `URL` 分发。愿意的话我可以先在**本机用 Node 里跑一个 D1 假实现**把整条链路（注册 / 登录 / 评分 / 评论 / 收藏 / 后台）跑通、并沿用现有的 57 项账号验收测试，再交给你去 `wrangler deploy` —— 这样交付的就是验证过的代码，而不是"写完就祈祷"。
+这套改造的核心工作是把数据层从同步 SQLite 换成异步 D1、把 `express` 的路由换成 Worker 里的 `URL` 分发。
+
+> **这些都已经做好了。** 想要带服务端的完整版，直接看 [`DEPLOY-CLOUDFLARE-D1.md`](DEPLOY-CLOUDFLARE-D1.md)：账号 / 邮箱验证 / 找回密码 / 第三方登录 / 评分 / 评论与楼中楼 / 举报 / 收藏 / 投稿 / 后台 / 排行榜 / 拼音搜索全部在 Workers + D1 上，本机验收 **58 项账号 + 70 项功能断言**、**23 项产物冒烟**与 **17 项浏览器冒烟**全部通过。
 
 ## 我这边验证过的
 
 ```
 node tools/worker-test.mjs
-  → worker 冒烟：22 项断言全部通过（含安全头与 server.js:24-45 逐字段比对）
-  → 站内链接全部可访问（53 条）
+  → worker 冒烟：23 项断言全部通过（含安全头与 server.js:24-45 逐字段比对）
+  → 站内链接全部可访问（54 条，新增了 /rank）
 ```
 
 ```
     node tools/worker-test.mjs               → 23 项断言全部通过（含「静态路径不产生任何跳转」）
-    node tools/worker-app-test.mjs           → 57 项账号断言全部通过
+    node tools/worker-app-test.mjs           → 58 项账号断言全部通过
+    node tools/worker-feature-test.mjs       → 70 项第二批功能断言全部通过（同一份用例换 D1 数据层）
+    BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 17 项浏览器冒烟全部通过
     wrangler dev（真 workerd，端口 8788）     → 逐路径实测：无跳转，安全头 / 缓存头 / 404 / favicon 302 全部正确
     wrangler dev -c wrangler.d1.toml（8790）  → D1 版逐页面 200，/favorites 与 /admin 正确 302 到登录
-    BASE=http://127.0.0.1:8790 node tools/account-test.mjs → 57 项断言全部通过（这次跑在真 workerd + 真 D1 语义上）
+    BASE=http://127.0.0.1:8790 node tools/account-test.mjs → 58 项断言全部通过（这次跑在真 workerd + 真 D1 语义上）
 ```
 
 没验证的：`wrangler login` / `wrangler deploy` 本身（要用你的 Cloudflare 账号），以及线上真实的缓存命中与免费额度数字。
