@@ -162,7 +162,7 @@ node tools/worker-test.mjs
 ```
     node tools/worker-test.mjs               → 24 项断言全部通过（含「静态路径不产生任何跳转」）
     node tools/worker-app-test.mjs           → 58 项账号断言全部通过
-    node tools/worker-feature-test.mjs       → 104 项功能断言全部通过（同一份用例换 D1 数据层，含投稿上传单文件 HTML 与彻底删除）
+    node tools/worker-feature-test.mjs       → 116 项功能断言全部通过（同一份用例换 D1 数据层，含投稿上传单文件 HTML、彻底删除、隐私政策/用户协议与注册同意）
     node tools/worker-mail-oauth-test.mjs    → 42 项邮件与第三方登录断言全部通过（自起假邮件服务端 + 假 OAuth Provider，不连外网）
     BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 18 项浏览器冒烟全部通过
     wrangler dev（真 workerd，端口 8788）     → 逐路径实测：无跳转，安全头 / 缓存头 / 404 / favicon 302 全部正确

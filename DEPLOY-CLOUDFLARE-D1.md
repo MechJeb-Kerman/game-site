@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 104 项功能验收 + 42 项邮件与第三方登录端到端 + 18 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 116 项功能验收 + 42 项邮件与第三方登录端到端 + 18 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -183,7 +183,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
 node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
-node tools/worker-feature-test.mjs         # 104 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除）
+node tools/worker-feature-test.mjs         # 116 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除、隐私政策/用户协议与注册同意）
 node tools/worker-mail-oauth-test.mjs      # 42 项邮件与第三方登录端到端（自起假邮件服务端 + 假 OAuth Provider，不连外网）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
@@ -191,7 +191,7 @@ node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **104 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，以及彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404），
+  **116 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，以及彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404），
   **42 项邮件与第三方登录断言全过**（`tools/mail-oauth-test.mjs` 的场景换成 D1 数据层：绑定邮箱收到验证信、点链接变已验证、找回密码改密、GitHub / Google 授权回调建号与复用账号、`state` 校验失败 400、后台集成自检面板），
   **18 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想），无 console 报错、无资源 404。
   静态产物那边 `node tools/worker-test.mjs` 另有 **24 项断言**（页面 200、站内链接 54 条全通）。
@@ -245,6 +245,7 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 | 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两个 `?v=` 的版本号 +1（现为 `?v=4`），重新构建 + 部署 |
 | 游玩次数不变、打不了星、发不出评论，页面却看着一切正常 | `dist-cf/static/js/app.js` 被静态版前端顶掉了：Workers/D1 把 `dist-cf/` 当 ASSETS 目录，动态页面加载到的是没有 `/api/...` 逻辑的 `app-static.js` | 重新 `pnpm build:pages`（构建自检会直接拦住）；规则是 `static/js/app.js` = 动态版（来自 `public/js/app.js`）、`app-static.js` = 静态版，静态页面只引后者 |
 | `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql`、`0002_game_files.sql` 都在里面 |
+| 控制台明明加了变量，线上却读不到：`/admin` 的「集成自检」里邮件通道退回开发发件箱、GitHub/Google 的 client_id 与 secret 全是 ❌，`/auth/github` 还 404 | 加到了**「构建」分区的「变量和机密」**（邻居是构建监视路径 / API 令牌 / 部署挂钩），那是构建期变量，Worker 运行时的 `env` 里没有 | 把那几张卡片删掉，改加到**「运行时」分区的「变量和机密」**（类型选「密钥」=Secret）；非机密值（client_id、`MAIL_FROM`）也可以写进 `wrangler.d1.toml` 的 `[vars]` 随代码部署；改完重新部署，刷新 `/admin` 看自检变 ✅ |
 | `wrangler deploy` 报 assets 目录不存在 | 没构建 | 先跑第二步的 `build-pages` |
 | 打开就「重定向次数过多」/ `ERR_TOO_MANY_REDIRECTS` | `html_handling` 不是 `none`，资源层把 `.html` 路径 308 回去了 | 把 `wrangler*.toml` 改回 `html_handling = "none"` 再部署；`node tools/worker-test.mjs` 会拦住这个改错 |
 | 每个页面都 500，日志里 `D1_EXEC_ERROR: ... incomplete input` | 用了 `db.exec()` 执行多行 DDL | 逐条 `prepare().run()`（`worker/schema.js` 已改好，不要回退成 `exec`） |
@@ -257,5 +258,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 104 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 116 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
 14 个页面的浏览器渲染与交互、静态资源与安全响应头（24 项断言，见 `tools/worker-test.mjs`）。
