@@ -2,7 +2,8 @@
  * 前置条件：站点已在 BASE 上跑起来（默认 http://127.0.0.1:3000）。
  *   node tools/feature-test.mjs      # 或 pnpm test:features
  *
- * 注意：会真的写库（建两个随机名字的测试账号、一条评论+回复+举报、几条操作日志），
+ * 注意：会真的写库（建三个随机名字的测试账号、一条评论+回复+举报、两条测试投稿——其中一条是上传的
+ * 单文件 HTML，跑完会退回待审留在库里——以及几条操作日志），
  * 结束时会把测试账号封禁再解封、把举报标记为已处理。想彻底干净：停服 → 删 data/games.db → 重启。
  * 邮件走开发发件箱（没配 RESEND_API_KEY / MAIL_API_URL 时不会真发信）。
  */
@@ -30,10 +31,17 @@ async function req(path, opt) {
   let body;
   if (o.json !== undefined) { headers['content-type'] = 'application/json'; body = JSON.stringify(o.json); }
   if (o.form !== undefined) { headers['content-type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(o.form).toString(); }
+  if (o.fd !== undefined) body = o.fd;              /* FormData：content-type 和 boundary 交给 fetch 自己写 */
+  if (o.body !== undefined) body = o.body;          /* 原始 body（比如手搓的 multipart 文本） */
   const res = await fetch(BASE + path, { method: o.method || 'GET', headers, body, redirect: o.redirect || 'follow' });
   if (o.j) absorb(o.j, res);
   const text = await res.text();
-  return { status: res.status, text, location: res.headers.get('location') || '' };
+  return {
+    status: res.status, text,
+    location: res.headers.get('location') || '',
+    type: res.headers.get('content-type') || '',
+    csp: res.headers.get('content-security-policy') || ''
+  };
 }
 function json(t) { try { return JSON.parse(t); } catch { return null; } }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -229,6 +237,65 @@ async function main() {
   ok('解封后可以登录', r.status === 200, r.status);
   r = await req('/admin/users/1/ban', { method: 'POST', j: jarAd, form: { banned: '1' }, redirect: 'follow' });
   ok('站长账号不可封禁', r.status === 400 && r.text.includes('站长账号不可封禁'), r.status);
+
+  /* ---------- 5. 投稿上传单文件 HTML（存库，按 /ugc/<slug>.html 提供） ---------- */
+  console.log('--- 投稿上传单文件 HTML ---');
+  const jarUp = jar();
+  r = await req('/api/auth/register', { method: 'POST', j: jarUp, json: { username: 'qu' + STAMP, password: 'pass1234', display_name: '投稿人' } });
+  ok('注册投稿账号', r.status === 201, r.status + ' ' + r.text.slice(0, 80));
+
+  r = await req('/submit', { j: jarUp });
+  ok('投稿页有文件框 + multipart 表单', r.status === 200 && r.text.includes('name="game_file"') && r.text.includes('enctype="multipart/form-data"'), r.status);
+
+  const MINI = '<!doctype html><html><head><meta charset="utf-8"><title>mini</title></head><body><div id="app">mini game</div><script>window.__upmini=1;</script></body></html>';
+  const fd = (filename, body, field) => {
+    const f = new FormData();
+    f.append('title', '上传验收小游戏' + STAMP);
+    f.append('subtitle', '验收用');
+    f.append('category', 'puzzle');
+    f.append('description', '功能验收：投稿上传的单文件 HTML');
+    f.append(field || 'game_file', new Blob([body], { type: 'text/html' }), filename);
+    return f;
+  };
+  r = await req('/submit', { method: 'POST', j: jarUp, fd: fd('mini.html', MINI) });
+  ok('上传单文件 HTML 投稿成功', r.status === 200 && r.text.includes('投稿成功'), r.status + ' ' + r.text.slice(0, 200));
+  const upSlug = ((r.text.match(/编号 <b>([^<]+)<\/b>/) || [])[1] || '');
+  ok('返回投稿编号（即 slug，标题是中文时 slug 也会是中文）', !!upSlug && !/[\s"<>]/.test(upSlug), upSlug || r.text.slice(0, 200));
+
+  if (upSlug) {
+    r = await req('/ugc/' + upSlug + '.html');
+    ok('待审的上传作品对游客 404', r.status === 404, r.status);
+    r = await req('/ugc/' + upSlug + '.html', { j: jarAd });
+    ok('站长能取到待审的上传作品', r.status === 200 && r.text.includes('__upmini'), r.status);
+    ok('响应 = text/html + sandbox CSP（不含 allow-same-origin）', /text\/html/.test(r.type) && /sandbox/.test(r.csp) && !/allow-same-origin/.test(r.csp), r.type + ' | ' + r.csp.slice(0, 90));
+
+    r = await req('/admin/preview/' + upSlug, { j: jarAd });
+    const ptag = ((r.text.match(/<iframe id="gameFrame"[\s\S]*?<\/iframe>/) || [''])[0]);
+    ok('后台预览用严格沙箱 iframe（无 allow-same-origin）', r.status === 200 && ptag.includes('/ugc/' + upSlug + '.html') && /sandbox="[^"]*allow-scripts[^"]*"/.test(ptag) && !/allow-same-origin/.test(ptag), ptag.slice(0, 180));
+
+    r = await req('/submit', { method: 'POST', j: jarUp, fd: fd('big.html', 'x'.repeat(513 * 1024)) });
+    ok('超过 512 KB 的文件被拒', r.status === 400 && r.text.includes('超过上限'), r.status + ' ' + r.text.slice(0, 140));
+    r = await req('/submit', { method: 'POST', j: jarUp, fd: fd('save.zip', MINI) });
+    ok('扩展名不对的文件被拒', r.status === 400 && r.text.includes('只能上传 .html'), r.status);
+    r = await req('/submit', { method: 'POST', j: jarUp, fd: fd('binary.html', 'PK\u0000\u0001bin') });
+    ok('非文本文件被拒', r.status === 400 && r.text.includes('不是文本'), r.status);
+    r = await req('/submit', { method: 'POST', j: jarUp, form: { title: '地址投稿' + STAMP, category: 'puzzle', game_url: '/games/2048/index.html' } });
+    ok('不带文件的老投稿路径仍可用', r.status === 200 && r.text.includes('投稿成功'), r.status);
+    r = await req('/submit', { method: 'POST', j: jarUp, form: { title: '两边都不填' + STAMP, category: 'puzzle' } });
+    ok('既没文件也没地址时明确报错', r.status === 400 && r.text.includes('请上传单文件 HTML'), r.status + ' ' + r.text.slice(0, 140));
+
+    r = await req('/admin/games/' + upSlug + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+    ok('站长通过上传的投稿', r.status === 302, r.status + ' ' + r.location);
+    r = await req('/ugc/' + upSlug + '.html');
+    ok('上架后游客能拿到上传的 HTML', r.status === 200 && r.text.includes('__upmini'), r.status);
+    r = await req('/game/' + upSlug);
+    const dtag = ((r.text.match(/<iframe id="gameFrame"[\s\S]*?<\/iframe>/) || [''])[0]);
+    ok('上架后详情页直接可玩（iframe 指向 /ugc/ 且严格沙箱）', r.status === 200 && dtag.includes('/ugc/' + upSlug + '.html') && /sandbox="[^"]*allow-scripts[^"]*"/.test(dtag) && !/allow-same-origin/.test(dtag), r.status + ' ' + dtag.slice(0, 170));
+    r = await req('/admin/games/' + upSlug + '/status', { method: 'POST', j: jarAd, form: { status: '2' }, redirect: 'manual' });
+    ok('复核完把测试投稿退回待审', r.status === 302, r.status + ' ' + r.location);
+    r = await req('/ugc/' + upSlug + '.html');
+    ok('退回待审后游客又取不到', r.status === 404, r.status);
+  }
 
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
