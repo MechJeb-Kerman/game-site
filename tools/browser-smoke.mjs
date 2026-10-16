@@ -7,6 +7,7 @@
 // 所以跑完数据库里会多出用户会话与一条评分。想回到干净状态就停掉服务删除 data/games.db 再启动。
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,6 +139,17 @@ function press(keys) {
   return out;
 }
 
+/* 临时探针服务器：验证 CSP 的 frame-src 真的放行「别的 origin」的页面。
+ * 响应故意不带 X-Frame-Options；页面一旦被载入就把 PROBE_OK 抛给父页面 ——
+ * 被 CSP 挡掉的 frame 根本不会执行脚本，所以在父页面等不到这条消息就是回归。
+ */
+const probe = http.createServer(function (req, res) {
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+  res.end('<!doctype html><title>probe</title><script>parent.postMessage("PROBE_OK", "*")</script>');
+});
+await new Promise(function (r) { probe.listen(0, '127.0.0.1', r); });
+const PROBE_URL = 'http://127.0.0.1:' + probe.address().port + '/';
+
 const HOME = BASE + '/';
 const TARGETS = [
   { n: 'home', w: 1280, h: 1050, u: HOME, js: null },
@@ -258,6 +270,18 @@ const TARGETS = [
     js: '(async function(){ document.getElementById(\'start\').click(); await new Promise(function(r){setTimeout(r,900)});' +
         ' var hits=0; for (let i=0;i<12;i++){ var up=document.querySelector(\'.mole.up\'); if(up){ up.dispatchEvent(new PointerEvent(\'pointerdown\',{bubbles:true})); hits++; } await new Promise(function(r){setTimeout(r,220)}); }' +
         " return { score: document.getElementById('score').textContent, hits: hits }; })()"
+  },
+  {
+    /* 守住线上那个 bug：投稿可以填外站地址，父页面 CSP 的 frame-src 必须放行 http(s)，
+       否则外站游戏框整块变成「该内容被屏蔽了」。探针 = 另一个 origin（127.0.0.1:随机端口）。 */
+    n: 'frame-src', w: 800, h: 520, u: BASE + '/game/2048',
+    js: "(async function(){" +
+        " var got = []; window.addEventListener('message', function(e){ got.push(String(e.data)); });" +
+        " var f = document.createElement('iframe'); f.setAttribute('id', 'csp-probe'); f.src = " + JSON.stringify(PROBE_URL) + ";" +
+        " document.body.appendChild(f);" +
+        " for (var i = 0; i < 60 && got.indexOf('PROBE_OK') < 0; i++) await new Promise(function(r){ setTimeout(r, 100); });" +
+        " if (got.indexOf('PROBE_OK') < 0) throw new Error('外站 iframe 没能加载，frame-src 可能又锁回 self 了：收到 ' + JSON.stringify(got));" +
+        " return { framed: true, got: got.length }; })()"
   }
 ];
 
@@ -283,6 +307,8 @@ for (const t of TARGETS) {
   results.push({ name: t.n, state: state, evalError: evalError, problems: problems(c) });
   c.close();
 }
+
+probe.close();
 
 let bad = 0;
 for (const r of results) {

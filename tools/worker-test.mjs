@@ -122,7 +122,7 @@ const CSP = [
   "media-src 'self' data: blob:",
   "font-src 'self' data:",
   "connect-src 'self'",
-  "frame-src 'self'",
+  "frame-src 'self' https: http:",
   "frame-ancestors 'self'",
   "base-uri 'self'",
   "form-action 'self'"
@@ -154,6 +154,12 @@ async function main() {
     const html = await r.text();
     has(html, '<title>');
     return 'CSP 与 server.js 完全一致';
+  });
+
+  await t('dist-cf/_headers 的 CSP 与代码一致（frame-src 放行外站）', async function () {
+    const headers = fs.readFileSync(path.join(OUT, '_headers'), 'utf8');
+    has(headers, 'Content-Security-Policy: ' + CSP, 'Pages 安全头');
+    return 'Pages 静态导出线的 _headers 已同步';
   });
 
   await t('GET /index.html 与 / 等价', async function () {

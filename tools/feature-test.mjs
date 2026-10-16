@@ -60,6 +60,9 @@ async function main() {
   ok('sitemap 收录 /rank', r.text.includes('/rank'), '');
   r = await req('/robots.txt');
   ok('robots 屏蔽 /account 与 /comments/', r.text.includes('Disallow: /account') && r.text.includes('Disallow: /comments/'), '');
+  r = await req('/game/2048');
+  ok('游戏详情页 CSP 放行外站 iframe（frame-src 含 http(s)，否则投稿的外站游戏被拦成「该内容被屏蔽了」）',
+    r.status === 200 && /frame-src[^;]*https:/.test(r.csp) && /frame-src[^;]*http:/.test(r.csp), r.csp.slice(0, 120));
 
   console.log('--- 拼音 / 首字母搜索 ---');
   r = await req('/api/search/suggest?q=tcs');
