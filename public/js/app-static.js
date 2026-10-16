@@ -73,4 +73,23 @@
       grid.parentNode.insertBefore(tip, grid);
     }
   }
+
+  /* 手柄：检测到手柄就把焦点交给游戏 iframe，手柄输入才进得去（游戏页里的映射见 public/js/gamepad.js） */
+  (function () {
+    var gf = document.getElementById('gameFrame');
+    if (!gf || !navigator.getGamepads) return;
+    var focusFrame = function () {
+      var ae = document.activeElement;
+      if (ae && ae !== document.body && ae !== gf) return;   /* 用户正在别处输入，别抢焦点 */
+      try { gf.focus(); } catch (e) { }
+    };
+    window.addEventListener('gamepadconnected', focusFrame);
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (++tries > 150) { clearInterval(timer); return; }
+      var pads = navigator.getGamepads(), has = false;
+      for (var i = 0; i < pads.length; i++) if (pads[i] && pads[i].connected) has = true;
+      if (has) focusFrame();
+    }, 1000);
+  })();
 })();

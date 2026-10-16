@@ -15,6 +15,7 @@
 | 搜索 | `/search?q=` 与 `/games?q=`，按标题/副标题/描述/标签模糊匹配（已转义 LIKE 通配符） |
 | 详情页 | 玩家信息 + 相关推荐 + 操作提示 + 游玩次数 + 5 星评分 + 收藏 + 玩家评论 |
 | 播放器 | iframe `sandbox` 隔离 + 全屏 + 真·重开 + 新窗口打开 |
+| 手柄 | 6 款游戏全部支持游戏手柄（十字键 / 摇杆 / A / B / Start），零依赖共享 shim，见「手柄支持」 |
 | 6 款自研游戏 | 2048、贪吃蛇、记忆翻牌、打地鼠、井字棋（minimax AI）、俄罗斯方块 |
 | 账号 | 注册 / 登录 / 退出；`scrypt` 加盐哈希存口令，`HttpOnly` 会话 cookie，30 天有效 |
 | 收藏 | 详情页一键「♡ 收藏」，`/favorites` 我的收藏夹 |
@@ -68,7 +69,7 @@ pnpm start                                               # 或 pnpm dev（--watc
 ```
 game-site/
 ├── server.js            Express 入口：安全头、静态目录、页面路由、API、登录守卫
-├── package.json         type: module，scripts: start / dev / reset / smoke / test:account / build:pages / serve:dist / smoke:pages / test:worker / serve:worker / test:worker-app
+├── package.json         type: module，scripts: start / dev / reset / smoke / test:account / test:gamepad / build:pages / serve:dist / smoke:pages / test:worker / serve:worker / test:worker-app
 ├── data/games.db        SQLite 数据库（首次启动自动生成）
 ├── src/
 │   ├── db.js            数据库连接、PRAGMA、建表与索引
@@ -80,7 +81,8 @@ game-site/
 ├── public/
 │   ├── css/style.css    全站样式（暗色玻璃拟态，响应式，含播放器与后台表格样式）
 │   ├── js/app.js        搜索回填、游玩上报、评分、收藏、评论、全屏 / 重开（Express 版）
-│   └── js/app-static.js 静态版前端：列表排序、前端搜索过滤、播放器全屏 / 重开
+│   ├── js/app-static.js 静态版前端：列表排序、前端搜索过滤、播放器全屏 / 重开
+│   └── js/gamepad.js    手柄 shim：keys 模式合成键盘事件、pointer 模式虚拟光标，6 款游戏共用
 ├── tools/
 │   ├── browser-smoke.mjs  无头 Chrome 真实交互冒烟测试（零依赖，pnpm smoke）
 │   ├── account-test.mjs   账号系统 57 项断言测试（pnpm test:account）
@@ -90,7 +92,8 @@ game-site/
 │   ├── worker-test.mjs    Cloudflare Worker 离线自测：静态版 23 项 + html_handling 配置守卫（pnpm test:worker）
 │   ├── d1-local.mjs       本机 D1 假实现：node:sqlite 冒充 D1（prepare/bind/first/all/run/batch）
 │   ├── serve-worker.mjs   本机把 worker/app.js 跑起来（pnpm serve:worker，默认 :4400）
-│   └── worker-app-test.mjs 一条命令跑 Worker + D1 的 57 项账号验收（pnpm test:worker-app）
+│   ├── worker-app-test.mjs 一条命令跑 Worker + D1 的 57 项账号验收（pnpm test:worker-app）
+│   └── gamepad-test.mjs   手柄自测：注入假手柄跑 7 个用例（pnpm test:gamepad）
 ├── worker/index.js      Cloudflare Workers 静态版入口：安全头 / 缓存 / 干净地址 / 404
 ├── worker/app.js        Workers + D1 完整版入口：路由 / 安全头 / 会话（复用 src/views.js）
 ├── worker/data.js       D1 版全部查询（异步版 src/data.js）
@@ -177,6 +180,43 @@ game-site/
 > 列表页的排序、搜索、标签聚合、sitemap、封面图全部由数据驱动，不需要改模板。
 > 也可以直接注册一个账号走 `/submit` 投稿：填完进待审队列，站长在 `/admin` 点「✅ 通过上架」就公开了。
 
+## 手柄支持
+
+6 款自研游戏全部支持游戏手柄（Gamepad API），共用一个零依赖 shim：`public/js/gamepad.js`。
+
+游戏页在引入 shim 之前先声明自己的映射：
+
+- 键盘型（2048 / 贪吃蛇 / 俄罗斯方块）：`window.GAMEPAD = { mode: "keys", a: " ", b: "r", start: "p" }` —— shim 合成真的 `keydown` / `keyup` 事件，游戏本体一行都不用改。
+- 指针型（记忆翻牌 / 井字棋 / 打地鼠）：`window.GAMEPAD = { mode: "pointer" }` —— 屏幕上出现虚拟光标，摇杆或十字键移动，A 键在光标处发一次完整点击（`pointerdown` + `mousedown` + `pointerup` + `mouseup` + `click`，因为打地鼠这类游戏监听的是 `pointerdown` + `closest(".mole")`，只调 `click()` 不会触发）。
+
+| 按键 | 作用 |
+| --- | --- |
+| 左摇杆 / 十字键 | 键盘型发方向键；指针型移动虚拟光标（摇杆按住连续移动，十字键默认 150ms 走一步 / 发一次键） |
+| A | 键盘型发 `KEY.a`；指针型在光标处点击；任何模式下只要屏幕上有可见的「开始 / 再来一局」按钮，就先点它 |
+| B | 发 `KEY.b`（默认空，俄罗斯方块里映射成 `r` 重开） |
+| Start | 先点当前可见的「开始 / 再来一局」按钮，没有才发 `KEY.start`（俄罗斯方块里映射成 `p` 暂停） |
+
+映射既可以写成 `window.GAMEPAD.keys = { a: " ", start: "p" }`，也可以把 `a` / `b` / `start` / `up` / `down` / `left` / `right` 直接写在顶层，两种都认（`KEY` 的默认值是方向键 + 空格）。
+
+详情页的游戏在 iframe 里，手柄输入只会送到有焦点的那一层：`public/js/app.js` 与 `public/js/app-static.js` 里挂了 helper —— 收到 `gamepadconnected` 或者轮询到 `navigator.getGamepads()` 里出现手柄时，就把焦点交给 `#gameFrame`（只在焦点还在 `body` 或已经在该 iframe 上时才抢，不会打断输入框）。游戏页自身也会 `window.focus()`。
+
+### 自测
+
+```bash
+pnpm test:gamepad        # 等价于 node tools/gamepad-test.mjs
+```
+
+`tools/gamepad-test.mjs` 用无头 Chrome + CDP 注入一台假手柄（覆盖 `navigator.getGamepads()`，状态挂在 `window.top.__pad` 上，所以父页面调 `window.__pad.set(...)` 就等于在按 iframe 里那台手柄），跑 7 个用例：
+
+- `gamepad-2048` 十字键让棋盘变化
+- `gamepad-snake` A 开始 → A 暂停 → A 继续
+- `gamepad-tetris` A 开始 → Start 暂停 → Start 继续
+- `gamepad-tictactoe` / `gamepad-memory` / `gamepad-whack` 摇杆把光标开到目标上，A 键落子 / 翻牌 / 敲地鼠
+- `gamepad-detail-iframe` 详情页：手柄一连上就自动把焦点交给 iframe，在父页面驱动手柄能在 iframe 里生效
+
+环境变量：`BASE`（默认 `http://127.0.0.1:3000`）、`CHROME`、`SHOTS_DIR`、`CDP_PORT`（默认 9225）、`PROFILE`、`ONLY`（按用例名过滤，例如 `ONLY=snake`）。
+
+坑：`/static` 有 7 天缓存，改完 `gamepad.js` 要么给页面里的引用加 `?v=`（游戏页已经是 `?v=1`），要么在自测里禁用缓存（工具里已经开了 `Network.setCacheDisabled`）。
 ## 数据模型
 
 ```sql
@@ -335,6 +375,7 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 - 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **57 项断言全过**。
   这一步捞出并修掉了两个只有真运行时才暴露的问题：`html_handling` 配成 `auto-trailing-slash` 会让站点陷入 `ERR_TOO_MANY_REDIRECTS`；真实 D1 的 `exec()` 按换行切语句，导致多行建表 SQL 直接 500。细节见两份 Cloudflare 部署文档。
 - 后台与账号相关的页面在无头 Chrome 里截图确认过：`docs/screens/login.png`、`register.png`、`submit.png`、`admin.png`、`favorites.png`、`rating.png`。
+- 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**7 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 详情页 iframe 自动聚焦并接收手柄输入）；静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
   > `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
   > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿。跑完想干净就按上面「彻底回到出厂状态」删库重启。
 

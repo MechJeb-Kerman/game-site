@@ -14,12 +14,12 @@ export function setStaticMode(on) { STATIC_MODE = !!on; }
 export const isStaticMode = () => STATIC_MODE;
 
 const HINTS = {
-  '2048': '方向键 ↑↓←→ 或 WASD 移动，手机端直接滑动屏幕',
-  snake: '方向键 / WASD 控制方向，手机端滑动屏幕',
-  memory: '点击卡片翻开，找出两张相同的图案',
-  whack: '点击或触摸地鼠即可敲击，金色地鼠双倍得分',
-  tictactoe: '点击空格落子，先连成三子的一方获胜',
-  tetris: '← → 移动，↑ 旋转，↓ 加速下落，空格直接落下'
+  '2048': '方向键 ↑↓←→ 或 WASD 移动，手机端滑动屏幕，手柄用十字键 / 左摇杆',
+  snake: '方向键 / WASD 控制方向，手机端滑动屏幕，手柄用十字键 / 左摇杆，A 或 Start 开始 / 暂停',
+  memory: '点击卡片翻开，找出两张相同的图案，手柄用左摇杆移动光标 + A 键翻牌',
+  whack: '点击或触摸地鼠即可敲击，金色地鼠双倍得分，手柄用左摇杆移动光标 + A 键敲',
+  tictactoe: '点击空格落子，先连成三子的一方获胜，手柄用左摇杆移动光标 + A 键落子',
+  tetris: '← → 移动，↑ 旋转，↓ 加速下落，空格直接落下，手柄用十字键 / 左摇杆 + A 键速降 + Start 暂停'
 };
 
 export function esc(s) {

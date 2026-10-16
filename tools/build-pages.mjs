@@ -174,6 +174,7 @@ put("static/css/style.css", fs.readFileSync(path.join(PUBLIC_DIR, "css", "style.
    ASSETS 目录，动态页面上就会加载到静态版前端，导致游玩上报、评分、评论、收藏全部静默失效。 */
 put("static/js/app.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app.js"), "utf8"));
 put("static/js/app-static.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app-static.js"), "utf8"));
+put("static/js/gamepad.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "gamepad.js"), "utf8"));
 const FAVICON = "<svg xmlns=" + Q + "http://www.w3.org/2000/svg" + Q + " viewBox=" + Q + "0 0 64 64" + Q + "><rect width=" + Q + "64" + Q + " height=" + Q + "64" + Q + " rx=" + Q + "22" + Q + " fill=" + Q + "#6366f1" + Q + "/><text x=" + Q + "32" + Q + " y=" + Q + "43" + Q + " font-size=" + Q + "34" + Q + " text-anchor=" + Q + "middle" + Q + ">🎮</text></svg>";
 put("favicon.svg", FAVICON);
 
@@ -183,10 +184,13 @@ for (const g of games) {
   if (!fs.existsSync(src)) { console.log("!! 跳过缺失的游戏文件：" + src); continue; }
   let html = fs.readFileSync(src, "utf8");
   if (html.indexOf("rel=" + Q + "icon" + Q) < 0) {
-    const link = NL + "<link rel=" + Q + "icon" + Q + " href=" + Q + base + "favicon.svg" + Q + ">";
+    /* 这里必须写根相对路径：下面的 staticize() 会统一补 base 前缀。以前这里自己拼了 base，
+       结果被 staticize 再拼一次，导出成 /<base>/<base>/favicon.svg 而 404。 */
+    const link = NL + "<link rel=" + Q + "icon" + Q + " href=" + Q + "/favicon.svg" + Q + ">";
     html = HEAD.test(html) ? html.replace(HEAD, function (m) { return m + link; }) : link + html;
   }
-  put("games/" + g.slug + "/index.html", html);
+  /* 游戏本体是自包含单文件，但手柄脚本用的是 /static 根路径，子路径部署下也要静态化 */
+  put("games/" + g.slug + "/index.html", staticize(html));
 }
 
 /* ---------- SEO 与数据 ---------- */
@@ -265,6 +269,17 @@ if (CF_MODE) {
     }
   }
   if (rels.indexOf("static/js/app-static.js") < 0) problems.push("没有产出 static/js/app-static.js");
+  if (rels.indexOf("static/js/gamepad.js") < 0) problems.push("没有产出 static/js/gamepad.js（手柄支持）");
+  const gpWant = base + "static/js/gamepad.js";
+  const gamePages = rels.filter(function (r) { return r.indexOf("games/") === 0 && /index[.]html$/.test(r); });
+  if (!gamePages.length) problems.push("没有产出任何游戏本体页");
+  gamePages.forEach(function (rel) {
+    const html = fs.readFileSync(path.join(OUT, rel), "utf8");
+    if (html.indexOf(gpWant) < 0) problems.push(rel + " 没有引用手柄脚本（应为 " + gpWant + "）");
+    if (base !== "/" && html.indexOf("\"/static/js/gamepad.js\"") >= 0) {
+      problems.push(rel + " 手柄脚本用的是根路径 /static/js/gamepad.js，没带 base 前缀 —— 子路径部署会 404");
+    }
+  });
   rels.forEach(function (rel) {
     if (!/.html$/.test(rel)) return;
     if (rel.indexOf("games/") === 0) return; // 游戏本体是自包含的单文件页，不引主站前端
@@ -280,7 +295,7 @@ if (CF_MODE) {
     problems.forEach(function (p) { console.error("  - " + p); });
     process.exitCode = 1;
   } else {
-    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js");
+    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js、手柄脚本已随游戏页导出");
   }
 })();
 
