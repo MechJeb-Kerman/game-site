@@ -46,13 +46,14 @@ migrations_dir = "migrations"
 # RESEND_API_KEY = "re_..."
 # MAIL_API_URL = "https://mail.example.com/send"
 # MAIL_API_KEY = "..."          # secret：npx wrangler secret put MAIL_API_KEY
-# MAIL_FROM = "趣玩小游戏 <noreply@games.example.com>"
+# MAIL_FROM 是非机密，直接写在这里，随构建一起部署（下面这几行就是线上在用的值）：
+MAIL_FROM = "趣玩小游戏 <noreply@fishport.cn>"
 
 # 第三方登录：配了才会在登录页出现按钮，回调地址固定是 <站点域名>/auth/<provider>/callback。
-# GITHUB_CLIENT_ID = "..."
-# GITHUB_CLIENT_SECRET = "..."  # secret：npx wrangler secret put GITHUB_CLIENT_SECRET
-# GOOGLE_CLIENT_ID = "..."
-# GOOGLE_CLIENT_SECRET = "..."  # secret：npx wrangler secret put GOOGLE_CLIENT_SECRET
+GITHUB_CLIENT_ID = "Ov23liMTtgBKQzeyEsY4"
+# GITHUB_CLIENT_SECRET = "..."  # secret：别写进仓库，用 Cloudflare 控制台或 npx wrangler secret put
+GOOGLE_CLIENT_ID = "572690505711-cdnfel89qrll44tu048k4fnmiceuv70.apps.googleusercontent.com"
+# GOOGLE_CLIENT_SECRET = "..."  # secret：同上
 # OAUTH_DEV = "1"               # 生产环境也开放「演示登录」时才需要
 
 # 自建 OAuth 网关 / 测试环境：# OAUTH_GITHUB_AUTHORIZE_URL / OAUTH_GITHUB_TOKEN_URL /
