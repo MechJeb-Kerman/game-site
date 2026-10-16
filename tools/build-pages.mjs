@@ -40,8 +40,12 @@ const baseNoSlash = base.length > 1 ? base.slice(0, -1) : "";
 let origin = String(opt("origin", "https://YOUR-USER.github.io" + baseNoSlash));
 while (origin.length > 1 && origin.endsWith("/")) origin = origin.slice(0, -1);
 const PLACEHOLDER = origin.indexOf("YOUR-USER") >= 0;
-const OUT = path.resolve(opt("out", path.join(ROOT, "dist")));
 const CF_MODE = argv.indexOf("--cf") >= 0;
+/* --cf 写 dist-cf、否则写 dist。两个目录同时存在（dist = GitHub Pages / Workers 备用，
+   dist-cf = Cloudflare Pages 与 wrangler 的 assets 目录），漏写 --out 会把对方的产物覆盖掉
+   （踩过一次：--cf 忘了 --out，结果 GitHub Pages 的 dist 被覆盖、dist-cf 还是旧版本），
+   所以让模式自己决定默认目录。 */
+const OUT = path.resolve(opt("out", path.join(ROOT, CF_MODE ? "dist-cf" : "dist")));
 
 /* ---------- URL 重写：/game/x -> /base/game/x.html 之类 ---------- */
 // mapRel(p)：p 以 / 开头、不含 base 前缀，返回重写后的路径（仍以 / 开头）

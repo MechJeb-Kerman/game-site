@@ -69,7 +69,7 @@ pnpm start                                               # 或 pnpm dev（--watc
 ```
 game-site/
 ├── server.js            Express 入口：安全头、静态目录、页面路由、API、登录守卫
-├── package.json         type: module，scripts: start / dev / reset / smoke / test:account / test:gamepad / build:pages / serve:dist / smoke:pages / test:worker / serve:worker / test:worker-app
+├── package.json         type: module，scripts: start / dev / reset / smoke / test:account / test:gamepad / build:pages / zip:cf / serve:dist / smoke:pages / test:worker / serve:worker / test:worker-app
 ├── data/games.db        SQLite 数据库（首次启动自动生成）
 ├── src/
 │   ├── db.js            数据库连接、PRAGMA、建表与索引
@@ -87,6 +87,7 @@ game-site/
 │   ├── browser-smoke.mjs  无头 Chrome 真实交互冒烟测试（零依赖，pnpm smoke）
 │   ├── account-test.mjs   账号系统 57 项断言测试（pnpm test:account）
 │   ├── build-pages.mjs    静态导出：GitHub Pages / Cloudflare Pages + 构建自检（pnpm build:pages）
+│   ├── zip-dist.mjs       把产物目录打成 zip：条目名用 /、中文名带 UTF-8 标志（pnpm zip:cf）
 │   ├── serve-dist.mjs     本地预览 dist（模拟子路径部署，pnpm serve:dist）
 │   ├── pages-smoke.mjs    静态版无头 Chrome 冒烟 + 截图 + 前端引用断言（pnpm smoke:pages）
 │   ├── worker-test.mjs    Cloudflare Worker 离线自测：静态版 23 项 + html_handling 配置守卫（pnpm test:worker）
@@ -105,7 +106,7 @@ game-site/
 ├── migrations/0001_init.sql  D1 建表脚本（由 worker/schema.js 的 DDL 生成）
 ├── dist/                静态版产物：GitHub Pages 用（--base=/仓库名/）
 ├── dist-cf/             静态版产物：Cloudflare Pages 用（--base=/，多一个 _headers）
-├── cloudflare-pages.zip dist-cf 的 zip 包，Cloudflare 控制台可直接拖拽上传
+├── cloudflare-pages.zip dist-cf 的 zip 包（pnpm zip:cf），Cloudflare 控制台可直接拖拽上传
 ├── docs/screens/        冒烟测试与手工验证产出的截图
 ├── DEPLOY-GITHUB-PAGES.md   静态版部署到 GitHub Pages 的步骤与各种坑
 ├── DEPLOY-CLOUDFLARE.md     部署到 Cloudflare Pages 的步骤（含 Tunnel 与 Workers 三条路）
@@ -309,7 +310,7 @@ node tools/build-pages.mjs --cf --base=/ --origin=https://项目名.pages.dev --
 node tools/pages-smoke.mjs --base=/ --out=dist-cf      # 无头 Chrome 冒烟 + 截图
 ```
 
-产物 `dist-cf/`（49 个文件，含 `_headers`）已打包成 **`cloudflare-pages.zip`**，在 Cloudflare 控制台 *Workers & Pages → Create → Pages → Upload assets* 里拖上去即可，不用装 wrangler、不用 Git。三条发布路线（控制台上传 / Git 集成 / wrangler）、自定义域名后的重建、`_redirects` 漂亮地址、以及想挂**有服务端**的完整版时走 Cloudflare Tunnel 的完整命令，见 **[DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md)**。
+产物 `dist-cf/`（50 个文件 / 363 KB，含 `_headers`）已打包成 **`cloudflare-pages.zip`**（111 KB / 50 个条目；条目名一律用 `/`、中文文件名带 UTF-8 标志，所以拖上去不会解出 `tag\益智.html` 这种怪名字，内容改了以后用 `pnpm zip:cf` 重打），在 Cloudflare 控制台 *Workers & Pages → Create → Pages → Upload assets* 里拖上去即可，不用装 wrangler、不用 Git。三条发布路线（控制台上传 / Git 集成 / wrangler）、自定义域名后的重建、`_redirects` 漂亮地址、以及想挂**有服务端**的完整版时走 Cloudflare Tunnel 的完整命令，见 **[DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md)**。
 
 > 本机（开发环境）没有外网出口也没有 Cloudflare 凭证，最后一步上传需要你自己在浏览器里完成；`dist-cf/` 与 zip 都已经构建并本地验证过。
 

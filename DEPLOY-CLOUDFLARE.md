@@ -8,8 +8,8 @@
 
 | 产物 | 说明 |
 | --- | --- |
-| `dist-cf/` | Cloudflare 用构建产物，48 个文件 / 339.6 KB，`--base=/`（域名根） |
-| `cloudflare-pages.zip` | 同一份内容的 zip，102 KB / 48 个条目，控制台可以直接拖 |
+| `dist-cf/` | Cloudflare 用构建产物，50 个文件 / 363.3 KB，`--base=/`（域名根） |
+| `cloudflare-pages.zip` | 同一份内容的 zip，111 KB / 50 个条目，控制台可以直接拖 |
 | `dist-cf/_headers` | Cloudflare Pages 专属：安全响应头 + 静态资源缓存策略 |
 
 ## 为什么 Cloudflare 版和 GitHub 版是两个目录
@@ -27,7 +27,7 @@
 2. 项目名填 `game-site`（如果被占用就换一个，换完要重新构建并改 `--origin`）。
 3. 把 `cloudflare-pages.zip` 拖进去（或者直接把 `dist-cf` 文件夹拖进去）。
 4. **Deploy**，几十秒后拿到 `https://game-site.pages.dev`。
-5. 以后更新：同一个项目里点 **Create new deployment** 传新 zip；也可以直接 `dist-cf` 整个文件夹拖。
+5. 以后更新：改了内容先重新构建 —— `node tools/build-pages.mjs --cf --base=/ --origin=https://game-site.pages.dev`（`--cf` 时 `--out` 默认就是 `dist-cf`，不用再写），再 `pnpm zip:cf` 重打包（`node tools/zip-dist.mjs --dir=dist-cf`）；然后在同一个项目里点 **Create new deployment** 传新 zip，也可以直接 `dist-cf` 整个文件夹拖。
 
 这条路不需要 Git、不需要 Node、不需要命令行。
 
