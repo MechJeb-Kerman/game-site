@@ -22,6 +22,7 @@ export const SECURITY_HEADERS = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Frame-Options': 'SAMEORIGIN',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+  /* frame-src 放行 http(s)：投稿允许填任意外站地址，外站游戏靠 iframe 载入 */
   'Content-Security-Policy': [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
@@ -30,7 +31,7 @@ export const SECURITY_HEADERS = {
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    "frame-src 'self'",
+    "frame-src 'self' https: http:",
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'"

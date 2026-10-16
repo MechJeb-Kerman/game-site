@@ -250,6 +250,7 @@ put("data/games.json", JSON.stringify({
 
 /* ---------- Cloudflare Pages 专用文件（_headers） ---------- */
 if (CF_MODE) {
+  /* frame-src 放行 http(s)：投稿允许填任意外站地址，外站游戏靠 iframe 载入 */
   const csp = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
@@ -258,7 +259,7 @@ if (CF_MODE) {
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    "frame-src 'self'",
+    "frame-src 'self' https: http:",
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'"

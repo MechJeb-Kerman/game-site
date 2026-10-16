@@ -29,7 +29,11 @@ app.use(express.json({ limit: '64kb' }));
 // 登录 / 注册 / 投稿 / 后台都走原生表单提交，禁用 JS 也能用
 app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
-/** 安全响应头（游戏为本站自研，故允许 inline/eval） */
+/**
+ * 安全响应头（游戏为本站自研，故允许 inline/eval）。
+ * frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把那个地址 iframe 进来，
+ * 只写 'self' 会把外站游戏整块拦成「该内容被屏蔽了」（不同子域也不算 'self'）。
+ */
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -45,7 +49,7 @@ app.use((req, res, next) => {
       "media-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",
-      "frame-src 'self'",
+      "frame-src 'self' https: http:",
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'"

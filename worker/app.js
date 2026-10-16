@@ -12,6 +12,10 @@ import * as mail from './mail.js';
 import * as oauth from './oauth.js';
 import { ensureReady } from './schema.js';
 
+/**
+ * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
+ * 那个地址 iframe 进来，只写 'self' 会拦成「该内容被屏蔽了」（不同子域也不算 'self'）。
+ */
 export const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'strict-origin-when-cross-origin',
@@ -25,7 +29,7 @@ export const SECURITY_HEADERS = {
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    "frame-src 'self'",
+    "frame-src 'self' https: http:",
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'"
