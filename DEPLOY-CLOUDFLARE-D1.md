@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 89 项功能验收 + 18 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 104 项功能验收 + 42 项邮件与第三方登录端到端 + 18 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -157,6 +157,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 - **新列不能靠 `CREATE TABLE IF NOT EXISTS` 补**（表已存在时整句会被跳过），所以 `worker/schema.js` 里带了 D1 版的补列助手：启动时 `PRAGMA table_info(<表>)` 查一遍，缺哪列就 `ALTER TABLE ... ADD COLUMN`（对应 `src/db.js` 的 `addColumn`）。已有的线上库**直接重新部署一次就行**，不需要手工跑 SQL。
 - 索引同理，新增了 `idx_games_status`、`idx_comments_parent`、`idx_reports_status`、`idx_audit_recent`、`idx_oauth_user`、`idx_reset_user`。
 - 排行榜的数据来自 `play_logs`，没有引入 Redis 之类的外部存储；表结构不需要额外准备。
+- 投稿上传的单文件 HTML 存在 `game_files`（`migrations/0002_game_files.sql`）；「彻底删除游戏」只是把 `comment_reports` / `comments` / `ratings` / `favorites` / `play_logs` / `game_files` / `games` 里的行按事务删掉，同样不需要新表新列。
 
 ### 邮箱与第三方登录要配的变量
 
@@ -168,26 +169,30 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub 登录 | 登录页不显示 GitHub 按钮 |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google 登录 | 登录页不显示 Google 按钮 |
 | `OAUTH_DEV` | 值为 `1` 时开放「演示登录」（不连第三方，直接给一个测试身份） | 默认关闭 |
+| `OAUTH_<PROVIDER>_AUTHORIZE_URL` / `_TOKEN_URL` / `_USER_URL` / `_EMAILS_URL` | 覆盖该 Provider 的授权 / 令牌 / 用户资料端点（`<PROVIDER>` 取 `GITHUB` / `GOOGLE`），接自建 OAuth 网关或测试环境时用 | 用 GitHub / Google 官方地址 |
 
 - 这些都是 Workers 的 vars / secret：值不敏感的直接写 `wrangler.d1.toml` 的 `[vars]`，敏感的用 `npx wrangler secret put MAIL_API_KEY`（`GITHUB_CLIENT_SECRET`、`GOOGLE_CLIENT_SECRET`、`RESEND_API_KEY` 同理）。
 - 发信配置一个都没有时，注册 / 找回流程照样能走完：验证链接会打印在 `/admin` 页面的「开发发件箱」区块里（最近 50 封）。
 - 发信失败（配额、域名未验证等）不会把接口打挂，接口只回 `{ ok: true, sent: false }`，页面提示稍后再试。
 - OAuth 回调地址固定是 `<站点域名>/auth/<provider>/callback`，要在 GitHub / Google 后台登记这个地址；`SITE_ORIGIN`（可选）在挂了自定义域名时用来覆盖 Worker 推断出来的 origin。
 - 一个第三方身份只对应一个站内用户（`oauth_accounts` 主键 `(provider, provider_uid)`）；绑定与解绑都在 `/account`。
+- 配好之后打开 `/admin`，页面上的「集成自检」会把当前生效的邮件 transport（Resend / 自建 HTTP / 开发发件箱）、发件人、以及每个第三方登录的 client_id / secret 是否已配置和回调地址列出来——只回答「配没配」，不显示 secret 明文，也不发起任何外部请求。
 
 ## 七、本机怎么验证（不需要 Cloudflare 账号）
 
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
 node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
-node tools/worker-feature-test.mjs         # 89 项第二批功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML）
+node tools/worker-feature-test.mjs         # 104 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除）
+node tools/worker-mail-oauth-test.mjs      # 42 项邮件与第三方登录端到端（自起假邮件服务端 + 假 OAuth Provider，不连外网）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **89 项第二批功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱，以及投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400），
+  **104 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，以及彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404），
+  **42 项邮件与第三方登录断言全过**（`tools/mail-oauth-test.mjs` 的场景换成 D1 数据层：绑定邮箱收到验证信、点链接变已验证、找回密码改密、GitHub / Google 授权回调建号与复用账号、`state` 校验失败 400、后台集成自检面板），
   **18 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想），无 console 报错、无资源 404。
   静态产物那边 `node tools/worker-test.mjs` 另有 **24 项断言**（页面 200、站内链接 54 条全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
@@ -252,5 +257,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 89 项功能断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 104 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
 14 个页面的浏览器渲染与交互、静态资源与安全响应头（24 项断言，见 `tools/worker-test.mjs`）。
