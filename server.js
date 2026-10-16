@@ -6,10 +6,17 @@ import * as data from './src/data.js';
 import * as ui from './src/views.js';
 import * as auth from './src/auth.js';
 import { coverSvg, ogSvg } from './src/cover.js';
+import * as mail from './src/mail.js';
+import * as oauth from './src/oauth.js';
+import { randomBytes } from 'node:crypto';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
 auth.ensureAdmin();
+
+// 老库升级：search_pinyin 是后加的列，seed 不会算拼音，启动时把空索引补一遍（只处理空行，很快）
+const indexedGames = data.reindexSearchIndex();
+if (indexedGames) console.log('[search] 补建拼音索引 ' + indexedGames + ' 条');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -70,6 +77,21 @@ function requireAdmin(req, res, next) {
     return res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
   }
   res.status(403).json({ error: 'forbidden', hint: '只有站长能操作' });
+}
+
+/** 表单类接口的登录守卫：没登录就跳登录页，而不是回 JSON（浏览器直接提交表单时才不会看到一坨 JSON） */
+function loginPageGuard(fallback) {
+  return (req, res, next) => {
+    if (req.user) return next();
+    const n = (req.body || {}).next || fallback || '/';
+    res.redirect('/login?next=' + encodeURIComponent(safeNext(n)));
+  };
+}
+
+/** 往站内路径上挂查询参数，注意别挂到 # 片段后面去 */
+function withQuery(path, kv) {
+  const [base, hash] = String(path).split('#');
+  return base + (base.includes('?') ? '&' : '?') + kv + (hash ? '#' + hash : '');
 }
 
 /** 只允许站内跳转，挡掉 //evil.com 这种开放重定向 */
@@ -191,10 +213,34 @@ app.get('/search', (req, res) => {
   );
 });
 
+/** 举报结果提示（落在详情页评论区顶部） */
+const CMT_NOTICE = {
+  ok: '举报已收到，站长会尽快处理 ✅',
+  already: '你已经举报过这条评论了',
+  bad_reason: '举报原因不对，换一个试试',
+  not_found: '这条评论已经不在了'
+};
+
+app.get('/rank', (req, res) => {
+  const board = data.leaderboard(data.boardKind(req.query.kind), 20);
+  res.send(
+    ui.rankPage({
+      origin: originOf(req),
+      user: req.user,
+      kind: board.kind,
+      label: board.label,
+      metric: board.metric,
+      rows: board.rows,
+      boards: Object.entries(data.BOARD_KINDS).map(([k, v]) => ({ kind: k, label: v.label }))
+    })
+  );
+});
+
 app.get('/game/:slug', (req, res) => {
   const game = data.getGame(req.params.slug);
   if (!game) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
   const uid = req.user ? req.user.id : 0;
+  const cpage = Math.max(1, Number(req.query.cpage) || 1);
   res.send(
     ui.gamePage({
       origin: originOf(req),
@@ -204,8 +250,9 @@ app.get('/game/:slug', (req, res) => {
       myStars: data.myRating(game.slug, req.user ? String(uid) : ''),
       favorited: data.isFavorited(game.slug, uid),
       favCount: data.favoriteCount(game.slug),
-      comments: data.listComments(game.slug, 50),
-      commentTotal: data.countComments(game.slug)
+      thread: data.commentThread(game.slug, cpage),
+      commentTotal: data.countComments(game.slug),
+      cmtNotice: CMT_NOTICE[String(req.query.report || '')] || ''
     })
   );
 });
@@ -246,6 +293,11 @@ app.get('/robots.txt', (req, res) => {
       'Disallow: /register',
       'Disallow: /favorites',
       'Disallow: /submit',
+      'Disallow: /account',
+      'Disallow: /forgot',
+      'Disallow: /reset',
+      'Disallow: /auth',
+      'Disallow: /comments/',
       '',
       'Sitemap: ' + origin + '/sitemap.xml',
       ''
@@ -255,7 +307,7 @@ app.get('/robots.txt', (req, res) => {
 
 app.get('/sitemap.xml', (req, res) => {
   const origin = originOf(req);
-  const urls = [{ loc: '/', pri: '1.0' }];
+  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }];
   for (const c of data.listCategories()) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }
@@ -311,6 +363,33 @@ app.get('/api/games/:slug', (req, res) => {
   const g = data.getGame(req.params.slug);
   if (!g) return res.status(404).json({ error: 'not_found' });
   res.json(g);
+});
+
+/**
+ * 搜索建议：走的是和列表页同一套相关度排序（标题 > 拼音前缀 > 拼音包含 > 副标题 > 标签）。
+ * 输入拼音/首字母也能出结果，例如 tanchishe / tcs → 贪吃蛇。
+ */
+app.get('/api/search/suggest', (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 40);
+  if (!q) return res.json({ q: '', items: [] });
+  const items = data.listGames({ q, limit: 6 }).map((g) => ({
+    slug: g.slug,
+    title: g.title,
+    emoji: g.emoji,
+    category: g.category ? g.category.name : '',
+    plays: g.plays,
+    rating: g.rating
+  }));
+  res.json({ q, items });
+});
+
+/** 评论分页 JSON（详情页评论区 / 无刷新翻页用） */
+app.get('/api/games/:slug/comments', (req, res) => {
+  const slug = String(req.params.slug);
+  if (!data.getGame(slug)) return res.status(404).json({ error: 'not_found' });
+  const pageSize = Math.max(1, Math.min(50, Number(req.query.pageSize) || data.COMMENT_PAGE_SIZE));
+  const thread = data.commentThread(slug, Math.max(1, Number(req.query.page) || 1), pageSize);
+  res.json({ slug, total: thread.total, page: thread.page, pages: thread.pages, pageSize: thread.pageSize, items: thread.items });
 });
 
 /** 同一个 IP 对同一款游戏 30 秒内只计一次，避免刷新刷量 */
@@ -400,6 +479,192 @@ app.post('/logout', (req, res) => {
   res.redirect('/');
 });
 
+/* ---------- 账号设置 / 邮箱验证 / 找回密码 ---------- */
+
+/** 没配邮件服务时，把验证链接直接带回页面（开发自测用） */
+function devLinkOf(origin, kind, token) {
+  if (mail.mailConfigured()) return '';
+  if (!/^[a-f0-9]{64}$/.test(String(token || ''))) return '';
+  return origin + (kind === 'reset' ? '/reset?token=' : '/verify-email?token=') + token;
+}
+
+app.get('/account', requireLogin, (req, res) => {
+  res.send(
+    ui.accountPage({
+      origin: originOf(req),
+      user: req.user,
+      providers: oauth.enabledProviders(),
+      links: auth.oauthAccountsOf(req.user.id).map((l) => {
+        const m = oauth.providerMeta(l.provider);
+        return { provider: l.provider, label: m ? m.icon + ' ' + m.label : l.provider, name: l.provider_uid };
+      }),
+      notice: String(req.query.ok || ''),
+      error: String(req.query.err || ''),
+      devLink: devLinkOf(originOf(req), 'verify', req.query.t)
+    })
+  );
+});
+
+app.post('/account/email', loginPageGuard('/account'), async (req, res) => {
+  const email = auth.normalizeEmail((req.body || {}).email);
+  if (req.user.email && email === auth.normalizeEmail(req.user.email)) {
+    return res.redirect('/account?err=email_same');
+  }
+  const r = auth.setEmail(req.user.id, email);
+  if (r.error) return res.redirect('/account?err=email');
+  const m = mail.verifyMail(originOf(req), { name: req.user.name, username: req.user.username, email: r.email }, r.token);
+  const sent = await mail.sendMail(m);
+  data.logAudit(req.user, 'user.email', '#' + req.user.id, r.email);
+  res.redirect('/account?ok=email' + (sent.ok && sent.dev ? '&t=' + r.token : ''));
+});
+
+app.post('/account/resend', loginPageGuard('/account'), async (req, res) => {
+  if (!req.user.email || Number(req.user.email_verified)) return res.redirect('/account?err=resend');
+  const r = auth.refreshVerifyToken(req.user.id);
+  if (r.error) return res.redirect('/account?err=resend');
+  const sent = await mail.sendMail(mail.verifyMail(originOf(req), req.user, r.token));
+  res.redirect('/account?ok=resent' + (sent.ok && sent.dev ? '&t=' + r.token : ''));
+});
+
+app.post('/account/password', loginPageGuard('/account'), (req, res) => {
+  const b = req.body || {};
+  const r = auth.changePassword(req.user.id, b.old, b.password);
+  if (r.error) return res.redirect('/account?err=password');
+  data.logAudit(req.user, 'user.password', '#' + req.user.id, '');
+  auth.endSession(req, res);
+  res.send(
+    ui.messagePage({
+      origin: originOf(req), user: null, title: '密码已更新', heading: '密码已更新 ✅',
+      sub: '所有设备都已退出登录，请用新密码重新登录', path: '/login'
+    })
+  );
+});
+
+app.post('/account/unlink', loginPageGuard('/account'), (req, res) => {
+  const r = auth.unlinkOAuth(req.user.id, (req.body || {}).provider);
+  if (r.error) return res.redirect('/account?err=unlink');
+  data.logAudit(req.user, 'user.unlink', '#' + req.user.id, String((req.body || {}).provider || ''));
+  res.redirect('/account?ok=unlink');
+});
+
+app.get('/verify-email', (req, res) => {
+  const origin = originOf(req);
+  const r = auth.verifyEmailToken(req.query.token);
+  if (r.error) {
+    return res.status(400).send(ui.messagePage({
+      origin, user: req.user, title: '邮箱验证', heading: '验证没有成功', sub: r.error, path: '/account'
+    }));
+  }
+  res.send(ui.messagePage({
+    origin, user: req.user, title: '邮箱验证', heading: '邮箱验证成功 ✅',
+    sub: (r.email || '') + ' 已验证，之后可以用它找回密码', path: '/account'
+  }));
+});
+
+app.get('/forgot', (req, res) => {
+  res.send(ui.forgotPage({ origin: originOf(req), user: req.user }));
+});
+
+app.post('/forgot', async (req, res) => {
+  const origin = originOf(req);
+  const r = auth.createResetToken((req.body || {}).account);
+  let devLink = '';
+  if (r.sent) {
+    const m = mail.resetMail(origin, r.user, r.token);
+    const sent = await mail.sendMail(m);
+    if (sent.ok && sent.dev) devLink = m.link;
+  }
+  res.status(r.error ? 400 : 200).send(ui.forgotPage({
+    origin, user: req.user, error: r.error || '', done: !r.error, devLink
+  }));
+});
+
+app.get('/reset', (req, res) => {
+  res.send(ui.resetPage({ origin: originOf(req), user: req.user, token: String(req.query.token || '') }));
+});
+
+app.post('/reset', (req, res) => {
+  const origin = originOf(req);
+  const b = req.body || {};
+  const token = String(b.token || '');
+  const fail = (error) => res.status(400).send(ui.resetPage({ origin, user: req.user, token, error }));
+  if (String(b.password || '') !== String(b.password2 || '')) return fail('两次输入的密码不一样');
+  const r = auth.consumeResetToken(token, b.password);
+  if (r.error) return fail(r.error);
+  res.send(ui.messagePage({
+    origin, user: null, title: '密码已重置', heading: '密码已重置 ✅',
+    sub: '所有设备都需要用新密码重新登录', path: '/login'
+  }));
+});
+
+/* ---------- 第三方登录（OAuth 2.0） ---------- */
+
+const OAUTH_STATE_COOKIE = 'oauth_state';
+
+/** state 和登录后要去的地址一起塞进短命 cookie，回调时比对 */
+function setStateCookie(res, state, next) {
+  res.append('Set-Cookie',
+    OAUTH_STATE_COOKIE + '=' + state + '.' + encodeURIComponent(next) +
+    '; Path=/; Max-Age=600; SameSite=Lax; HttpOnly');
+}
+
+app.get('/auth/:provider', (req, res) => {
+  const name = String(req.params.provider);
+  const origin = originOf(req);
+  const next = safeNext(req.query.next);
+  if (!oauth.providerEnabled(name)) {
+    return res.status(404).send(ui.messagePage({
+      origin, user: req.user, title: '第三方登录', heading: '这个登录方式没有开启',
+      sub: '需要先给站点配置对应的 Client ID / Secret', path: '/login'
+    }));
+  }
+  const state = randomBytes(16).toString('hex');
+  setStateCookie(res, state, next);
+  if (oauth.providerMeta(name).mock) return res.redirect('/auth/dev/callback?code=mock&state=' + state);
+  res.redirect(oauth.authorizeUrl(name, origin, state));
+});
+
+async function handleOAuthCallback(req, res) {
+  const name = String(req.params.provider);
+  const origin = originOf(req);
+  const fail = (sub) => res.status(400).send(ui.messagePage({
+    origin, user: req.user, title: '第三方登录', heading: '登录没有完成', sub, path: '/login'
+  }));
+  if (!oauth.providerEnabled(name)) return fail('这个登录方式没有开启');
+
+  const raw = auth.readCookie(req, OAUTH_STATE_COOKIE);
+  const dot = raw.indexOf('.');
+  const state = dot < 0 ? raw : raw.slice(0, dot);
+  const next = dot < 0 ? '/' : safeNext(decodeURIComponent(raw.slice(dot + 1)));
+  if (!state || String(req.query.state || '') !== state) {
+    return fail('登录状态校验失败，请重新发起一次（浏览器可能拦了临时 cookie）');
+  }
+  res.append('Set-Cookie', OAUTH_STATE_COOKIE + '=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly');
+
+  let profile;
+  if (oauth.providerMeta(name).mock) {
+    profile = oauth.mockProfile(req.query);
+  } else {
+    const code = String(req.query.code || '');
+    if (!code) return fail('没有拿到授权码，可能是你取消了授权');
+    const ex = await oauth.exchangeCode(name, origin, code);
+    if (ex.error) return fail('换取用户资料失败（' + ex.error + '），稍后再试');
+    profile = ex.profile;
+  }
+  const r = auth.oauthLogin(name, profile.uid, profile);
+  if (r.error) return fail(r.error === '账号已被封禁' ? '账号已被封禁，请联系站长' : '登录失败，请换个方式再试');
+  auth.startSession(res, r.user.id);
+  data.logAudit(r.user, 'oauth.login', name, r.created ? '新账号' : (r.linked ? '按邮箱认领' : '已绑定'));
+  res.redirect(next);
+}
+
+app.get('/auth/:provider/callback', (req, res) => {
+  handleOAuthCallback(req, res).catch((err) => {
+    console.error('[oauth:callback]', err);
+    res.status(500).type('text/plain').send('第三方登录出错了，请稍后再试');
+  });
+});
+
 app.get('/favorites', requireLogin, (req, res) => {
   const list = data.listFavorites(req.user.id);
   res.send(ui.favoritesPage({
@@ -427,26 +692,92 @@ app.post('/submit', requireLogin, (req, res) => {
 // ---------- 后台 ----------
 
 app.get('/admin', requireAdmin, (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 40);
+  const status = req.query.status === undefined ? '' : String(req.query.status);
+  const category = String(req.query.category || '');
   res.send(ui.adminPage({
     origin: originOf(req),
     user: req.user,
     stats: data.adminStats(),
     pending: data.listGamesByStatus(2, 100),
-    managed: data.listManagedGames(200),
-    comments: data.listRecentComments(30)
+    managed: data.listManagedGames({ status, q, category, limit: 200 }),
+    comments: data.listRecentComments({ limit: 30 }),
+    reports: data.listReports(0, 50),
+    users: data.listUsers({ q, limit: 100 }),
+    audit: data.listAudit({ limit: 50 }),
+    categories: data.listCategories(),
+    filter: { q, status, category },
+    outbox: mail.outbox(20),
+    mailTransport: mail.transportName(),
+    notice: String(req.query.ok || '')
+  }));
+});
+
+/** 后台预览：待审核的投稿也能按玩家视角打开 */
+app.get('/admin/preview/:slug', requireAdmin, (req, res) => {
+  const game = data.getGameAny(req.params.slug);
+  if (!game) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  res.send(ui.gamePage({
+    origin: originOf(req),
+    user: req.user,
+    game,
+    related: data.relatedGames(game, 4),
+    preview: true,
+    thread: data.commentThread(game.slug, 1),
+    commentTotal: data.countComments(game.slug)
   }));
 });
 
 app.post('/admin/games/:slug/status', requireAdmin, (req, res) => {
-  const r = data.setGameStatus(String(req.params.slug), (req.body || {}).status);
+  const slug = String(req.params.slug);
+  const r = data.setGameStatus(slug, (req.body || {}).status);
   if (r.error) return res.status(404).type('text/plain').send('没有这个游戏');
+  data.logAudit(req.user, 'game.status', slug, data.STATUS_LABEL[r.status] || String(r.status));
   res.redirect('/admin');
+});
+
+app.post('/admin/games/batch', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = data.setGamesStatus([].concat(b.slug || []), b.status);
+  if (r.error) {
+    const msg = r.error === 'empty' ? '没有选中任何游戏' : '状态不合法';
+    return res.status(400).type('text/plain').send(msg);
+  }
+  data.logAudit(req.user, 'game.batch', data.STATUS_LABEL[r.status] || String(r.status),
+    r.changed.length + ' 条：' + r.changed.slice(0, 12).join(', ') + (r.missing.length ? ' / 未找到 ' + r.missing.length + ' 条' : ''));
+  res.redirect('/admin?ok=batch');
 });
 
 app.post('/admin/comments/:id/status', requireAdmin, (req, res) => {
   const r = data.setCommentStatus(req.params.id, (req.body || {}).status);
   if (r.error) return res.status(404).type('text/plain').send('没有这条评论');
-  res.redirect('/admin');
+  data.logAudit(req.user, 'comment.status', '#' + req.params.id, r.status ? '显示' : '隐藏');
+  res.redirect('/admin?ok=comment');
+});
+
+app.post('/admin/reports/:id/status', requireAdmin, (req, res) => {
+  const r = data.setReportStatus(req.params.id, (req.body || {}).status);
+  if (r.error) return res.status(404).type('text/plain').send('没有这条举报');
+  data.logAudit(req.user, 'report.status', '#' + req.params.id, r.status === 2 ? '忽略' : '已处理');
+  res.redirect('/admin?ok=report');
+});
+
+app.post('/admin/users/:id/ban', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = data.setUserBanned(req.params.id, Number(b.banned) ? 1 : 0, b.reason);
+  if (r.error) {
+    const msg = r.error === 'cannot_ban_admin' ? '站长账号不可封禁' : '没有这个用户';
+    return res.status(400).type('text/plain').send(msg);
+  }
+  data.logAudit(req.user, r.banned ? 'user.ban' : 'user.unban', '#' + req.params.id, String(b.reason || ''));
+  res.redirect('/admin?ok=ban');
+});
+
+app.post('/admin/users/:id/verify', requireAdmin, (req, res) => {
+  const r = auth.markEmailVerified(req.params.id);
+  if (r.error) return res.status(404).type('text/plain').send('没有这个用户');
+  data.logAudit(req.user, 'user.verify', '#' + req.params.id, '站长手动核实邮箱');
+  res.redirect('/admin?ok=email');
 });
 
 // ---------- JSON API：账号 / 收藏 / 评论 ----------
@@ -494,17 +825,26 @@ app.post('/api/games/:slug/comments', (req, res) => {
   if (now - (commentGate.get(key) || 0) < 10000) {
     return res.status(429).json({ error: 'too_fast', hint: '发得太快了，歇 10 秒再发' });
   }
-  const r = data.addComment(slug, req.user.id, req.body && req.body.body);
+  const parentId = (req.body && req.body.parent_id) || null;
+  const r = data.addComment(slug, req.user.id, req.body && req.body.body, parentId);
   if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
   if (r.error) {
-    return res.status(400).json({
-      error: r.error,
-      hint: r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字' : '评论不能为空'
-    });
+    const hint = r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字'
+      : r.error === 'bad_parent' ? '要回复的评论已经不存在了'
+      : '评论不能为空';
+    return res.status(400).json({ error: r.error, hint });
   }
   commentGate.set(key, now);
   if (commentGate.size > 5000) commentGate.clear();
-  res.json({ id: r.id, body: r.body, name: req.user.name });
+  res.json({ id: r.id, body: r.body, name: req.user.name, parent_id: r.parent_id });
+});
+
+/** 举报一条评论（原生表单也能提交，所以用 302 跳回来） */
+app.post('/comments/:id/report', loginPageGuard('/'), (req, res) => {
+  const b = req.body || {};
+  const r = data.reportComment(req.params.id, req.user.id, b.reason);
+  const key = r.error ? r.error : (r.already ? 'already' : 'ok');
+  res.redirect(withQuery(safeNext(b.next), 'report=' + encodeURIComponent(key)));
 });
 
 // ---------- 错误处理 ----------

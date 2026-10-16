@@ -24,6 +24,95 @@
   var input = document.querySelector('.search input[name="q"]');
   if (q && input) input.value = q;
 
+  /* ---------- 搜索建议：中文 / 全拼 / 首字母都能提示 ---------- */
+  (function () {
+    var box = document.getElementById('sug');
+    if (!box || !input) return;
+    var timer = null, rows = [], cur = -1, want = '';
+
+    function clear() { while (box.firstChild) box.removeChild(box.firstChild); rows = []; cur = -1; }
+    function close() { clear(); box.hidden = true; }
+    function mark(i) {
+      for (var k = 0; k < rows.length; k++) rows[k].classList.toggle('on', k === i);
+      cur = i;
+    }
+    function open(list) {
+      clear();
+      if (!list.length) {
+        var none = document.createElement('div');
+        none.className = 's-none';
+        none.textContent = '没有匹配的游戏，回车看全部结果';
+        box.appendChild(none);
+        box.hidden = false;
+        return;
+      }
+      list.forEach(function (it) {
+        var a = document.createElement('a');
+        a.href = '/game/' + encodeURIComponent(it.slug);
+        var ico = document.createElement('span');
+        ico.className = 's-ico';
+        ico.textContent = it.emoji || '🎮';
+        var t = document.createElement('span');
+        t.className = 's-t';
+        t.textContent = it.title || '';
+        var m = document.createElement('span');
+        m.className = 's-m';
+        m.textContent = [it.category, it.plays ? it.plays + ' 次' : ''].filter(Boolean).join(' · ');
+        a.appendChild(ico); a.appendChild(t); a.appendChild(m);
+        a.addEventListener('mouseenter', function () { mark(rows.indexOf(a)); });
+        box.appendChild(a);
+        rows.push(a);
+      });
+      box.hidden = false;
+      mark(-1);
+    }
+    function load(text) {
+      want = text;
+      fetch('/api/search/suggest?q=' + encodeURIComponent(text))
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (want === text) open((d && d.items) || []); })
+        .catch(function () { if (want === text) close(); });
+    }
+
+    input.addEventListener('input', function () {
+      var text = (input.value || '').trim();
+      clearTimeout(timer);
+      if (!text) { close(); return; }
+      timer = setTimeout(function () { load(text); }, 160);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (box.hidden || !rows.length) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); mark(cur + 1 >= rows.length ? 0 : cur + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); mark(cur - 1 < 0 ? rows.length - 1 : cur - 1); }
+      else if (e.key === 'Enter') {
+        if (cur >= 0) { e.preventDefault(); location.href = rows[cur].href; }
+        else close();
+      } else if (e.key === 'Escape') { close(); }
+    });
+    input.addEventListener('blur', function () { setTimeout(close, 150); });
+    document.addEventListener('click', function (e) {
+      if (!box.hidden && e.target !== input && !box.contains(e.target)) close();
+    });
+  })();
+
+  /* ---------- 后台：批量选择（全选 / 空选择拦截 / 二次确认） ---------- */
+  (function () {
+    var form = document.getElementById('batchForm');
+    if (!form) return;
+    var all = document.getElementById('pickAll');
+    function boxes() { return Array.prototype.slice.call(form.querySelectorAll('input[name="slug"]')); }
+    if (all) {
+      all.addEventListener('change', function () {
+        boxes().forEach(function (b) { b.checked = all.checked; });
+      });
+    }
+    form.addEventListener('submit', function (ev) {
+      var picked = boxes().filter(function (b) { return b.checked; });
+      if (!picked.length) { ev.preventDefault(); toast('先勾选要处理的游戏'); return; }
+      if (!window.confirm('确定要批量处理这 ' + picked.length + ' 款游戏吗？')) ev.preventDefault();
+    });
+  })();
+
   /* ---------- 游戏播放器 ---------- */
   var player = document.getElementById('player');
   if (!player) return;
@@ -152,20 +241,87 @@
     });
   }
 
-  /* 1.7) 发表评论：成功后把新评论插到列表最前面，不刷新页面 */
+  /* 1.7) 发表评论 / 回复：成功后把新内容插进列表，不刷新页面 */
   var cmtForm = document.getElementById('cmtForm');
   if (cmtForm) {
+    var cmtParent = 0;
+    var ta = document.getElementById('cmtBody');
+    var parentBox = document.getElementById('cmtParent');
+    var replyHint = document.getElementById('cmtReplyHint');
+    var replyName = document.getElementById('cmtReplyName');
+
+    function setReply(id, name) {
+      cmtParent = Number(id) || 0;
+      if (parentBox) parentBox.value = cmtParent ? String(cmtParent) : '';
+      if (replyName) replyName.textContent = name || '';
+      if (replyHint) replyHint.hidden = !cmtParent;
+    }
+
+    // 点「回复」：带上楼层作者名，方便用户知道在回谁
+    var cmtPanel = document.getElementById('cmtPanel');
+    if (cmtPanel) {
+      cmtPanel.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('[data-reply]') : null;
+        if (!btn) return;
+        var li = btn.closest('.cmt');
+        var who = li && li.querySelector('.cmt-head b');
+        setReply(btn.dataset.reply, who ? who.textContent : '');
+        if (ta) { ta.focus(); ta.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      });
+    }
+    var cancelBtn = document.getElementById('cmtReplyCancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', function () { setReply(0); });
+
+    // 作者名与正文都走 textContent，防止评论内容注入标签
+    function makeItem(item, isReply) {
+      var li = document.createElement('li');
+      li.className = isReply ? 'cmt-reply new' : 'cmt new';
+      li.dataset.id = String(item.id);
+      if (!isReply) li.id = 'cmt' + item.id;
+      var head = document.createElement('div');
+      head.className = 'cmt-head';
+      var b = document.createElement('b');
+      b.textContent = item.name || '';
+      var time = document.createElement('time');
+      time.textContent = '刚刚';
+      head.appendChild(b);
+      head.appendChild(time);
+      var p = document.createElement('p');
+      p.textContent = item.body || '';
+      li.appendChild(head);
+      li.appendChild(p);
+      return li;
+    }
+
+    function insert(item) {
+      var list = document.getElementById('cmtList');
+      if (!list) return;
+      var empty = list.querySelector('.cmt-empty');
+      if (empty) empty.remove();
+      var pid = Number(item.parent_id) || 0;
+      var root = pid ? list.querySelector('li.cmt[data-id="' + pid + '"]') : null;
+      if (!root) { list.insertBefore(makeItem(item, false), list.firstChild); return; }
+      var ul = root.querySelector('.cmt-replies');
+      if (!ul) {
+        ul = document.createElement('ul');
+        ul.className = 'cmt-replies';
+        root.appendChild(ul);
+      }
+      ul.appendChild(makeItem(item, true));
+      root.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
     cmtForm.addEventListener('submit', function (ev) {
       ev.preventDefault();
-      var ta = document.getElementById('cmtBody');
       var text = (ta.value || '').trim();
       if (!text) { toast('先写点什么吧'); return; }
-      var btn = cmtForm.querySelector('button');
+      var btn = cmtForm.querySelector('button[type="submit"]') || cmtForm.querySelector('button');
       btn.disabled = true;
+      var payload = cmtParent ? { body: text, parent_id: cmtParent } : { body: text };
       fetch('/api/games/' + encodeURIComponent(cmtForm.dataset.slug) + '/comments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text })
+        body: JSON.stringify(payload)
       })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
         .then(function (res) {
@@ -174,19 +330,12 @@
             return;
           }
           if (!res.ok) throw new Error(res.d.hint || 'comment failed');
-          var list = document.getElementById('cmtList');
-          var empty = list.querySelector('.cmt-empty');
-          if (empty) empty.remove();
-          var li = document.createElement('li');
-          li.className = 'cmt new';
-          li.innerHTML = '<div class="cmt-head"><b></b><time>刚刚</time></div><p></p>';
-          li.querySelector('b').textContent = res.d.name;
-          li.querySelector('p').textContent = res.d.body;
-          list.insertBefore(li, list.firstChild);
+          insert(res.d);
           var c = document.getElementById('cmtCount');
           if (c) c.textContent = String((Number(c.textContent) || 0) + 1);
           ta.value = '';
-          toast('评论已发表');
+          setReply(0);
+          toast(res.d.parent_id ? '回复已发表' : '评论已发表');
         })
         .catch(function (err) { toast(err && err.message ? err.message : '发表失败，稍后再试'); })
         .finally(function () { btn.disabled = false; });

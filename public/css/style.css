@@ -312,8 +312,103 @@ code{background:rgba(0,0,0,.35);padding:2px 7px;border-radius:6px;font-size:13px
 .pill.s0{background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.35);color:#cbd5e1}
 .pill.s2{background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);color:#fcd34d}
 
+
+/* ---------- 排行榜 ---------- */
+.rk-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.rk-row{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r-sm);padding:10px 14px;transition:transform .15s,border-color .15s}
+.rk-row:hover{transform:translateY(-2px);border-color:rgba(99,102,241,.55)}
+.rk-no{flex:0 0 34px;text-align:center;font-size:17px;font-weight:700;color:var(--dim-2)}
+.rk-no.n1{color:#fbbf24}
+.rk-no.n2{color:#cbd5e1}
+.rk-no.n3{color:#fb923c}
+.rk-cover{flex:0 0 120px;width:120px;border-radius:8px;overflow:hidden;line-height:0;
+  background:linear-gradient(135deg,var(--a,#6366f1),var(--b,#8b5cf6))}
+.rk-cover img{width:120px;height:75px;display:block;object-fit:cover}
+.rk-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px}
+.rk-title{font-size:15px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rk-title:hover{color:var(--brand-2)}
+.rk-body small{font-size:12px;color:var(--dim-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rk-val{flex:0 0 auto;text-align:right;display:flex;flex-direction:column;line-height:1.25;min-width:56px}
+.rk-val b{font-size:18px;color:#fff}
+.rk-val small{font-size:12px;color:var(--dim-2)}
+.mv{flex:0 0 auto;font-size:12px;padding:3px 8px;border-radius:999px;white-space:nowrap;
+  background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.3);color:#cbd5e1}
+.mv.up{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.4);color:#86efac}
+.mv.down{background:rgba(244,63,94,.14);border-color:rgba(244,63,94,.38);color:#fda4af}
+.mv.new{background:rgba(99,102,241,.2);border-color:rgba(99,102,241,.5);color:#c7d2fe}
+.rank-note{margin:18px 0 0;font-size:12px;color:var(--dim-2);line-height:1.7}
+
+/* ---------- 搜索建议下拉 ---------- */
+.search-wrap{position:relative;flex:1 1 auto;max-width:440px;margin:0 auto}
+.search-wrap .search{width:100%;max-width:none;margin:0}
+.sug{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:60;background:var(--card);
+  border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:var(--shadow);overflow:hidden}
+.sug[hidden]{display:none}
+.sug a{display:flex;align-items:center;gap:10px;padding:9px 12px;font-size:14px;color:var(--txt);
+  border-bottom:1px solid rgba(255,255,255,.05)}
+.sug a:last-child{border-bottom:0}
+.sug a.on,.sug a:hover{background:rgba(99,102,241,.18)}
+.sug .s-ico{flex:0 0 auto;font-size:16px}
+.sug .s-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sug .s-m{flex:0 0 auto;font-size:12px;color:var(--dim-2)}
+.sug .s-none{padding:12px;font-size:13px;color:var(--dim-2)}
+
+/* ---------- 评论：回复 / 举报 ---------- */
+.cmt-act{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
+.cmt-act .linkbtn{padding:4px 9px;font-size:13px}
+.report-form{display:inline-flex}
+.report-form select{background:var(--bg-soft);color:var(--dim);border:1px solid var(--line);
+  border-radius:8px;font-size:12px;padding:5px 8px;outline:none;cursor:pointer}
+.report-form select:hover{color:var(--txt);border-color:var(--line-2)}
+.cmt-replies{list-style:none;margin:10px 0 0;padding:10px 0 0;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:10px}
+.cmt-reply{background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:var(--r-sm);
+  padding:10px 12px;margin-left:26px}
+.cmt-more{margin-left:26px;font-size:12px;color:var(--dim-2)}
+.cmt-form-foot{display:flex;align-items:center;gap:10px;min-height:22px;flex-wrap:wrap}
+.cmt-reply-hint{font-size:13px;color:var(--brand-2)}
+.cmt-reply-hint b{color:#fff}
+.pager{display:flex;align-items:center;gap:6px;justify-content:center;margin:18px 0 0;flex-wrap:wrap}
+.pg{padding:7px 13px;border-radius:9px;background:var(--card);border:1px solid var(--line);
+  font-size:13px;color:var(--dim)}
+.pg:hover{color:var(--txt);border-color:var(--line-2)}
+.pg-info{font-size:13px;color:var(--dim-2);padding:0 6px}
+
+/* ---------- 后台：筛选 / 批量 / 举报 / 发件箱 / 预览 ---------- */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+.filters input,.filters select{background:var(--bg-soft);color:var(--txt);border:1px solid var(--line);
+  border-radius:9px;padding:8px 11px;font-size:13px;outline:none;max-width:220px}
+.filters input:focus,.filters select:focus{border-color:var(--brand)}
+.batch-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+.batch-bar .check{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:#cbd3ea}
+.batch-bar .check input{accent-color:var(--brand)}
+.tbl th.pick,.tbl td.pick{width:34px;text-align:center}
+.tbl td.pick input{accent-color:var(--brand);width:15px;height:15px;cursor:pointer}
+.mini{width:150px;background:var(--bg-soft);color:var(--txt);border:1px solid var(--line);
+  border-radius:8px;padding:5px 8px;font-size:12px;outline:none}
+.mail-list{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.mail-list li{background:var(--card-2);border:1px solid var(--line);border-radius:var(--r-sm);
+  padding:10px 12px;font-size:13px;line-height:1.7;word-break:break-all}
+.mail-list a{color:var(--brand-2)}
+.preview-bar{background:rgba(99,102,241,.16);border:1px solid rgba(99,102,241,.45);color:#c7d2fe;
+  border-radius:var(--r-sm);padding:9px 13px;font-size:13px;margin:0 0 14px}
+.preview-bar a{color:#fff;text-decoration:underline}
+.warn{font-style:normal;font-size:12px;color:#fcd34d}
+.warn::before{content:"⚠ "}
+
+/* ---------- 账号页 ---------- */
+.acct-sec{margin:0 0 26px}
+.acct-sec h2{font-size:16px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.acct-sec h2 small{font-weight:500}
+.acct-sec h3.sub{font-size:13px;color:var(--dim);margin:16px 0 8px;font-weight:600}
+.acct-sec p.dim{font-size:13px;margin:0 0 12px}
+.acct-links{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.acct-links .btn{font-size:13px;padding:8px 14px}
+
 @media (max-width:860px){
   .acct{margin-left:auto}
+  .search-wrap{order:3;flex-basis:100%;max-width:none;margin:0}
   .row2{grid-template-columns:1fr}
   .auth{padding:24px 14px 40px}
   .auth-card{padding:20px}

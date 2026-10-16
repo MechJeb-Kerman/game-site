@@ -11,6 +11,7 @@
     "reset": "node src/seed.js --force",
     "smoke": "node tools/browser-smoke.mjs",
     "test:account": "node tools/account-test.mjs",
+    "test:features": "node tools/feature-test.mjs",
     "test:gamepad": "node tools/gamepad-test.mjs",
     "build:pages": "node tools/build-pages.mjs",
     "zip:cf": "node tools/zip-dist.mjs --dir=dist-cf --out=cloudflare-pages.zip",
@@ -18,7 +19,8 @@
     "smoke:pages": "node tools/pages-smoke.mjs",
     "test:worker": "node tools/worker-test.mjs",
     "serve:worker": "node tools/serve-worker.mjs",
-    "test:worker-app": "node tools/worker-app-test.mjs"
+    "test:worker-app": "node tools/worker-app-test.mjs",
+    "test:worker-features": "node tools/worker-feature-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

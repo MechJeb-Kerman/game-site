@@ -8,6 +8,8 @@ import * as ui from '../src/views.js';
 import { coverSvg, ogSvg } from '../src/cover.js';
 import * as data from './data.js';
 import * as auth from './auth.js';
+import * as mail from './mail.js';
+import * as oauth from './oauth.js';
 import { ensureReady } from './schema.js';
 
 export const SECURITY_HEADERS = {
@@ -105,6 +107,37 @@ async function readBody(request) {
 function safeNext(n) {
   const s = String(n || '');
   return /^\/[^\/\\]/.test(s) || s === '/' ? s : '/';
+}
+
+/** 往站内路径上挂查询参数，注意别挂到 # 片段后面去 */
+function withQuery(path, kv) {
+  const parts = String(path).split('#');
+  const base = parts[0];
+  const hash = parts.length > 1 ? parts.slice(1).join('#') : '';
+  return base + (base.indexOf('?') >= 0 ? '&' : '?') + kv + (hash ? '#' + hash : '');
+}
+
+function randomState() {
+  const buf = new Uint8Array(16);
+  crypto.getRandomValues(buf);
+  let s = '';
+  for (const b of buf) s += b.toString(16).padStart(2, '0');
+  return s;
+}
+
+/** 举报结果提示（落在详情页评论区顶部） */
+const CMT_NOTICE = {
+  ok: '举报已收到，站长会尽快处理 ✅',
+  already: '你已经举报过这条评论了',
+  bad_reason: '举报原因不对，换一个试试',
+  not_found: '这条评论已经不在了'
+};
+
+/** 没配邮件服务时，把验证链接直接带回页面（开发自测用） */
+function devLinkOf(env, origin, kind, token) {
+  if (mail.mailConfigured(env)) return '';
+  if (!/^[a-f0-9]{64}$/.test(String(token || ''))) return '';
+  return origin + (kind === 'reset' ? '/reset?token=' : '/verify-email?token=') + token;
 }
 
 /** 简易路由：段数相同、:名 段取参数 */
@@ -214,14 +247,30 @@ async function pageGame(ctx, params) {
   const game = await data.getGame(db, params.slug);
   if (!game) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
   const uid = ctx.user ? ctx.user.id : 0;
+  const cpage = Math.max(1, Number(ctx.url.searchParams.get('cpage')) || 1);
   return okHtml(ctx, ui.gamePage({
     origin: ctx.origin, user: ctx.user, game: game,
     related: await data.relatedGames(db, game, 6),
     myStars: await data.myRating(db, game.slug, ctx.user ? String(uid) : ''),
     favorited: await data.isFavorited(db, game.slug, uid),
     favCount: await data.favoriteCount(db, game.slug),
-    comments: await data.listComments(db, game.slug, 50),
-    commentTotal: await data.countComments(db, game.slug)
+    thread: await data.commentThread(db, game.slug, cpage),
+    commentTotal: await data.countComments(db, game.slug),
+    cmtNotice: CMT_NOTICE[String(ctx.url.searchParams.get('report') || '')] || ''
+  }));
+}
+
+/** 排行榜：热玩榜按天聚合的纯 SQLite 查询，7 个榜单切着看 */
+async function pageRank(ctx) {
+  const board = await data.leaderboard(ctx.db, data.boardKind(ctx.url.searchParams.get('kind')), 20);
+  return okHtml(ctx, ui.rankPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    kind: board.kind,
+    label: board.label,
+    metric: board.metric,
+    rows: board.rows,
+    boards: Object.entries(data.BOARD_KINDS).map(function (e) { return { kind: e[0], label: e[1].label }; })
   }));
 }
 
@@ -278,6 +327,193 @@ async function pageFavorites(ctx) {
   return okHtml(ctx, ui.favoritesPage({ origin: ctx.origin, user: ctx.user, list: list, total: list.length }));
 }
 
+/* ---------- 账号设置 / 邮箱验证 / 找回密码 ---------- */
+
+/** 表单类页面在未登录时回登录页（而不是 JSON 401） */
+function needLogin(ctx, fallback, body) {
+  if (ctx.user) return null;
+  const n = (body && body.next) || fallback || '/';
+  return redirectTo(ctx, '/login?next=' + encodeURIComponent(safeNext(n)));
+}
+
+async function pageAccount(ctx) {
+  const links = (await auth.oauthAccountsOf(ctx.db, ctx.user.id)).map(function (l) {
+    const m = oauth.providerMeta(l.provider);
+    return { provider: l.provider, label: m ? m.icon + ' ' + m.label : l.provider, name: l.provider_uid };
+  });
+  return okHtml(ctx, ui.accountPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    providers: oauth.enabledProviders(ctx.env),
+    links: links,
+    notice: String(ctx.url.searchParams.get('ok') || ''),
+    error: String(ctx.url.searchParams.get('err') || ''),
+    devLink: devLinkOf(ctx.env, ctx.origin, 'verify', ctx.url.searchParams.get('t'))
+  }));
+}
+
+async function doAccountEmail(ctx) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/account', b);
+  if (guard) return guard;
+  const email = auth.normalizeEmail(b.email);
+  if (ctx.user.email && email === auth.normalizeEmail(ctx.user.email)) {
+    return redirectTo(ctx, '/account?err=email_same');
+  }
+  const r = await auth.setEmail(ctx.db, ctx.user.id, email);
+  if (r.error) return redirectTo(ctx, '/account?err=email');
+  const m = mail.verifyMail(ctx.origin, { name: ctx.user.name, username: ctx.user.username, email: r.email }, r.token);
+  const sent = await mail.sendMail(ctx.env, m);
+  await data.logAudit(ctx.db, ctx.user, 'user.email', '#' + ctx.user.id, r.email);
+  return redirectTo(ctx, '/account?ok=email' + (sent.ok && sent.dev ? '&t=' + r.token : ''));
+}
+
+async function doAccountResend(ctx) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/account', b);
+  if (guard) return guard;
+  if (!ctx.user.email || Number(ctx.user.email_verified)) return redirectTo(ctx, '/account?err=resend');
+  const r = await auth.refreshVerifyToken(ctx.db, ctx.user.id);
+  if (r.error) return redirectTo(ctx, '/account?err=resend');
+  const sent = await mail.sendMail(ctx.env, mail.verifyMail(ctx.origin, ctx.user, r.token));
+  return redirectTo(ctx, '/account?ok=resent' + (sent.ok && sent.dev ? '&t=' + r.token : ''));
+}
+
+async function doAccountPassword(ctx) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/account', b);
+  if (guard) return guard;
+  const r = await auth.changePassword(ctx.db, ctx.user.id, b.old, b.password);
+  if (r.error) return redirectTo(ctx, '/account?err=password');
+  await data.logAudit(ctx.db, ctx.user, 'user.password', '#' + ctx.user.id, '');
+  await auth.destroySession(ctx.db, auth.readCookie(ctx.request.headers.get('cookie'), auth.COOKIE));
+  ctx.cookies.push(auth.sessionCookie('', 0));
+  return okHtml(ctx, ui.messagePage({
+    origin: ctx.origin, user: null, title: '密码已更新', heading: '密码已更新 ✅',
+    sub: '所有设备都已退出登录，请用新密码重新登录', path: '/login'
+  }));
+}
+
+async function doAccountUnlink(ctx) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/account', b);
+  if (guard) return guard;
+  const r = await auth.unlinkOAuth(ctx.db, ctx.user.id, b.provider);
+  if (r.error) return redirectTo(ctx, '/account?err=unlink');
+  await data.logAudit(ctx.db, ctx.user, 'user.unlink', '#' + ctx.user.id, String(b.provider || ''));
+  return redirectTo(ctx, '/account?ok=unlink');
+}
+
+async function pageVerifyEmail(ctx) {
+  const r = await auth.verifyEmailToken(ctx.db, ctx.url.searchParams.get('token'));
+  if (r.error) {
+    return okHtml(ctx, ui.messagePage({
+      origin: ctx.origin, user: ctx.user, title: '邮箱验证', heading: '验证没有成功', sub: r.error, path: '/account'
+    }), 400);
+  }
+  return okHtml(ctx, ui.messagePage({
+    origin: ctx.origin, user: ctx.user, title: '邮箱验证', heading: '邮箱验证成功 ✅',
+    sub: (r.email || '') + ' 已验证，之后可以用它找回密码', path: '/account'
+  }));
+}
+
+async function pageForgot(ctx) {
+  return okHtml(ctx, ui.forgotPage({ origin: ctx.origin, user: ctx.user }));
+}
+
+async function doForgot(ctx) {
+  const r = await auth.createResetToken(ctx.db, (await readBody(ctx.request)).account);
+  let devLink = '';
+  if (r.sent) {
+    const m = mail.resetMail(ctx.origin, r.user, r.token);
+    const sent = await mail.sendMail(ctx.env, m);
+    if (sent.ok && sent.dev) devLink = m.link;
+  }
+  return okHtml(ctx, ui.forgotPage({
+    origin: ctx.origin, user: ctx.user, error: r.error || '', done: !r.error, devLink: devLink
+  }), r.error ? 400 : 200);
+}
+
+async function pageReset(ctx) {
+  return okHtml(ctx, ui.resetPage({
+    origin: ctx.origin, user: ctx.user, token: String(ctx.url.searchParams.get('token') || '')
+  }));
+}
+
+async function doReset(ctx) {
+  const b = await readBody(ctx.request);
+  const token = String(b.token || '');
+  const fail = (error) => okHtml(ctx, ui.resetPage({ origin: ctx.origin, user: ctx.user, token: token, error: error }), 400);
+  if (String(b.password || '') !== String(b.password2 || '')) return fail('两次输入的密码不一样');
+  const r = await auth.consumeResetToken(ctx.db, token, b.password);
+  if (r.error) return fail(r.error);
+  return okHtml(ctx, ui.messagePage({
+    origin: ctx.origin, user: null, title: '密码已重置', heading: '密码已重置 ✅',
+    sub: '所有设备都需要用新密码重新登录', path: '/login'
+  }));
+}
+
+/* ---------- 第三方登录（OAuth 2.0） ---------- */
+
+const OAUTH_STATE_COOKIE = 'oauth_state';
+
+/** state 和登录后要去的地址一起塞进短命 cookie，回调时比对 */
+function stateCookie(state, next) {
+  return OAUTH_STATE_COOKIE + '=' + state + '.' + encodeURIComponent(next) +
+    '; Path=/; Max-Age=600; SameSite=Lax; HttpOnly';
+}
+
+async function doAuthProvider(ctx, params) {
+  const name = String(params.provider);
+  const next = safeNext(ctx.url.searchParams.get('next'));
+  if (!oauth.providerEnabled(name, ctx.env)) {
+    return okHtml(ctx, ui.messagePage({
+      origin: ctx.origin, user: ctx.user, title: '第三方登录', heading: '这个登录方式没有开启',
+      sub: '需要先给站点配置对应的 Client ID / Secret', path: '/login'
+    }), 404);
+  }
+  const state = randomState();
+  ctx.cookies.push(stateCookie(state, next));
+  if (oauth.providerMeta(name).mock) return redirectTo(ctx, '/auth/dev/callback?code=mock&state=' + state);
+  return redirectTo(ctx, oauth.authorizeUrl(name, ctx.origin, state, ctx.env));
+}
+
+async function doAuthCallback(ctx, params) {
+  const name = String(params.provider);
+  const fail = (sub) => okHtml(ctx, ui.messagePage({
+    origin: ctx.origin, user: ctx.user, title: '第三方登录', heading: '登录没有完成', sub: sub, path: '/login'
+  }), 400);
+  if (!oauth.providerEnabled(name, ctx.env)) return fail('这个登录方式没有开启');
+
+  const raw = auth.readCookie(ctx.request.headers.get('cookie'), OAUTH_STATE_COOKIE);
+  const dot = raw.indexOf('.');
+  const state = dot < 0 ? raw : raw.slice(0, dot);
+  let next = '/';
+  if (dot >= 0) {
+    try { next = safeNext(decodeURIComponent(raw.slice(dot + 1))); } catch { next = '/'; }
+  }
+  if (!state || String(ctx.url.searchParams.get('state') || '') !== state) {
+    return fail('登录状态校验失败，请重新发起一次（浏览器可能拦了临时 cookie）');
+  }
+  ctx.cookies.push(OAUTH_STATE_COOKIE + '=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly');
+
+  let profile;
+  if (oauth.providerMeta(name).mock) {
+    profile = oauth.mockProfile(ctx.url.searchParams);
+  } else {
+    const code = String(ctx.url.searchParams.get('code') || '');
+    if (!code) return fail('没有拿到授权码，可能是你取消了授权');
+    const ex = await oauth.exchangeCode(name, ctx.origin, code, ctx.env);
+    if (ex.error) return fail('换取用户资料失败（' + ex.error + '），稍后再试');
+    profile = ex.profile;
+  }
+  const r = await auth.oauthLogin(ctx.db, name, profile.uid, profile);
+  if (r.error) return fail(r.error === '账号已被封禁' ? '账号已被封禁，请联系站长' : '登录失败，请换个方式再试');
+  ctx.cookies.push(auth.sessionCookie(await auth.createSession(ctx.db, r.user.id), auth.SESSION_DAYS * 24 * 3600));
+  await data.logAudit(ctx.db, r.user, 'oauth.login', name, r.created ? '新账号' : (r.linked ? '按邮箱认领' : '已绑定'));
+  return redirectTo(ctx, next);
+}
+
 /* ================= 投稿 ================= */
 
 async function pageSubmit(ctx) {
@@ -299,27 +535,95 @@ async function doSubmit(ctx) {
 
 async function pageAdmin(ctx) {
   const db = ctx.db;
+  const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 40);
+  const raw = ctx.url.searchParams.get('status');
+  const status = raw === null ? '' : String(raw);
+  const category = String(ctx.url.searchParams.get('category') || '');
   return okHtml(ctx, ui.adminPage({
     origin: ctx.origin, user: ctx.user,
     stats: await data.adminStats(db),
     pending: await data.listGamesByStatus(db, 2, 100),
-    managed: await data.listManagedGames(db, 200),
-    comments: await data.listRecentComments(db, 30)
+    managed: await data.listManagedGames(db, { status: status, q: q, category: category, limit: 200 }),
+    comments: await data.listRecentComments(db, { limit: 30 }),
+    reports: await data.listReports(db, 0, 50),
+    users: await data.listUsers(db, { q: q, limit: 100 }),
+    audit: await data.listAudit(db, { limit: 50 }),
+    categories: await data.listCategories(db),
+    filter: { q: q, status: status, category: category },
+    outbox: mail.outbox(20),
+    mailTransport: mail.transportName(ctx.env),
+    notice: String(ctx.url.searchParams.get('ok') || '')
+  }));
+}
+
+/** 后台预览：待审核的投稿也能按玩家视角打开 */
+async function adminPreview(ctx, params) {
+  const game = await data.getGameAny(ctx.db, String(params.slug));
+  if (!game) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  return okHtml(ctx, ui.gamePage({
+    origin: ctx.origin,
+    user: ctx.user,
+    game: game,
+    related: await data.relatedGames(ctx.db, game, 4),
+    preview: true,
+    thread: await data.commentThread(ctx.db, game.slug, 1),
+    commentTotal: await data.countComments(ctx.db, game.slug)
   }));
 }
 
 async function adminSetGame(ctx, params) {
   const b = await readBody(ctx.request);
-  const r = await data.setGameStatus(ctx.db, String(params.slug), b.status);
+  const slug = String(params.slug);
+  const r = await data.setGameStatus(ctx.db, slug, b.status);
   if (r.error) return plainText(ctx, '没有这个游戏', 404);
+  await data.logAudit(ctx.db, ctx.user, 'game.status', slug, data.STATUS_LABEL[r.status] || String(r.status));
   return redirectTo(ctx, '/admin');
+}
+
+/** 批量上下架：勾选多张卡一次处理，没找到的照样记账 */
+async function adminBatch(ctx) {
+  const b = await readBody(ctx.request);
+  const r = await data.setGamesStatus(ctx.db, [].concat(b.slug || []), b.status);
+  if (r.error) {
+    return plainText(ctx, r.error === 'empty' ? '没有选中任何游戏' : '状态不合法', 400);
+  }
+  await data.logAudit(ctx.db, ctx.user, 'game.batch', data.STATUS_LABEL[r.status] || String(r.status),
+    r.changed.length + ' 条：' + r.changed.slice(0, 12).join(', ') +
+    (r.missing.length ? ' / 未找到 ' + r.missing.length + ' 条' : ''));
+  return redirectTo(ctx, '/admin?ok=batch');
 }
 
 async function adminSetComment(ctx, params) {
   const b = await readBody(ctx.request);
   const r = await data.setCommentStatus(ctx.db, params.id, b.status);
   if (r.error) return plainText(ctx, '没有这条评论', 404);
-  return redirectTo(ctx, '/admin');
+  await data.logAudit(ctx.db, ctx.user, 'comment.status', '#' + params.id, r.status ? '显示' : '隐藏');
+  return redirectTo(ctx, '/admin?ok=comment');
+}
+
+async function adminReportStatus(ctx, params) {
+  const b = await readBody(ctx.request);
+  const r = await data.setReportStatus(ctx.db, params.id, b.status);
+  if (r.error) return plainText(ctx, '没有这条举报', 404);
+  await data.logAudit(ctx.db, ctx.user, 'report.status', '#' + params.id, r.status === 2 ? '忽略' : '已处理');
+  return redirectTo(ctx, '/admin?ok=report');
+}
+
+async function adminUserBan(ctx, params) {
+  const b = await readBody(ctx.request);
+  const r = await data.setUserBanned(ctx.db, params.id, Number(b.banned) ? 1 : 0, b.reason);
+  if (r.error) {
+    return plainText(ctx, r.error === 'cannot_ban_admin' ? '站长账号不可封禁' : '没有这个用户', 400);
+  }
+  await data.logAudit(ctx.db, ctx.user, r.banned ? 'user.ban' : 'user.unban', '#' + params.id, String(b.reason || ''));
+  return redirectTo(ctx, '/admin?ok=ban');
+}
+
+async function adminUserVerify(ctx, params) {
+  const r = await auth.markEmailVerified(ctx.db, params.id);
+  if (r.error) return plainText(ctx, '没有这个用户', 404);
+  await data.logAudit(ctx.db, ctx.user, 'user.verify', '#' + params.id, '站长手动核实邮箱');
+  return redirectTo(ctx, '/admin?ok=email');
 }
 
 /* ================= JSON API ================= */
@@ -424,17 +728,59 @@ async function apiComment(ctx, params) {
     return okJson(ctx, { error: 'too_fast', hint: '发得太快了，歇 10 秒再发' }, 429);
   }
   const body = await readBody(ctx.request);
-  const r = await data.addComment(ctx.db, slug, ctx.user.id, body.body);
+  const parentId = body.parent_id || null;
+  const r = await data.addComment(ctx.db, slug, ctx.user.id, body.body, parentId);
   if (r.error === 'not_found') return okJson(ctx, { error: 'not_found' }, 404);
   if (r.error) {
-    return okJson(ctx, {
-      error: r.error,
-      hint: r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字' : '评论不能为空'
-    }, 400);
+    const hint = r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字'
+      : r.error === 'bad_parent' ? '要回复的评论已经不存在了'
+      : '评论不能为空';
+    return okJson(ctx, { error: r.error, hint: hint }, 400);
   }
   commentGate.set(key, now);
   if (commentGate.size > 5000) commentGate.clear();
-  return okJson(ctx, { id: r.id, body: r.body, name: ctx.user.name });
+  return okJson(ctx, { id: r.id, body: r.body, name: ctx.user.name, parent_id: r.parent_id });
+}
+
+/** 搜索建议：和列表页同一套相关度排序，输入拼音/首字母也能命中 */
+async function apiSuggest(ctx) {
+  const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 40);
+  if (!q) return okJson(ctx, { q: '', items: [] });
+  const list = await data.listGames(ctx.db, { q: q, limit: 6 });
+  return okJson(ctx, {
+    q: q,
+    items: list.map(function (g) {
+      return {
+        slug: g.slug, title: g.title, emoji: g.emoji,
+        category: g.category ? g.category.name : '',
+        plays: g.plays, rating: g.rating
+      };
+    })
+  });
+}
+
+/** 评论分页 JSON（详情页评论区无刷新翻页用） */
+async function apiComments(ctx, params) {
+  const slug = String(params.slug);
+  if (!(await data.getGame(ctx.db, slug))) return okJson(ctx, { error: 'not_found' }, 404);
+  const pageSize = Math.max(1, Math.min(50,
+    Number(ctx.url.searchParams.get('pageSize')) || data.COMMENT_PAGE_SIZE));
+  const page = Math.max(1, Number(ctx.url.searchParams.get('page')) || 1);
+  const thread = await data.commentThread(ctx.db, slug, page, pageSize);
+  return okJson(ctx, {
+    slug: slug, total: thread.total, page: thread.page, pages: thread.pages,
+    pageSize: thread.pageSize, items: thread.items
+  });
+}
+
+/** 举报一条评论（原生表单也能提交，所以跳回详情页带上 report 结果） */
+async function doReport(ctx, params) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/', b);
+  if (guard) return guard;
+  const r = await data.reportComment(ctx.db, params.id, ctx.user.id, b.reason);
+  const key = r.error ? r.error : (r.already ? 'already' : 'ok');
+  return redirectTo(ctx, withQuery(safeNext(b.next), 'report=' + encodeURIComponent(key)));
 }
 
 /* ================= 路由表 ================= */
@@ -446,6 +792,7 @@ const ROUTES = [
   { m: 'GET', p: '/tag/:tag', fn: pageTag },
   { m: 'GET', p: '/search', fn: pageSearch },
   { m: 'GET', p: '/game/:slug', fn: pageGame },
+  { m: 'GET', p: '/rank', fn: pageRank },
   { m: 'GET', p: '/login', fn: pageLogin },
   { m: 'POST', p: '/login', fn: doLogin },
   { m: 'GET', p: '/register', fn: pageRegister },
@@ -466,7 +813,27 @@ const ROUTES = [
   { m: 'POST', p: '/api/games/:slug/play', fn: apiPlay },
   { m: 'POST', p: '/api/games/:slug/rate', fn: apiRate },
   { m: 'POST', p: '/api/games/:slug/favorite', fn: apiFavorite },
-  { m: 'POST', p: '/api/games/:slug/comments', fn: apiComment }
+  { m: 'POST', p: '/api/games/:slug/comments', fn: apiComment },
+  { m: 'GET', p: '/api/search/suggest', fn: apiSuggest },
+  { m: 'GET', p: '/api/games/:slug/comments', fn: apiComments },
+  { m: 'POST', p: '/comments/:id/report', fn: doReport },
+  { m: 'GET', p: '/account', fn: pageAccount, need: 'user' },
+  { m: 'POST', p: '/account/email', fn: doAccountEmail },
+  { m: 'POST', p: '/account/resend', fn: doAccountResend },
+  { m: 'POST', p: '/account/password', fn: doAccountPassword },
+  { m: 'POST', p: '/account/unlink', fn: doAccountUnlink },
+  { m: 'GET', p: '/verify-email', fn: pageVerifyEmail },
+  { m: 'GET', p: '/forgot', fn: pageForgot },
+  { m: 'POST', p: '/forgot', fn: doForgot },
+  { m: 'GET', p: '/reset', fn: pageReset },
+  { m: 'POST', p: '/reset', fn: doReset },
+  { m: 'GET', p: '/auth/:provider', fn: doAuthProvider },
+  { m: 'GET', p: '/auth/:provider/callback', fn: doAuthCallback },
+  { m: 'GET', p: '/admin/preview/:slug', fn: adminPreview, need: 'admin' },
+  { m: 'POST', p: '/admin/games/batch', fn: adminBatch, need: 'admin' },
+  { m: 'POST', p: '/admin/reports/:id/status', fn: adminReportStatus, need: 'admin' },
+  { m: 'POST', p: '/admin/users/:id/ban', fn: adminUserBan, need: 'admin' },
+  { m: 'POST', p: '/admin/users/:id/verify', fn: adminUserVerify, need: 'admin' }
 ];
 
 /* ================= SEO 资源 ================= */
@@ -474,13 +841,15 @@ const ROUTES = [
 function robotsText(origin) {
   return [
     'User-agent: *', 'Allow: /', 'Disallow: /api/', 'Disallow: /admin',
-    'Disallow: /login', 'Disallow: /register', 'Disallow: /favorites', 'Disallow: /submit', '',
+    'Disallow: /login', 'Disallow: /register', 'Disallow: /favorites', 'Disallow: /submit',
+    'Disallow: /account', 'Disallow: /forgot', 'Disallow: /reset', 'Disallow: /auth',
+    'Disallow: /comments/', '',
     'Sitemap: ' + origin + '/sitemap.xml', ''
   ].join('\n');
 }
 
 async function sitemapXml(ctx) {
-  const urls = [{ loc: '/', pri: '1.0' }];
+  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }];
   for (const c of await data.listCategories(ctx.db)) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }

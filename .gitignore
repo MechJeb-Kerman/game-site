@@ -17,6 +17,9 @@ cloudflare-pages.zip
 .wrangler/
 .dev.vars
 
+# 拼音表数据源（约 12MB，重新获取：node tools/gen-pinyin.mjs --download）
+.pinyin-src.txt
+
 # 系统垃圾
 .DS_Store
 Thumbs.db

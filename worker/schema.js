@@ -5,6 +5,8 @@
  */
 import { CATEGORIES, GAMES } from './seed-data.js';
 import { ensureAdmin } from './auth.js';
+// 种子数据是直接 INSERT 的，不带拼音索引；启动时补一次，老库升级也能用拼音搜
+import { reindexSearchIndex } from './data.js';
 
 /** 与 src/db.js migrate() 的 schema 逐字段一致（D1 是 SQLite，语法通用） */
 export const DDL = [
@@ -96,8 +98,68 @@ export const DDL = [
   "  status     INTEGER DEFAULT 1,",
   "  created_at TEXT DEFAULT (datetime('now','localtime'))",
   ");",
-  "CREATE INDEX IF NOT EXISTS idx_comments_game ON comments(game_id, status);"
+  "CREATE INDEX IF NOT EXISTS idx_comments_game ON comments(game_id, status);",
+  "",
+  "CREATE TABLE IF NOT EXISTS comment_reports (",
+  "  id         INTEGER PRIMARY KEY AUTOINCREMENT,",
+  "  comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,",
+  "  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,",
+  "  reason     TEXT NOT NULL,",
+  "  status     INTEGER DEFAULT 0,",
+  "  created_at TEXT DEFAULT (datetime('now','localtime')),",
+  "  UNIQUE (comment_id, user_id)",
+  ");",
+  "CREATE INDEX IF NOT EXISTS idx_reports_status ON comment_reports(status, id DESC);",
+  "",
+  "CREATE TABLE IF NOT EXISTS audit_logs (",
+  "  id         INTEGER PRIMARY KEY AUTOINCREMENT,",
+  "  actor_id   INTEGER,",
+  "  actor_name TEXT,",
+  "  action     TEXT NOT NULL,",
+  "  target     TEXT,",
+  "  detail     TEXT,",
+  "  created_at TEXT DEFAULT (datetime('now','localtime'))",
+  ");",
+  "CREATE INDEX IF NOT EXISTS idx_audit_recent ON audit_logs(id DESC);",
+  "",
+  "CREATE TABLE IF NOT EXISTS oauth_accounts (",
+  "  provider     TEXT NOT NULL,",
+  "  provider_uid TEXT NOT NULL,",
+  "  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,",
+  "  created_at   TEXT DEFAULT (datetime('now','localtime')),",
+  "  PRIMARY KEY (provider, provider_uid)",
+  ");",
+  "CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_accounts(user_id);",
+  "",
+  "CREATE TABLE IF NOT EXISTS password_resets (",
+  "  token      TEXT PRIMARY KEY,",
+  "  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,",
+  "  created_at TEXT DEFAULT (datetime('now','localtime')),",
+  "  expires_at TEXT NOT NULL,",
+  "  used_at    TEXT",
+  ");",
+  "CREATE INDEX IF NOT EXISTS idx_reset_user ON password_resets(user_id);"
 ].join("\n");
+
+/** 老库补字段：D1 的 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列（对应 src/db.js 的 addColumn） */
+export const ADD_COLUMNS = [
+  ['games', 'submitted_by', 'submitted_by INTEGER'],
+  ['games', 'rating_count', 'rating_count INTEGER DEFAULT 0'],
+  ['games', 'search_pinyin', "search_pinyin TEXT DEFAULT ''"],
+  ['comments', 'parent_id', 'parent_id INTEGER'],
+  ['users', 'email', 'email TEXT'],
+  ['users', 'email_verified', 'email_verified INTEGER DEFAULT 0'],
+  ['users', 'banned', 'banned INTEGER DEFAULT 0'],
+  ['users', 'banned_reason', 'banned_reason TEXT'],
+  ['users', 'verify_token', 'verify_token TEXT'],
+  ['users', 'verify_expires', 'verify_expires TEXT']
+];
+
+/** 老库补索引（对应 src/db.js 的 addIndex） */
+export const ADD_INDEXES = [
+  ['idx_games_status', 'games(status, plays DESC)'],
+  ['idx_comments_parent', 'comments(parent_id)']
+];
 
 /**
  * 建表。注意不能用 db.exec(DDL)：D1 的 exec() 是按换行切语句再执行的，
@@ -109,6 +171,20 @@ export const DDL = [
 export async function migrate(db) {
   const stmts = DDL.split(';').map((s) => s.trim()).filter(Boolean);
   for (const sql of stmts) await db.prepare(sql).run();
+  await ensureColumns(db);
+}
+
+/** 幂等补列 / 补索引，给第二批功能上线前建好的老库用 */
+export async function ensureColumns(db) {
+  for (const [table, column, ddl] of ADD_COLUMNS) {
+    const info = await db.prepare('PRAGMA table_info(' + table + ')').all();
+    const cols = (info && info.results) || [];
+    if (cols.some((c) => c.name === column)) continue;
+    await db.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + ddl).run();
+  }
+  for (const [name, ddl] of ADD_INDEXES) {
+    await db.prepare('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + ddl).run();
+  }
 }
 
 /** 空库才灌种子数据，语义与 seed(false) 相同 */
@@ -151,6 +227,7 @@ export function ensureReady(env) {
       await migrate(env.DB);
       await seedIfEmpty(env.DB);
       await ensureAdmin(env.DB, env);
+      await reindexSearchIndex(env.DB);
       return true;
     })().catch((err) => {
       readyPromise = null;
