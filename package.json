@@ -20,7 +20,9 @@
     "test:worker": "node tools/worker-test.mjs",
     "serve:worker": "node tools/serve-worker.mjs",
     "test:worker-app": "node tools/worker-app-test.mjs",
-    "test:worker-features": "node tools/worker-feature-test.mjs"
+    "test:worker-features": "node tools/worker-feature-test.mjs",
+    "test:mail": "node tools/mail-oauth-test.mjs",
+    "test:worker-mail": "node tools/worker-mail-oauth-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

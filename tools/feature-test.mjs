@@ -4,7 +4,7 @@
  *
  * 注意：会真的写库（建三个随机名字的测试账号、一条评论+回复+举报、两条测试投稿——其中一条是上传的
  * 单文件 HTML，跑完会退回待审留在库里——以及几条操作日志），
- * 结束时会把测试账号封禁再解封、把举报标记为已处理。想彻底干净：停服 → 删 data/games.db → 重启。
+ * 结束时会把测试账号封禁再解封、把举报标记为已处理、把一首测试投稿真正彻底删掉（日志会留下 game.delete 记录）。想彻底干净：停服 → 删 data/games.db → 重启。
  * 邮件走开发发件箱（没配 RESEND_API_KEY / MAIL_API_URL 时不会真发信）。
  */
 const BASE = process.env.BASE || 'http://127.0.0.1:3000';
@@ -45,6 +45,7 @@ async function req(path, opt) {
 }
 function json(t) { try { return JSON.parse(t); } catch { return null; } }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const esc8 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 async function main() {
   /* ---------- 1. 游客可见的部分 ---------- */
@@ -298,6 +299,62 @@ async function main() {
     ok('复核完把测试投稿退回待审', r.status === 302, r.status + ' ' + r.location);
     r = await req('/ugc/' + upSlug + '.html');
     ok('退回待审后游客又取不到', r.status === 404, r.status);
+  }
+
+  /* ---------- 6. 游戏彻底删除（必须先下架，确认页列数据量） ---------- */
+  console.log('--- 游戏彻底删除 ---');
+  const jarDel = jar();
+  r = await req('/api/auth/register', { method: 'POST', j: jarDel, json: { username: 'del' + STAMP, password: 'pass1234', display_name: '删除测试' } });
+  ok('注册删除测试账号', r.status === 201, r.status + ' ' + r.text.slice(0, 80));
+
+  const DELMINI = '<!doctype html><html><head><meta charset="utf-8"><title>del</title></head><body><div id="app">待删</div><script>window.__upmini=2;</script></body></html>';
+  const delfd = (filename, body) => {
+    const f = new FormData();
+    f.append('title', '待删小游戏' + STAMP);
+    f.append('category', 'puzzle');
+    f.append('description', '功能验收：彻底删除');
+    f.append('game_file', new Blob([body], { type: 'text/html' }), filename);
+    return f;
+  };
+  r = await req('/submit', { method: 'POST', j: jarDel, fd: delfd('del.html', DELMINI) });
+  const delSlug = ((r.text.match(/编号 <b>([^<]+)<\/b>/) || [])[1] || '');
+  ok('造一条带上传文件的投稿给删除用', r.status === 200 && !!delSlug, r.status + ' ' + (delSlug || r.text.slice(0, 160)));
+
+  if (delSlug) {
+    r = await req('/admin/games/' + delSlug + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+    ok('把待删的游戏上架', r.status === 302, r.status + ' ' + r.location);
+    r = await req('/api/games/' + delSlug + '/play', { method: 'POST' });
+    ok('删除前先有游玩记录', r.status === 200, r.status + ' ' + r.text.slice(0, 80));
+    r = await req('/api/games/' + delSlug + '/rate', { method: 'POST', j: jarDel, json: { stars: 5 } });
+    ok('删除前先有评分', r.status === 200, r.status + ' ' + r.text.slice(0, 80));
+    r = await req('/api/games/' + delSlug + '/favorite', { method: 'POST', j: jarDel });
+    ok('删除前先有收藏', r.status === 200, r.status + ' ' + r.text.slice(0, 80));
+    r = await req('/api/games/' + delSlug + '/comments', { method: 'POST', j: jarDel, json: { body: '删除前留一条评论 ' + STAMP } });
+    ok('删除前先有评论', r.status === 200, r.status + ' ' + r.text.slice(0, 80));
+
+    r = await req('/admin/games/' + delSlug + '/delete', { method: 'POST', j: jarAd, redirect: 'manual' });
+    ok('上架中的游戏不让彻底删除', r.status === 400 && r.text.includes('还在上架中'), r.status + ' ' + r.text.slice(0, 120));
+
+    r = await req('/admin/games/' + delSlug + '/status', { method: 'POST', j: jarAd, form: { status: '0' }, redirect: 'manual' });
+    ok('先下架', r.status === 302, r.status + ' ' + r.location);
+
+    r = await req('/admin/games/' + delSlug + '/delete', { j: jarAd });
+    const cnt = (label, n) => new RegExp(esc8(label) + '</span><b>' + n + '</b>').test(r.text);
+    ok('删除确认页列出 6 项连带数据量（评论/评分/收藏/游玩/文件各 1）',
+      r.status === 200 && r.text.includes('彻底删除') &&
+      cnt('评论（含回复）', 1) && cnt('评分', 1) && cnt('收藏', 1) && cnt('游玩记录', 1) && cnt('上传的 HTML 文件', 1) && cnt('评论举报', 0),
+      r.status + ' ' + (r.text.match(/<ul class="purge-list">[\s\S]*?<\/ul>/) || [''])[0].slice(0, 300));
+
+    r = await req('/admin/games/' + delSlug + '/delete', { method: 'POST', j: jarAd, redirect: 'manual' });
+    ok('下架后彻底删除成功并跳回后台', r.status === 302 && r.location === '/admin?ok=purge', r.status + ' ' + r.location);
+    r = await req('/game/' + delSlug);
+    ok('删除后详情页 404', r.status === 404, r.status);
+    r = await req('/ugc/' + delSlug + '.html', { j: jarAd });
+    ok('删除后上传的 HTML 也 404（文件跟着删）', r.status === 404, r.status);
+    r = await req('/admin?ok=purge', { j: jarAd });
+    ok('后台显示删除提示且日志里有这条记录', r.status === 200 && r.text.includes('游戏已彻底删除') && r.text.includes(delSlug), r.status);
+    r = await req('/admin/games/' + delSlug + '/delete', { j: jarAd });
+    ok('已被删掉的游戏再进确认页是 404', r.status === 404, r.status);
   }
 
   console.log('');

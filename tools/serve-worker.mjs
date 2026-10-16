@@ -80,6 +80,8 @@ export async function createWorkerServer(opts) {
     // 本机验证用：开放 dev 演示登录（Workers 里没有 NODE_ENV，只能靠这个开关）
     OAUTH_DEV: o.oauthDev === undefined ? '1' : String(o.oauthDev)
   };
+  // 允许调用方塞任意 env（端到端测试要灌假的邮件服务 / OAuth 端点地址）
+  Object.assign(env, o.env || {});
 
   const server = http.createServer(async (req, res) => {
     try {
