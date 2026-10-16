@@ -149,7 +149,7 @@ curl -sI https://你的域名/favicon.ico           # 302 -> /favicon.svg
 
 这套改造的核心工作是把数据层从同步 SQLite 换成异步 D1、把 `express` 的路由换成 Worker 里的 `URL` 分发。
 
-> **这些都已经做好了。** 想要带服务端的完整版，直接看 [`DEPLOY-CLOUDFLARE-D1.md`](DEPLOY-CLOUDFLARE-D1.md)：账号 / 邮箱验证 / 找回密码 / 第三方登录 / 评分 / 评论与楼中楼 / 举报 / 收藏 / 投稿 / 后台 / 排行榜 / 拼音搜索全部在 Workers + D1 上，本机验收 **58 项账号 + 70 项功能断言**、**23 项产物冒烟**与 **17 项浏览器冒烟**全部通过。
+> **这些都已经做好了。** 想要带服务端的完整版，直接看 [`DEPLOY-CLOUDFLARE-D1.md`](DEPLOY-CLOUDFLARE-D1.md)：账号 / 邮箱验证 / 找回密码 / 第三方登录 / 评分 / 评论与楼中楼 / 举报 / 收藏 / 投稿（含上传单文件 HTML） / 后台 / 排行榜 / 拼音搜索全部在 Workers + D1 上，本机验收 **58 项账号 + 70 项功能断言**、**23 项产物冒烟**与 **17 项浏览器冒烟**全部通过。
 
 ## 我这边验证过的
 
@@ -162,7 +162,7 @@ node tools/worker-test.mjs
 ```
     node tools/worker-test.mjs               → 23 项断言全部通过（含「静态路径不产生任何跳转」）
     node tools/worker-app-test.mjs           → 58 项账号断言全部通过
-    node tools/worker-feature-test.mjs       → 70 项第二批功能断言全部通过（同一份用例换 D1 数据层）
+    node tools/worker-feature-test.mjs       → 88 项第二批功能断言全部通过（同一份用例换 D1 数据层，含投稿上传单文件 HTML）
     BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 17 项浏览器冒烟全部通过
     wrangler dev（真 workerd，端口 8788）     → 逐路径实测：无跳转，安全头 / 缓存头 / 404 / favicon 302 全部正确
     wrangler dev -c wrangler.d1.toml（8790）  → D1 版逐页面 200，/favorites 与 /admin 正确 302 到登录

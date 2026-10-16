@@ -89,7 +89,7 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ## 如果要用「有服务端」的 Express 版（不是静态版）
 
-静态版没有登录 / 评分 / 评论 / 收藏 / 投稿 / 后台（页面里已经隐藏或只读）。要把完整功能挂到公网，三条路：
+静态版没有登录 / 评分 / 评论 / 收藏 / 投稿（含上传单文件 HTML）/ 后台（页面里已经隐藏或只读）。要把完整功能挂到公网，三条路：
 
 1. **Cloudflare Tunnel**（最快，不需要公网 IP、不用开路由器端口）：
    ```powershell

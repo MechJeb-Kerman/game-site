@@ -1,9 +1,9 @@
-# 部署到 Cloudflare Workers + D1（完整版：账号 / 评分 / 评论 / 收藏 / 投稿 / 后台）
+# 部署到 Cloudflare Workers + D1（完整版：账号 / 评分 / 评论 / 收藏 / 投稿（含上传单文件 HTML） / 后台）
 
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
-把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿、管理后台、游玩次数统计全都在。
+把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 17 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 88 项功能验收 + 17 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -41,7 +41,7 @@ wrangler deploy --config wrangler.d1.toml
 
 部署成功会打印 `https://game-site-d1.<账号>.workers.dev`。**第一次打开这个地址时**，Worker 会自动：
 
-1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql` 一致，就算忘了 apply 迁移也能跑）；
+1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql`、`migrations/0002_game_files.sql` 一致，就算忘了 apply 迁移也能跑）；
 2. 灌种子数据：4 个分类 + 6 款游戏（2048 / 贪吃蛇 / 记忆翻牌 / 打地鼠 / 井字棋 / 俄罗斯方块）；
 3. 创建站长账号 `admin` / `admin123`（可被环境变量覆盖）。
 
@@ -147,7 +147,7 @@ wrangler d1 execute game-site-db --remote --command "SELECT slug, plays, rating,
 wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELETE FROM ratings; DELETE FROM favorites; DELETE FROM play_logs; DELETE FROM games;"
 ```
 
-表结构见 `migrations/0001_init.sql`，与 `worker/schema.js` 里的 DDL 完全一致（后者是源，前者由它生成）。
+表结构见 `migrations/0001_init.sql`（第一批）与 `migrations/0002_game_files.sql`（投稿上传的单文件 HTML）。0001 是早期从 `worker/schema.js` 的 DDL 生成的快照，之后新增的表都单开一个迁移文件；两边都以 `worker/schema.js` 的 `CREATE TABLE IF NOT EXISTS` 兜底。
 
 ### 老库升级：新表与新列不用手工处理
 
@@ -180,14 +180,14 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
 node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
-node tools/worker-feature-test.mjs         # 70 项第二批功能验收（同一份用例换成 D1 数据层）
+node tools/worker-feature-test.mjs         # 88 项第二批功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **70 项第二批功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱），
+  **88 项第二批功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱，以及投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400），
   **17 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想），无 console 报错、无资源 404。
   静态产物那边 `node tools/worker-test.mjs` 另有 **23 项断言**（页面 200、站内链接 54 条全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
@@ -228,7 +228,7 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 ```
 
 浏览器里依次确认：首页 6 款游戏、游玩次数为 0（种子不灌假数字）、能注册、能评分（一人一票、可改）、
-能评论、能收藏、`/submit` 投稿后出现在 `/admin` 的待审核里、站长能上架/下架。
+能评论、能收藏、`/submit` 投稿后出现在 `/admin` 的待审核里；`/submit` 上传一份单文件 HTML：待审时 `/ugc/<slug>.html` 对游客 404、站长能取到，站长上架后谁都能取到并能直接玩，退回待审后又 404。站长能上架/下架。
 
 ## 十、排错
 
@@ -239,7 +239,7 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 | 登录后一刷新又变游客 | Cookie 没写进去 | 必须用 https 域名访问，不要用 IP；确认浏览器没屏蔽第三方 Cookie 扩展 |
 | 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两个 `?v=` 的版本号 +1（现为 `?v=4`），重新构建 + 部署 |
 | 游玩次数不变、打不了星、发不出评论，页面却看着一切正常 | `dist-cf/static/js/app.js` 被静态版前端顶掉了：Workers/D1 把 `dist-cf/` 当 ASSETS 目录，动态页面加载到的是没有 `/api/...` 逻辑的 `app-static.js` | 重新 `pnpm build:pages`（构建自检会直接拦住）；规则是 `static/js/app.js` = 动态版（来自 `public/js/app.js`）、`app-static.js` = 静态版，静态页面只引后者 |
-| `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql` 在里面 |
+| `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql`、`0002_game_files.sql` 都在里面 |
 | `wrangler deploy` 报 assets 目录不存在 | 没构建 | 先跑第二步的 `build-pages` |
 | 打开就「重定向次数过多」/ `ERR_TOO_MANY_REDIRECTS` | `html_handling` 不是 `none`，资源层把 `.html` 路径 308 回去了 | 把 `wrangler*.toml` 改回 `html_handling = "none"` 再部署；`node tools/worker-test.mjs` 会拦住这个改错 |
 | 每个页面都 500，日志里 `D1_EXEC_ERROR: ... incomplete input` | 用了 `db.exec()` 执行多行 DDL | 逐条 `prepare().run()`（`worker/schema.js` 已改好，不要回退成 `exec`） |
@@ -252,5 +252,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言，且在真 workerd + 真 D1 语义下复跑通过）、
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 88 项功能断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
 14 个页面的浏览器渲染与交互、静态资源与安全响应头（23 项断言，见 `tools/worker-test.mjs`）。

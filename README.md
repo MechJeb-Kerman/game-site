@@ -2,7 +2,7 @@
 
 一个**开箱即跑**的在线小游戏聚合站最小原型：纯 HTML + Express 服务端渲染 + `node:sqlite` 存元数据。
 零前端框架、零构建步骤、零图片文件（封面是运行时生成的 SVG），`pnpm install` 后一条命令即可访问。
-自带完整的账号体系（注册登录、邮箱验证、找回密码、第三方登录、收藏、评论与楼中楼、举报）与站长后台（投稿审核、批量上下架、举报处理、封禁、操作日志），外加 SQLite 排行榜与拼音搜索，全部落在本地 SQLite，不依赖任何外部服务。
+自带完整的账号体系（注册登录、邮箱验证、找回密码、第三方登录、收藏、评论与楼中楼、举报）与站长后台（投稿审核、批量上下架、举报处理、封禁、操作日志），外加 SQLite 排行榜与拼音搜索；投稿可以直接上传**自包含的单文件 HTML**（存库、按 `/ugc/<slug>.html` 托管、用 CSP sandbox 隔离），全部落在本地 SQLite，不依赖任何外部服务。
 
 ![首页](docs/screens/home.png)
 
@@ -23,7 +23,7 @@
 | 第三方登录 | GitHub / Google / 演示登录（`/auth/:provider`），OAuth 2.0 授权码模式，原生 `fetch` 实现、零依赖；同一个第三方账号只绑一个站内用户，已绑过就直接登录 |
 | 收藏 | 详情页一键「♡ 收藏」，`/favorites` 我的收藏夹 |
 | 评论 | 详情页发评论（≤500 字，同一用户同一游戏 10 秒限流），**分页**（每页 10 条顶层评论，回复默认折叠成「查看全部 N 条回复」）、**楼中楼两级回复**（回复别人时自动挂到同一顶层并 @昵称）、**举报**（spam / abuse / spoiler / other，同一人同一评论只算一次），站长可隐藏 / 恢复 / 处理举报 |
-| 投稿与后台 | `/submit` 登录后投稿进待审队列；`/admin` 站长审核上架、上下架游戏、管理评论，另有**批量上下架**、**投稿预览**（`/admin/preview/:slug`，按详情页的形状看内容）、**处理举报**、**封禁/解封用户**（可带理由）、**手动标记邮箱已验证**、**操作日志**（`audit_logs`，谁什么时候对什么做了什么）与开发发件箱 |
+| 投稿与后台 | `/submit` 登录后投稿进待审队列；`/admin` 站长审核上架、上下架游戏、管理评论，另有**批量上下架**、**投稿预览**（`/admin/preview/:slug`，按详情页的形状看内容）、**处理举报**、**封禁/解封用户**（可带理由）、**手动标记邮箱已验证**、**操作日志**（`audit_logs`，谁什么时候对什么做了什么）与开发发件箱；**投稿上传单文件 HTML**（≤ 512 KB，存库、按 `/ugc/<slug>.html` 托管） |
 | 评分 | 登录后 5 星打分，一人一票、随时改票；均值实时回写数据库（未登录只能看，点星会引导去登录） |
 | SEO | 每页独立 title/description/canonical/OG、JSON-LD（WebSite / CollectionPage / VideoGame，有人评分时才带 AggregateRating）、`/sitemap.xml`、`/robots.txt`；登录/注册/收藏/投稿/后台一律 `noindex` |
 | 统计 | `POST /api/games/:slug/play`，同一 IP + 同一游戏 30 秒内去重 |
@@ -144,7 +144,7 @@ game-site/
 | GET/POST | `/register` | 注册页 / 提交注册（用户名重复 409） |
 | POST | `/logout` | 退出登录，清掉会话 |
 | GET | `/favorites` | 我的收藏夹（需登录） |
-| GET/POST | `/submit` | 投稿表单 / 提交投稿（需登录，成功进待审队列） |
+| GET/POST | `/submit` | 投稿表单 / 提交投稿（需登录；上传单文件 `.html`（≤ 512 KB）或填已有地址，成功进待审队列） |
 | GET | `/admin` | 站长后台：统计 + 待审投稿 + 游戏管理 + 最新评论（需 admin） |
 | POST | `/admin/games/:slug/status` | 上架 / 下架 / 通过 / 拒绝（需 admin） |
 | POST | `/admin/comments/:id/status` | 隐藏 / 恢复评论（需 admin） |
@@ -156,6 +156,7 @@ game-site/
 | GET/POST | `/forgot` · `/reset` | 忘密码：申请重置信 · 用 token 设新密码（30 分钟一次性） |
 | GET | `/auth/:provider` · `/auth/:provider/callback` | 第三方登录跳转与回调（`github` / `google` / `dev`） |
 | GET | `/admin/preview/:slug` | 后台按详情页形状预览任意状态的游戏（含待审与已下架） |
+| GET | `/ugc/:file` | 投稿上传的单文件 HTML 本体（`/ugc/<slug>.html`）；已上架的谁都能取，待审 / 已下架只有站长能取 |
 | POST | `/admin/games/batch` | 批量上架 / 下架 / 通过 / 拒绝（`slug` 可重复传多条） |
 | POST | `/admin/reports/:id/status` | 处理 / 忽略一条举报（需 admin） |
 | POST | `/admin/users/:id/ban` | 封禁 / 解封用户（`banned=1\|0`，可带理由）（需 admin） |
@@ -279,6 +280,9 @@ oauth_accounts(provider, provider_uid, user_id, created_at)
       -- PRIMARY KEY(provider, provider_uid)：一个第三方身份只绑一个站内用户
 password_resets(token PRIMARY KEY, user_id, created_at, expires_at, used_at)
       -- 用过就写 used_at，不能再用
+game_files(slug PRIMARY KEY, filename, size, html, created_at)
+      -- 投稿上传的单文件 HTML 正文直接存库（D1 单个值上限约 1MB，所以投稿限制 512 KB）
+      -- slug 与 games.slug 一致，对应的 game_url 记成 /ugc/<slug>.html
 ```
 
 已建索引：`idx_games_cat`、`idx_games_plays`、`idx_logs_game`、`idx_logs_day`、`idx_ratings_game`、`idx_sessions_user`、`idx_fav_user`、`idx_comments_game`，以及第二批加的 `idx_games_status`、`idx_comments_parent`、`idx_reports_status`、`idx_audit_recent`、`idx_oauth_user`、`idx_reset_user`。
@@ -298,9 +302,15 @@ password_resets(token PRIMARY KEY, user_id, created_at, expires_at, used_at)
 公开列表（首页/分类/搜索/API）只查 `status=1`，所以待审与已下架的投稿不会漏出来；
 站长在后台改 `status`（`2 → 1` 通过、`2 → 0` 拒绝、`1 → 0` 下架、`0 → 1` 重新上架）。
 
+**投稿上传**：投稿可以只上传一个自包含的 `.html`（也可以继续填已有地址，两边都填时以文件为准）。
+文件正文存进 `game_files` 表、`games.game_url` 记成 `/ugc/<slug>.html`，不落磁盘；上限 512 KB（`UPLOAD_MAX`，表单文案 `UPLOAD_LABEL`），扩展名必须 `.html` / `.htm`，还要过「非空 / 是文本 / 含 HTML 标签」三道校验——规则只有一份 `src/upload.js`，Express 与 Workers 共用。
+`/ugc/:file` 只认「库里真有这个文件」且「已上架」，其余一律 404；响应带 `Content-Security-Policy: sandbox …`（**不含** `allow-same-origin`）把它降级成不透明源，详情页 iframe 对这种来源也只给 `allow-scripts allow-pointer-lock allow-orientation-lock`，比站内自带游戏更严。
+静态导出线没有服务端，因此静态版不提供投稿与上传。
+
 ## 安全设计
 
 - **游戏全部在 iframe 沙箱里跑**：`sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-orientation-lock allow-popups"`，刻意**不给** `allow-top-navigation`，恶意/第三方游戏无法把整站跳走。
+- **用户上传的 HTML 比自带游戏更不被信任**：`/ugc/*` 响应头带 `Content-Security-Policy: sandbox …`（`default-src 'none'`、无 `allow-same-origin`、`frame-ancestors 'self'`），详情页 iframe 也只给 `allow-scripts allow-pointer-lock allow-orientation-lock`——不给 `allow-same-origin` 就等于跨源，上传内容拿不到本站 cookie / localStorage / DOM。
 - 全站安全头：`X-Content-Type-Options`、`Referrer-Policy`、`X-Frame-Options`、`Permissions-Policy`，以及一条 CSP（因为自研游戏用了内联脚本，放行了 `unsafe-inline`/`unsafe-eval`/`blob:`）。
 - 所有模板输出都过 `esc()` 转义，SQL 查询全部使用参数绑定，LIKE 通配符已转义；评论正文在写库前折叠空白并限长 500。
 - 口令只存 scrypt 哈希（不存明文、不存可逆加密），接口返回的 user 只带 id / 用户名 / 昵称 / 角色。
@@ -337,7 +347,7 @@ node tools/pages-smoke.mjs --base=/仓库名/              # 无头 Chrome 冒�
 ```
 
 静态版保留：首页、分类、标签、搜索（前端过滤）、列表排序（前端排序）、详情页、iframe 播放器（全屏 / 重开）、6 款游戏本体。
-静态版隐藏：登录注册、评分、评论、收藏、投稿、站长后台、游玩次数（详情页换成一句"静态演示版"说明）。
+静态版隐藏：登录注册、评分、评论、收藏、投稿（含上传单文件 HTML）、站长后台、游玩次数（详情页换成一句"静态演示版"说明）。
 
 参数含义、发布步骤、`.nojekyll` 与中文文件名等坑，见 **[DEPLOY-GITHUB-PAGES.md](DEPLOY-GITHUB-PAGES.md)**。
 
@@ -425,10 +435,10 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 - 后台与账号相关的页面在无头 Chrome 里截图确认过：`docs/screens/login.png`、`register.png`、`submit.png`、`admin.png`、`favorites.png`、`rating.png`。
   手柄自测也会留下 `docs/screens/gamepad-2048.png`、`gamepad-tictactoe.png`、`gamepad-memory.png`、`gamepad-whack.png`、`gamepad-detail-iframe.png`（能直接看到虚拟光标和底部的「🎮 手柄已连接」提示）。
 - 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**7 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 详情页 iframe 自动聚焦并接收手柄输入）；静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
-  - **第二批功能（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强）`pnpm test:features` 共 70 项断言全部通过**，同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **70 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）。
+  - **第二批功能（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强、投稿上传单文件 HTML）`pnpm test:features` 共 88 项断言全部通过**，同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **88 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）；其中 18 项是投稿上传：文件框 + multipart 表单、上传后进待审、待审对游客 404 而站长能取、响应是 `text/html` + sandbox CSP（不含 `allow-same-origin`）、后台预览与详情页 iframe 都是严格沙箱、超 512 KB / 扩展名不对 / 非文本一律 400、只填地址的老投稿仍可用、站长上架后游客能取到并能直接玩、退回待审后又 404。
 - `pnpm smoke`（Express）**17 项全部通过**，含新增的排行榜页（7 个榜单 tab、名次与「新上榜」标记）与搜索联想（首字母 / 全拼 / 中文三条路径）；`pnpm smoke`（Workers + D1）同样 **17 项全部通过**。
 > `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
-  > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿。
+  > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿；`pnpm test:features` 会再留下两条测试投稿（其中一条是上传的单文件 HTML，跑完会退回待审）。
   > 两份脚本都按「增量」写断言——评分只看自己那一票、收藏只看总数的变化——所以先跑谁、重复跑几轮结果都一样（同一个库上连跑两遍 account-test 仍是 58/58），前提只是 2048 这个 slug 还在；
   > 跑完想干净就按上面「彻底回到出厂状态」删库重启。
 
