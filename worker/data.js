@@ -5,6 +5,7 @@
  *   3) 批量改状态走 db.batch（D1 没有可交互事务），不再手写 BEGIN/COMMIT。
  */
 import { buildSearchIndex, queryVariants } from '../src/pinyin.js';
+import { validateHtmlUpload, UGC_PREFIX } from '../src/upload.js';
 
 const SELECT_BASE =
   'SELECT g.*, c.slug AS category_slug, c.name AS category_name, c.icon AS category_icon ' +
@@ -451,17 +452,52 @@ export async function uniqueSlug(db, title) {
   return slug;
 }
 
-/** 用户投稿：写进 games 但 status = 2（待审核），管理员通过后才上架 */
+/* ---------- 投稿上传的单文件 HTML ---------- */
+
+/** 读投稿上传的文件（没有就是 null） */
+export async function getGameFile(db, slug) {
+  return (await db.prepare('SELECT slug, filename, size, html, created_at FROM game_files WHERE slug = ?').bind(String(slug)).first()) || null;
+}
+
+/** 写入/覆盖投稿上传的文件（D1 没有 upsert 之外的技巧，用 ON CONFLICT 保持与 SQLite 侧一致） */
+export async function saveGameFile(db, slug, filename, html) {
+  const text = String(html);
+  const size = new TextEncoder().encode(text).length;
+  await db.prepare(
+    'INSERT INTO game_files (slug, filename, size, html) VALUES (?, ?, ?, ?)' +
+    ' ON CONFLICT(slug) DO UPDATE SET filename = excluded.filename, size = excluded.size, html = excluded.html'
+  ).bind(String(slug), String(filename || '').slice(0, 120), size, text).run();
+  return size;
+}
+
+/** 投稿失败时回滚用 */
+export async function deleteGameFile(db, slug) {
+  await db.prepare('DELETE FROM game_files WHERE slug = ?').bind(String(slug)).run();
+}
+
+/**
+ * 用户投稿：写进 games 但 status = 2（待审核），管理员通过后才上架。
+ * 两种投法二选一：①上传自包含的 .html（存 game_files，game_url 记成 /ugc/<slug>.html）②填已有地址。上传优先。
+ */
 export async function createSubmission(db, f, userId) {
   const title = String(f.title || '').trim().slice(0, 40);
-  const url = String(f.game_url || '').trim().slice(0, 300);
+  const file = f.file && typeof f.file === 'object' ? f.file : null;
+  let url = String(f.game_url || '').trim().slice(0, 300);
   if (title.length < 2) return { error: '请填写游戏名称（至少 2 个字）' };
-  if (!/^(https?:\/\/|\/)/.test(url)) {
-    return { error: '游戏地址要填 /games/xxx/index.html 这样的站内路径，或 http(s) 开头的链接' };
+
+  let upload = null;
+  if (file) {
+    const check = validateHtmlUpload(file.name, file.html);
+    if (check.error) return { error: check.error };
+    upload = { filename: file.name, html: String(file.html) };
+  } else if (!/^(https?:\/\/|\/)/.test(url)) {
+    return { error: '请上传单文件 HTML 游戏（.html），或填写已有的游戏地址 /games/xxx/index.html' };
   }
+
   const cat = await getCategory(db, String(f.category || '').trim());
   const tags = String(f.tags || '').split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean).slice(0, 6);
   const slug = await uniqueSlug(db, title);
+  if (upload) url = UGC_PREFIX + slug + '.html';
   await db.prepare(
     'INSERT INTO games (slug, title, subtitle, description, category_id, game_url,' +
     ' width, height, orientation, tags, emoji, accent, accent2, license, status, submitted_by)' +
@@ -482,9 +518,17 @@ export async function createSubmission(db, f, userId) {
     String(f.license || '投稿').slice(0, 40),
     userId
   ).run();
+  if (upload) {
+    try {
+      await saveGameFile(db, slug, upload.filename, upload.html);
+    } catch (err) {
+      await db.prepare('DELETE FROM games WHERE slug = ?').bind(slug).run();
+      return { error: '保存上传的文件失败：' + (err && err.message ? err.message : err) };
+    }
+  }
   const row = await db.prepare('SELECT id FROM games WHERE slug = ?').bind(slug).first();
   if (row) await refreshSearchIndex(db, row.id);
-  return { slug, id: row ? Number(row.id) : 0 };
+  return { slug, id: row ? Number(row.id) : 0, uploaded: !!upload };
 }
 
 /** 后台：按状态列出游戏（含未上架的） */

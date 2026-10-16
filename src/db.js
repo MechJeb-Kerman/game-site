@@ -162,6 +162,15 @@ export function migrate() {
       used_at    TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_reset_user ON password_resets(user_id);
+
+    -- 投稿上传的单文件 HTML 游戏：正文直接存库（D1 单个值上限约 1MB，投稿限制 512KB）
+    CREATE TABLE IF NOT EXISTS game_files (
+      slug       TEXT PRIMARY KEY,
+      filename   TEXT,
+      size       INTEGER DEFAULT 0,
+      html       TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
   `);
 
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核

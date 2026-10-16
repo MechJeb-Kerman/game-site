@@ -138,7 +138,14 @@ export const DDL = [
   "  expires_at TEXT NOT NULL,",
   "  used_at    TEXT",
   ");",
-  "CREATE INDEX IF NOT EXISTS idx_reset_user ON password_resets(user_id);"
+  "CREATE INDEX IF NOT EXISTS idx_reset_user ON password_resets(user_id);",
+  "CREATE TABLE IF NOT EXISTS game_files (",
+  "  slug       TEXT PRIMARY KEY,",
+  "  filename   TEXT,",
+  "  size       INTEGER DEFAULT 0,",
+  "  html       TEXT NOT NULL,",
+  "  created_at TEXT DEFAULT (datetime('now','localtime'))",
+  ");"
 ].join("\n");
 
 /** 老库补字段：D1 的 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列（对应 src/db.js 的 addColumn） */

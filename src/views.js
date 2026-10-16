@@ -1,4 +1,5 @@
 /** 服务端 HTML 模板（纯字符串渲染，零模板引擎依赖） */
+import { isUploadedUrl, UPLOAD_LABEL } from './upload.js';
 
 export const SITE = {
   name: '趣玩小游戏',
@@ -437,6 +438,9 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
       '</form>'
     : '<p class="cmt-login"><a href="' + loginHref + '">登录</a> 后参与评论</p>';
 
+  // 投稿上传的 HTML 由站内托管，播放时不给 allow-same-origin（沙箱 CSP 也会再兜一层）
+  const ugcHtml = isUploadedUrl(game.game_url);
+
   const previewBar = preview
     ? '<div class="preview-bar">👀 预览模式：这是 <b>' + esc(game.title) + '</b>（' + esc(STATUS_LABEL[Number(game.status)] || '未知') + '）的公开效果，' +
       '访客看不到这一条。<a href="/admin">返回后台</a></div>'
@@ -465,7 +469,7 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
           <iframe id="gameFrame"
                   src="${esc(game.game_url)}"
                   title="${esc(game.title)} 在线玩"
-                  sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-orientation-lock allow-popups"
+                  sandbox="${ugcHtml ? 'allow-scripts allow-pointer-lock allow-orientation-lock' : 'allow-scripts allow-same-origin allow-pointer-lock allow-orientation-lock allow-popups'}"
                   allow="fullscreen; autoplay; gamepad; accelerometer; gyroscope"
                   loading="eager" referrerpolicy="no-referrer"></iframe>
         </div>
@@ -721,10 +725,11 @@ export function submitPage({ origin, user, categories = [], error = '', values =
   const body = `
     ${error ? `<p class="auth-err">⚠️ ${esc(error)}</p>` : ''}
     ${done ? `<p class="auth-ok">✅ 投稿成功（编号 <b>${esc(done)}</b>），已进入待审核队列，站长通过后就会出现在 <a href="/games">全部游戏</a> 里。</p>` : ''}
-    <form class="auth-form wide" method="post" action="/submit">
+    <form class="auth-form wide" method="post" action="/submit" enctype="multipart/form-data">
       <label>游戏名称 <em>*</em><input name="title" value="${v('title')}" required maxlength="40"></label>
       <label>一句话简介<input name="subtitle" value="${v('subtitle')}" maxlength="60" placeholder="如：30 秒极限手速挑战"></label>
-      <label>游戏地址 <em>*</em><input name="game_url" value="${v('game_url', '/games/')}" required maxlength="300" placeholder="/games/xxx/index.html"><small>站内路径或 http(s) 链接；单文件 HTML5 游戏请放到 games/ 目录</small></label>
+      <label>上传单文件 HTML 游戏<input type="file" name="game_file" accept=".html,.htm,text/html"><small>自包含的一整个 .html（CSS/JS 都写在里面），上限 ${UPLOAD_LABEL}；上传后由本站托管，站长通过就能直接玩</small></label>
+      <label>或者填已有的游戏地址<input name="game_url" value="${v('game_url')}" maxlength="300" placeholder="/games/xxx/index.html 或 https://…"><small>两边都填时以上传的文件为准；站内路径形如 /games/xxx/index.html</small></label>
       <label>分类<select name="category">${catOpts}</select></label>
       <div class="row2">
         <label>画布宽<input type="number" name="width" value="${v('width', 800)}" min="200" max="2000"></label>

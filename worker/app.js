@@ -32,6 +32,22 @@ export const SECURITY_HEADERS = {
   ].join('; ')
 };
 
+/**
+ * 投稿上传的单文件 HTML 用这组响应头：CSP 的 sandbox 指令把文档降级成不透明源，
+ * 所以即便上传的脚本被直接打开，也拿不到本站的登录态、cookie 和存储。
+ */
+const UGC_HTML_CSP = [
+  'sandbox allow-scripts allow-pointer-lock allow-orientation-lock',
+  "default-src 'none'",
+  "script-src 'unsafe-inline' 'unsafe-eval' blob: data:",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "media-src data: blob:",
+  "font-src data:",
+  "connect-src 'none'",
+  "frame-ancestors 'self'"
+].join('; ');
+
 const HTML_CACHE = 'public, max-age=0, must-revalidate';
 
 const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
@@ -48,6 +64,7 @@ function makeHeaders(ctx, opts) {
   if (o.cache) h.set('cache-control', o.cache);
   if (o.location) h.set('location', o.location);
   if (o.robot) h.set('x-robots-tag', o.robot);
+  if (o.csp) h.set('content-security-policy', o.csp);
   for (const c of ctx.cookies) h.append('set-cookie', c);
   return h;
 }
@@ -85,7 +102,19 @@ async function readBody(request) {
     if (ct.indexOf('form') >= 0) {
       const fd = await request.formData();
       const o = {};
-      for (const entry of fd.entries()) o[entry[0]] = typeof entry[1] === 'string' ? entry[1] : '';
+      const files = {};
+      for (const entry of fd.entries()) {
+        if (typeof entry[1] === 'string') { o[entry[0]] = entry[1]; continue; }
+        // File：投稿上传的单文件 HTML，正文读成文本交给数据层校验
+        files[entry[0]] = {
+          name: String(entry[1].name || ''),
+          type: String(entry[1].type || ''),
+          size: Number(entry[1].size) || 0,
+          html: await entry[1].text()
+        };
+      }
+      if (files.game_file) o.file = files.game_file;
+      else if (Object.keys(files).length === 1) o.file = files[Object.keys(files)[0]];
       return o;
     }
     const text = await request.text();
@@ -531,6 +560,26 @@ async function doSubmit(ctx) {
   }), r.error ? 400 : 200);
 }
 
+/**
+ * 投稿上传的单文件 HTML：正文直接从 D1 里取出来吐回去。
+ * 待审（status = 2）与已下架的投稿只对站长开放，免得猜 slug 就能看到未上架内容。
+ */
+async function pageUgcFile(ctx, params) {
+  const notFound = () => new Response('404 Not Found', { status: 404, headers: makeHeaders(ctx, { type: 'text/plain; charset=utf-8', cache: 'no-store' }) });
+  // 同 Express 版：slug 可能是中文（matchRoute 已 decode 过 :file），只认扩展名与长度
+  const m = /^(.+)\.html?$/i.exec(String(params.file || ''));
+  const slug = m ? m[1] : '';
+  if (!slug || slug.length > 64 || slug.indexOf('/') >= 0 || slug.indexOf('\\') >= 0) return notFound();
+  const game = await data.getGameAny(ctx.db, slug);
+  const file = await data.getGameFile(ctx.db, slug);
+  const isAdmin = !!ctx.user && ctx.user.role === 'admin';
+  if (!game || !file || (Number(game.status) !== 1 && !isAdmin)) return notFound();
+  return new Response(file.html, {
+    status: 200,
+    headers: makeHeaders(ctx, { type: 'text/html; charset=utf-8', cache: 'public, max-age=60', csp: UGC_HTML_CSP })
+  });
+}
+
 /* ================= 后台 ================= */
 
 async function pageAdmin(ctx) {
@@ -792,6 +841,7 @@ const ROUTES = [
   { m: 'GET', p: '/tag/:tag', fn: pageTag },
   { m: 'GET', p: '/search', fn: pageSearch },
   { m: 'GET', p: '/game/:slug', fn: pageGame },
+  { m: 'GET', p: '/ugc/:file', fn: pageUgcFile },
   { m: 'GET', p: '/rank', fn: pageRank },
   { m: 'GET', p: '/login', fn: pageLogin },
   { m: 'POST', p: '/login', fn: doLogin },

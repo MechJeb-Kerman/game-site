@@ -9,6 +9,7 @@ import { coverSvg, ogSvg } from './src/cover.js';
 import * as mail from './src/mail.js';
 import * as oauth from './src/oauth.js';
 import { randomBytes } from 'node:crypto';
+import { formFromMultipart } from './src/multipart.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -52,6 +53,22 @@ app.use((req, res, next) => {
   );
   next();
 });
+
+/**
+ * 投稿上传的单文件 HTML 用这组响应头：CSP 的 sandbox 指令把文档降级成不透明源，
+ * 于是上传的脚本即使被单独打开，也读不到本站的登录态、cookie 与存储。
+ */
+const UGC_HTML_CSP = [
+  'sandbox allow-scripts allow-pointer-lock allow-orientation-lock',
+  "default-src 'none'",
+  "script-src 'unsafe-inline' 'unsafe-eval' blob: data:",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "media-src data: blob:",
+  "font-src data:",
+  "connect-src 'none'",
+  "frame-ancestors 'self'"
+].join('; ');
 
 const originOf = (req) => process.env.SITE_ORIGIN || req.protocol + '://' + req.get('host');
 
@@ -116,6 +133,25 @@ app.use((req, res, next) => {
 app.use('/static', express.static(PUBLIC_DIR, { maxAge: '7d', etag: true }));
 // 生产环境建议把游戏放到独立域名（如 games.example.com）做沙箱隔离
 app.use('/games', express.static(GAMES_DIR, { maxAge: '1h', etag: true }));
+
+// 投稿上传的单文件 HTML：正文存在库里，按 slug 取出来。待审/已下架的只给站长看，
+// 免得猜 slug 就能看到未上架内容；响应头用 CSP sandbox 把它降级成不透明源。
+app.get('/ugc/:file', (req, res) => {
+  const notFound = () => res.status(404).type('text/plain; charset=utf-8').send('404 Not Found');
+  // 投稿标题是中文时 slugify 会保留中文，所以这里不限定字符集，只看扩展名和长度；
+  // 真正的门禁是下面那行「库里有没有这个文件 + 有没有上架」。
+  const m = /^(.+)\.html?$/i.exec(String(req.params.file || ''));
+  const slug = m ? m[1] : '';
+  if (!slug || slug.length > 64 || slug.indexOf('/') >= 0 || slug.indexOf('\\') >= 0) return notFound();
+  const game = data.getGameAny(slug);
+  const file = game ? data.getGameFile(slug) : null;
+  const isAdmin = !!req.user && req.user.role === 'admin';
+  if (!game || !file || (Number(game.status) !== 1 && !isAdmin)) return notFound();
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Security-Policy', UGC_HTML_CSP);
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.send(file.html);
+});
 
 // ---------- 页面 ----------
 app.get('/', (req, res) => {
@@ -680,12 +716,16 @@ app.get('/submit', requireLogin, (req, res) => {
   }));
 });
 
-app.post('/submit', requireLogin, (req, res) => {
-  const b = req.body || {};
+app.post('/submit', requireLogin, express.raw({ type: 'multipart/form-data', limit: '2mb' }), (req, res) => {
+  // 带文件时浏览器发的是 multipart/form-data；项目零依赖，自己解析（不引 multer）
+  const b = Buffer.isBuffer(req.body)
+    ? formFromMultipart(req.body, req.headers['content-type'], 'game_file')
+    : (req.body || {});
   const r = data.createSubmission(b, req.user.id);
-  res.status(r.error ? 400 : 200).send(ui.submitPage({
+  const ok = !r.error;
+  res.status(ok ? 200 : 400).send(ui.submitPage({
     origin: originOf(req), user: req.user, categories: data.listCategories(),
-    error: r.error || '', values: b, done: r.slug || ''
+    error: r.error || '', values: b, done: ok ? r.slug : ''
   }));
 });
 

@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { buildSearchIndex, queryVariants } from './pinyin.js';
+import { validateHtmlUpload, UGC_PREFIX } from './upload.js';
 
 const SELECT_BASE = `
   SELECT g.*, c.slug AS category_slug, c.name AS category_name, c.icon AS category_icon
@@ -433,21 +434,55 @@ export function uniqueSlug(title) {
   return slug;
 }
 
+/* ---------- 投稿上传的单文件 HTML ---------- */
+
+/** 读投稿上传的文件（没有就是 null） */
+export function getGameFile(slug) {
+  return db.prepare('SELECT slug, filename, size, html, created_at FROM game_files WHERE slug = ?').get(String(slug)) || null;
+}
+
+/** 写入/覆盖投稿上传的文件：尺寸自己按 UTF-8 算，不信客户端报的数 */
+export function saveGameFile(slug, filename, html) {
+  const text = String(html);
+  const size = new TextEncoder().encode(text).length;
+  db.prepare(
+    'INSERT INTO game_files (slug, filename, size, html) VALUES (?, ?, ?, ?)' +
+    ' ON CONFLICT(slug) DO UPDATE SET filename = excluded.filename, size = excluded.size, html = excluded.html'
+  ).run(String(slug), String(filename || '').slice(0, 120), size, text);
+  return size;
+}
+
+/** 投稿失败时回滚用 */
+export function deleteGameFile(slug) {
+  db.prepare('DELETE FROM game_files WHERE slug = ?').run(String(slug));
+}
+
 /**
  * 用户投稿：写进 games 但 status = 2（待审核），管理员通过后才上架。
- * @returns {{error:string}|{slug:string}}
+ * 两种投法二选一：①上传一个自包含的 .html（存进 game_files，game_url 记成 /ugc/<slug>.html）
+ * ②填已有的游戏地址（站内路径或 http(s) 外链）。上传优先。
+ * @returns {{error:string}|{slug:string,id:number,uploaded:boolean}}
  */
 export function createSubmission(f, userId) {
   const title = String(f.title || '').trim().slice(0, 40);
-  const url = String(f.game_url || '').trim().slice(0, 300);
+  const file = f.file && typeof f.file === 'object' ? f.file : null;
+  let url = String(f.game_url || '').trim().slice(0, 300);
   if (title.length < 2) return { error: '请填写游戏名称（至少 2 个字）' };
-  if (!/^(https?:\/\/|\/)/.test(url)) {
-    return { error: '游戏地址要填 /games/xxx/index.html 这样的站内路径，或 http(s) 开头的链接' };
+
+  let upload = null;
+  if (file) {
+    const check = validateHtmlUpload(file.name, file.html);
+    if (check.error) return { error: check.error };
+    upload = { filename: file.name, html: String(file.html) };
+  } else if (!/^(https?:\/\/|\/)/.test(url)) {
+    return { error: '请上传单文件 HTML 游戏（.html），或填写已有的游戏地址 /games/xxx/index.html' };
   }
+
   const cat = getCategory(String(f.category || '').trim());
   const tags = String(f.tags || '')
     .split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean).slice(0, 6);
   const slug = uniqueSlug(title);
+  if (upload) url = UGC_PREFIX + slug + '.html';
   db.prepare(
     'INSERT INTO games (slug, title, subtitle, description, category_id, game_url,' +
     ' width, height, orientation, tags, emoji, accent, accent2, license, status, submitted_by)' +
@@ -468,9 +503,17 @@ export function createSubmission(f, userId) {
     String(f.license || '投稿').slice(0, 40),
     userId
   );
+  if (upload) {
+    try {
+      saveGameFile(slug, upload.filename, upload.html);
+    } catch (err) {
+      db.prepare('DELETE FROM games WHERE slug = ?').run(slug);
+      return { error: '保存上传的文件失败：' + (err && err.message ? err.message : err) };
+    }
+  }
   const id = Number(db.prepare('SELECT id FROM games WHERE slug = ?').get(slug).id);
   refreshSearchIndex(id);
-  return { slug, id };
+  return { slug, id, uploaded: !!upload };
 }
 
 /** 后台：按状态列出游戏（含未上架的） */
