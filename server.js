@@ -475,7 +475,7 @@ app.post('/api/games/:slug/rate', (req, res) => {
 app.get('/login', (req, res) => {
   const next = safeNext(req.query.next);
   if (req.user) return res.redirect(next);
-  res.send(ui.loginPage({ origin: originOf(req), next }));
+  res.send(ui.loginPage({ origin: originOf(req), next, providers: oauth.enabledProviders() }));
 });
 
 app.post('/login', (req, res) => {
@@ -485,7 +485,7 @@ app.post('/login', (req, res) => {
   const r = auth.login(username, b.password);
   if (r.error) {
     return res.status(401).send(ui.loginPage({
-      origin: originOf(req), next, error: r.error, username
+      origin: originOf(req), next, error: r.error, username, providers: oauth.enabledProviders()
     }));
   }
   auth.startSession(res, r.user.id);
@@ -495,7 +495,7 @@ app.post('/login', (req, res) => {
 app.get('/register', (req, res) => {
   const next = safeNext(req.query.next);
   if (req.user) return res.redirect(next);
-  res.send(ui.registerPage({ origin: originOf(req), next }));
+  res.send(ui.registerPage({ origin: originOf(req), next, providers: oauth.enabledProviders() }));
 });
 
 app.post('/register', (req, res) => {
@@ -505,7 +505,7 @@ app.post('/register', (req, res) => {
   const displayName = String(b.display_name || '');
   const v = auth.validateRegister(username, b.password, displayName);
   const fail = (error, status) => res.status(status).send(ui.registerPage({
-    origin: originOf(req), next, error, username, displayName
+    origin: originOf(req), next, error, username, displayName, providers: oauth.enabledProviders()
   }));
   if (v.error) return fail(v.error, 400);
   if (auth.findUser(v.username)) return fail('这个用户名已经被注册了，换一个吧', 409);
@@ -735,6 +735,33 @@ app.post('/submit', requireLogin, express.raw({ type: 'multipart/form-data', lim
 
 // ---------- 后台 ----------
 
+/** 「集成自检」面板的数据：邮件通道与各第三方登录的配置状态（只看配没配，不回显密钥） */
+function integrationsOf(origin) {
+  const keys = oauth.PROVIDERS.concat(oauth.devEnabled() ? ['dev'] : []);
+  return {
+    mail: {
+      transport: mail.transportName(),
+      endpoint: process.env.MAIL_API_URL || '',
+      from: mail.MAIL_FROM(),
+      keySet: !!(process.env.RESEND_API_KEY || process.env.MAIL_API_KEY)
+    },
+    oauth: keys.map((k) => {
+      const m = oauth.providerMeta(k);
+      const c = oauth.providerCreds(k);
+      return {
+        key: k,
+        label: m.label,
+        icon: m.icon,
+        env: (m.env || []).join(' / '),
+        enabled: oauth.providerEnabled(k),
+        idSet: !!(c && c.id),
+        secretSet: !!(c && c.secret),
+        callback: m.mock ? '' : oauth.redirectUri(origin, k)
+      };
+    })
+  };
+}
+
 app.get('/admin', requireAdmin, (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 40);
   const status = req.query.status === undefined ? '' : String(req.query.status);
@@ -753,7 +780,8 @@ app.get('/admin', requireAdmin, (req, res) => {
     filter: { q, status, category },
     outbox: mail.outbox(20),
     mailTransport: mail.transportName(),
-    notice: String(req.query.ok || '')
+    notice: String(req.query.ok || ''),
+    integrations: integrationsOf(originOf(req))
   }));
 });
 
@@ -770,6 +798,30 @@ app.get('/admin/preview/:slug', requireAdmin, (req, res) => {
     thread: data.commentThread(game.slug, 1),
     commentTotal: data.countComments(game.slug)
   }));
+});
+
+/** 彻底删除确认页：连带数据量先摆出来，上架中的游戏不让删 */
+app.get('/admin/games/:slug/delete', requireAdmin, (req, res) => {
+  const game = data.getGameAny(req.params.slug);
+  if (!game) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  res.send(ui.deleteGamePage({
+    origin: originOf(req),
+    user: req.user,
+    game,
+    counts: data.gamePurgeInfo(game.slug) || {}
+  }));
+});
+
+app.post('/admin/games/:slug/delete', requireAdmin, (req, res) => {
+  const slug = String(req.params.slug);
+  const r = data.deleteGame(slug);
+  if (r.error === 'online') return res.status(400).type('text/plain').send('这个游戏还在上架中，请先下架再彻底删除');
+  if (r.error) return res.status(404).type('text/plain').send('没有这个游戏');
+  const i = r.info;
+  data.logAudit(req.user, 'game.delete', slug,
+    i.title + '（评论 ' + i.comments + ' / 举报 ' + i.reports + ' / 评分 ' + i.ratings +
+    ' / 收藏 ' + i.favorites + ' / 游玩 ' + i.plays + ' / 上传文件 ' + i.file + '）');
+  res.redirect('/admin?ok=purge');
 });
 
 app.post('/admin/games/:slug/status', requireAdmin, (req, res) => {

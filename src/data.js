@@ -596,6 +596,60 @@ export function setGamesStatus(slugs, status) {
   return { status: s, changed, missing };
 }
 
+/* ---------- 彻底删除 ---------- */
+
+/**
+ * 彻底删除前的连带数据量：确认页要展示，删除后也拿它写审计日志。
+ * 上架中的游戏不允许删，模板那边会先提示下架。
+ */
+export function gamePurgeInfo(slug) {
+  const g = db.prepare('SELECT id, slug, title, status, emoji FROM games WHERE slug = ?').get(String(slug));
+  if (!g) return null;
+  const one = (sql, ...p) => db.prepare(sql).get(...p).n;
+  return {
+    slug: g.slug,
+    id: g.id,
+    title: g.title,
+    emoji: g.emoji || '',
+    status: Number(g.status),
+    comments: one('SELECT COUNT(*) n FROM comments WHERE game_id = ?', g.id),
+    reports: one('SELECT COUNT(*) n FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE game_id = ?)', g.id),
+    ratings: one('SELECT COUNT(*) n FROM ratings WHERE game_id = ?', g.id),
+    favorites: one('SELECT COUNT(*) n FROM favorites WHERE game_id = ?', g.id),
+    plays: one('SELECT COUNT(*) n FROM play_logs WHERE game_id = ?', g.id),
+    file: one('SELECT COUNT(*) n FROM game_files WHERE slug = ?', g.slug)
+  };
+}
+
+/**
+ * 彻底删除一个游戏：连带评论（含回复）、举报、评分、收藏、游玩记录、上传的 HTML 文件一起删。
+ * 必须先下架（status !== 1），不做软删——软删是 status=0，这条是从库里抹掉。
+ * 用户账号与操作日志保留，方便事后追查。
+ */
+export function deleteGame(slug) {
+  const info = gamePurgeInfo(slug);
+  if (!info) return { error: 'not_found' };
+  if (info.status === 1) return { error: 'online' };
+  const stmts = [
+    'DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE game_id = ?)',
+    'DELETE FROM comments WHERE game_id = ?',
+    'DELETE FROM ratings WHERE game_id = ?',
+    'DELETE FROM favorites WHERE game_id = ?',
+    'DELETE FROM play_logs WHERE game_id = ?'
+  ];
+  db.exec('BEGIN');
+  try {
+    for (const sql of stmts) db.prepare(sql).run(info.id);
+    db.prepare('DELETE FROM game_files WHERE slug = ?').run(info.slug);
+    db.prepare('DELETE FROM games WHERE id = ?').run(info.id);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return { info };
+}
+
 /* ---------- 账号管理 ---------- */
 
 /** 后台用户列表：带评论数、投稿数、是否封禁 */

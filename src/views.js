@@ -544,7 +544,18 @@ function authCard({ origin, user, title, heading, sub, body, path }) {
   });
 }
 
-export function loginPage({ origin, user = null, next = '/', error = '', username = '' }) {
+/** 第三方登录按钮（登录页、注册页共用）：没配的 Provider 不会出现 */
+function oauthButtons(providers, next) {
+  if (!providers || !providers.length) return '';
+  const q = '?next=' + encodeURIComponent(next || '/');
+  return '<div class="oauth-box"><p class="oauth-sep">或者用第三方账号</p>' +
+    providers.map(function (p) {
+      const text = p.key === 'dev' ? '🧪 演示登录' : esc(p.icon || '') + ' 用 ' + esc(p.label) + ' 登录';
+      return '<a class="btn oauth-btn" href="/auth/' + esc(p.key) + q + '">' + text + '</a>';
+    }).join('') + '</div>';
+}
+
+export function loginPage({ origin, user = null, next = '/', error = '', username = '', providers = [] }) {
   const body = `
     ${error ? `<p class="auth-err">⚠️ ${esc(error)}</p>` : ''}
     <form class="auth-form" method="post" action="/login">
@@ -553,11 +564,12 @@ export function loginPage({ origin, user = null, next = '/', error = '', usernam
       <label>密码<input type="password" name="password" autocomplete="current-password" required maxlength="72"></label>
       <button class="btn btn-primary" type="submit">登录</button>
     </form>
+    ${oauthButtons(providers, next)}
     <p class="auth-foot">还没有账号？<a href="/register?next=${encodeURIComponent(next)}">立即注册</a></p>`;
   return authCard({ origin, user, title: '登录', heading: '登录', sub: '登录后可以评分、评论和收藏游戏', body, path: '/login' });
 }
 
-export function registerPage({ origin, user = null, next = '/', error = '', username = '', displayName = '' }) {
+export function registerPage({ origin, user = null, next = '/', error = '', username = '', displayName = '', providers = [] }) {
   const body = `
     ${error ? `<p class="auth-err">⚠️ ${esc(error)}</p>` : ''}
     <form class="auth-form" method="post" action="/register">
@@ -567,6 +579,7 @@ export function registerPage({ origin, user = null, next = '/', error = '', user
       <label>密码<input type="password" name="password" autocomplete="new-password" required maxlength="72"><small>至少 6 位</small></label>
       <button class="btn btn-primary" type="submit">注册并登录</button>
     </form>
+    ${oauthButtons(providers, next)}
     <p class="auth-foot">已经有账号？<a href="/login?next=${encodeURIComponent(next)}">去登录</a></p>`;
   return authCard({ origin, user, title: '注册', heading: '注册', sub: '注册后即可评分、评论和收藏', body, path: '/register' });
 }
@@ -767,14 +780,15 @@ function statusForms(g) {
 export function adminPage({
   origin, user, stats, pending, managed, comments,
   reports = [], users = [], audit = [], categories = [], filter = {},
-  outbox = [], mailTransport = 'outbox', notice = ''
+  outbox = [], mailTransport = 'outbox', notice = '', integrations = null
 }) {
   const NOTICE = {
     batch: '批量操作已完成',
     ban: '用户状态已更新',
     report: '举报已处理',
     comment: '评论状态已更新',
-    email: '邮箱验证状态已更新'
+    email: '邮箱验证状态已更新',
+    purge: '游戏已彻底删除（连同评分、评论、收藏、游玩记录与上传文件）'
   };
 
   const gameRow = (g) => `<tr>
@@ -784,7 +798,10 @@ export function adminPage({
     <td>${fmtNum(g.plays)}</td>
     <td>${Number(g.rating_count) ? Number(g.rating).toFixed(1) + ' <small class="dim">(' + g.rating_count + ')</small>' : '<small class="dim">—</small>'}</td>
     <td>${statusPill(g.status)}</td>
-    <td class="act">${statusForms(g)}<a class="btn btn-sm" href="/admin/preview/${esc(g.slug)}">预览</a></td>
+    <td class="act">${statusForms(g)}<a class="btn btn-sm" href="/admin/preview/${esc(g.slug)}">预览</a>${
+      Number(g.status) === 1
+        ? '<small class="dim">下架后可彻底删除</small>'
+        : '<a class="btn btn-sm danger" href="/admin/games/' + esc(g.slug) + '/delete">🗑 彻底删除</a>'}</td>
   </tr>`;
 
   const commentRow = (c) => `<tr>
@@ -847,6 +864,29 @@ export function adminPage({
         '<li><b>' + esc(m.subject) + '</b><small class="dim"> → ' + esc(m.to) + ' · ' + esc(m.at) + '</small>' +
         (m.link ? '<br><a href="' + esc(m.link) + '">' + esc(m.link) + '</a>' : '') + '</li>').join('') + '</ul></section>'
     : '';
+
+  const integ = integrations || null;
+  const integSection = integ ? (function () {
+    const m = integ.mail || {};
+    const label = m.transport === 'resend' ? 'Resend' : (m.transport === 'http' ? '自建 HTTP 邮件服务' : '开发发件箱');
+    const live = m.transport === 'resend' || m.transport === 'http';
+    let hint = '没配邮件服务：验证信、重置信只会落进开发发件箱，玩家收不到。配 RESEND_API_KEY，或 MAIL_API_URL + MAIL_API_KEY 之后即真实发送。';
+    if (m.transport === 'resend') hint = '走 Resend API 真实发送，发件人 ' + m.from + '。';
+    else if (m.transport === 'http') hint = 'POST ' + (m.endpoint || '(未填 MAIL_API_URL)') + '，令牌' + (m.keySet ? '已配' : '未配') + '，发件人 ' + m.from + '。';
+    const box = ['<div class="integ-row"><b>📮 邮件通道</b><span class="pill ' + (live ? 's1' : 's2') + '">' + esc(label) + '</span><small class="dim">' + esc(hint) + '</small></div>'];
+    (integ.oauth || []).forEach(function (p) {
+      const tail = p.key === 'dev'
+        ? '开发环境自动可用，生产环境要 OAUTH_DEV=1 才开。'
+        : 'client_id ' + (p.idSet ? '✅ 有' : '❌ 无') + ' · secret ' + (p.secretSet ? '✅ 有' : '❌ 无') +
+          (p.enabled ? '' : '；去设 ' + (p.env || '')) +
+          (p.callback ? '<br>回调地址（照这串填到第三方后台）：<code>' + esc(p.callback) + '</code>' : '');
+      box.push('<div class="integ-row"><b>' + esc((p.icon || '') + ' ' + p.label) + '</b><span class="pill ' +
+        (p.enabled ? 's1' : 's2') + '">' + (p.enabled ? '已开启' : '未配置') + '</span><small class="dim">' + tail + '</small></div>');
+    });
+    return '<section class="sec"><div class="sec-head"><h2>🔌 集成自检</h2>' +
+      '<span class="dim">邮件与第三方登录的配置状态；密钥只看有没有配，不显示内容</span></div>' +
+      '<div class="integ">' + box.join('') + '</div></section>';
+  })() : '';
 
   const content = `<div class="wrap page">
   <nav class="crumb"><a href="/">首页</a><span>›</span><b>后台</b></nav>
@@ -912,7 +952,34 @@ export function adminPage({
     ${wrapTable('<th>时间</th><th>操作人</th><th>动作</th><th>对象</th>', audit.map(auditRow).join(''), '还没有操作记录')}
   </section>
 
+  ${integSection}
   ${mailBox}
 </div>`;
   return layout({ origin, user, title: '管理后台', description: '站长后台', path: '/admin', content, noindex: true });
 }
+
+/** 彻底删除确认页：列出会被连带删掉的数据量，上架中的游戏不让删 */
+export function deleteGamePage({ origin, user = null, game, counts = {} }) {
+  const rows = [
+    ['评论（含回复）', counts.comments || 0],
+    ['评论举报', counts.reports || 0],
+    ['评分', counts.ratings || 0],
+    ['收藏', counts.favorites || 0],
+    ['游玩记录', counts.plays || 0],
+    ['上传的 HTML 文件', counts.file || 0]
+  ];
+  const body = `
+    <p class="auth-err">⚠️ 这一步不可撤销。<b>${esc(game.title)}</b>（${esc(game.slug)}）连同下面这些数据一起从库里删掉：</p>
+    <ul class="purge-list">${rows.map((r) => '<li><span>' + esc(r[0]) + '</span><b>' + fmtNum(r[1]) + '</b></li>').join('')}</ul>
+    <p class="auth-sub">用户账号、操作日志会保留，方便以后追查。上架中的游戏要先下架才能删。</p>
+    <form class="auth-form" method="post" action="/admin/games/${esc(game.slug)}/delete">
+      <button class="btn danger" type="submit">确认彻底删除</button>
+    </form>
+    <p class="auth-foot"><a href="/admin">算了，回后台</a></p>`;
+  return authCard({
+    origin, user, title: '彻底删除 ' + game.title, heading: '🗑 彻底删除游戏',
+    sub: Number(game.status) === 1 ? '这个游戏还在上架中，先下架再删' : '删除前请再核对一遍下面的数据量',
+    body, path: '/admin'
+  });
+}
+

@@ -41,5 +41,22 @@ migrations_dir = "migrations"
 # 不写就用请求本身带的域名，一般也对。
 # SITE_ORIGIN = "https://games.example.com"
 
+# 发信（验证邮箱 / 找回密码）二选一，都不配就落「开发发件箱」（后台可见，功能照常能测）。
+# 敏感的用 npx wrangler secret put 写，别塞进这个文件。
+# RESEND_API_KEY = "re_..."
+# MAIL_API_URL = "https://mail.example.com/send"
+# MAIL_API_KEY = "..."          # secret：npx wrangler secret put MAIL_API_KEY
+# MAIL_FROM = "趣玩小游戏 <noreply@games.example.com>"
+
+# 第三方登录：配了才会在登录页出现按钮，回调地址固定是 <站点域名>/auth/<provider>/callback。
+# GITHUB_CLIENT_ID = "..."
+# GITHUB_CLIENT_SECRET = "..."  # secret：npx wrangler secret put GITHUB_CLIENT_SECRET
+# GOOGLE_CLIENT_ID = "..."
+# GOOGLE_CLIENT_SECRET = "..."  # secret：npx wrangler secret put GOOGLE_CLIENT_SECRET
+# OAUTH_DEV = "1"               # 生产环境也开放「演示登录」时才需要
+
+# 自建 OAuth 网关 / 测试环境：# OAUTH_GITHUB_AUTHORIZE_URL / OAUTH_GITHUB_TOKEN_URL /
+# OAUTH_GITHUB_USER_URL / OAUTH_GITHUB_EMAILS_URL（Google 同理，去掉 EMAILS_URL）可覆盖官方地址。
+
 [observability]
 enabled = true

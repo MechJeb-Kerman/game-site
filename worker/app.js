@@ -312,7 +312,7 @@ async function pageRank(ctx) {
 async function pageLogin(ctx) {
   const next = safeNext(ctx.url.searchParams.get('next'));
   if (ctx.user) return redirectTo(ctx, next);
-  return okHtml(ctx, ui.loginPage({ origin: ctx.origin, next: next }));
+  return okHtml(ctx, ui.loginPage({ origin: ctx.origin, next: next, providers: await oauth.enabledProviders(ctx.env) }));
 }
 
 async function doLogin(ctx) {
@@ -321,7 +321,9 @@ async function doLogin(ctx) {
   const username = String(b.username || '');
   const r = await auth.login(ctx.db, username, b.password);
   if (r.error) {
-    return okHtml(ctx, ui.loginPage({ origin: ctx.origin, next: next, error: r.error, username: username }), 401);
+    return okHtml(ctx, ui.loginPage({
+      origin: ctx.origin, next: next, error: r.error, username: username, providers: await oauth.enabledProviders(ctx.env)
+    }), 401);
   }
   ctx.cookies.push(auth.sessionCookie(await auth.createSession(ctx.db, r.user.id), auth.SESSION_DAYS * 24 * 3600));
   return redirectTo(ctx, next);
@@ -330,7 +332,7 @@ async function doLogin(ctx) {
 async function pageRegister(ctx) {
   const next = safeNext(ctx.url.searchParams.get('next'));
   if (ctx.user) return redirectTo(ctx, next);
-  return okHtml(ctx, ui.registerPage({ origin: ctx.origin, next: next }));
+  return okHtml(ctx, ui.registerPage({ origin: ctx.origin, next: next, providers: await oauth.enabledProviders(ctx.env) }));
 }
 
 async function doRegister(ctx) {
@@ -339,8 +341,9 @@ async function doRegister(ctx) {
   const username = String(b.username || '');
   const displayName = String(b.display_name || '');
   const v = auth.validateRegister(username, b.password, displayName);
-  const fail = (error, status) => okHtml(ctx, ui.registerPage({
-    origin: ctx.origin, next: next, error: error, username: username, displayName: displayName
+  const fail = async (error, status) => okHtml(ctx, ui.registerPage({
+    origin: ctx.origin, next: next, error: error, username: username, displayName: displayName,
+    providers: await oauth.enabledProviders(ctx.env)
   }), status);
   if (v.error) return fail(v.error, 400);
   if (await auth.findUser(ctx.db, v.username)) return fail('这个用户名已经被注册了，换一个吧', 409);
@@ -586,6 +589,34 @@ async function pageUgcFile(ctx, params) {
 
 /* ================= 后台 ================= */
 
+/** 「集成自检」面板的数据：邮件通道与各第三方登录的配置状态（只看配没配，不回显密钥） */
+function integrationsOf(ctx) {
+  const env = ctx.env || {};
+  const keys = oauth.PROVIDERS.concat(oauth.devEnabled(env) ? ['dev'] : []);
+  return {
+    mail: {
+      transport: mail.transportName(env),
+      endpoint: env.MAIL_API_URL || '',
+      from: mail.MAIL_FROM(env),
+      keySet: !!(env.RESEND_API_KEY || env.MAIL_API_KEY)
+    },
+    oauth: keys.map(function (k) {
+      const m = oauth.providerMeta(k);
+      const c = oauth.providerCreds(k, env);
+      return {
+        key: k,
+        label: m.label,
+        icon: m.icon,
+        env: (m.env || []).join(' / '),
+        enabled: oauth.providerEnabled(k, env),
+        idSet: !!(c && c.id),
+        secretSet: !!(c && c.secret),
+        callback: m.mock ? '' : oauth.redirectUri(ctx.origin, k)
+      };
+    })
+  };
+}
+
 async function pageAdmin(ctx) {
   const db = ctx.db;
   const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 40);
@@ -605,7 +636,8 @@ async function pageAdmin(ctx) {
     filter: { q: q, status: status, category: category },
     outbox: mail.outbox(20),
     mailTransport: mail.transportName(ctx.env),
-    notice: String(ctx.url.searchParams.get('ok') || '')
+    notice: String(ctx.url.searchParams.get('ok') || ''),
+    integrations: integrationsOf(ctx)
   }));
 }
 
@@ -622,6 +654,30 @@ async function adminPreview(ctx, params) {
     thread: await data.commentThread(ctx.db, game.slug, 1),
     commentTotal: await data.countComments(ctx.db, game.slug)
   }));
+}
+
+/** 彻底删除确认页：连带数据量先摆出来，上架中的游戏不让删 */
+async function adminDeletePage(ctx, params) {
+  const game = await data.getGameAny(ctx.db, String(params.slug));
+  if (!game) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  return okHtml(ctx, ui.deleteGamePage({
+    origin: ctx.origin,
+    user: ctx.user,
+    game: game,
+    counts: (await data.gamePurgeInfo(ctx.db, game.slug)) || {}
+  }));
+}
+
+async function adminDelete(ctx, params) {
+  const slug = String(params.slug);
+  const r = await data.deleteGame(ctx.db, slug);
+  if (r.error === 'online') return plainText(ctx, '这个游戏还在上架中，请先下架再彻底删除', 400);
+  if (r.error) return plainText(ctx, '没有这个游戏', 404);
+  const i = r.info;
+  await data.logAudit(ctx.db, ctx.user, 'game.delete', slug,
+    i.title + '（评论 ' + i.comments + ' / 举报 ' + i.reports + ' / 评分 ' + i.ratings +
+    ' / 收藏 ' + i.favorites + ' / 游玩 ' + i.plays + ' / 上传文件 ' + i.file + '）');
+  return redirectTo(ctx, '/admin?ok=purge');
 }
 
 async function adminSetGame(ctx, params) {
@@ -856,6 +912,8 @@ const ROUTES = [
   { m: 'GET', p: '/submit', fn: pageSubmit, need: 'user' },
   { m: 'POST', p: '/submit', fn: doSubmit, need: 'user' },
   { m: 'GET', p: '/admin', fn: pageAdmin, need: 'admin' },
+  { m: 'GET', p: '/admin/games/:slug/delete', fn: adminDeletePage, need: 'admin' },
+  { m: 'POST', p: '/admin/games/:slug/delete', fn: adminDelete, need: 'admin' },
   { m: 'POST', p: '/admin/games/:slug/status', fn: adminSetGame, need: 'admin' },
   { m: 'POST', p: '/admin/comments/:id/status', fn: adminSetComment, need: 'admin' },
   { m: 'GET', p: '/api/me', fn: apiMe },

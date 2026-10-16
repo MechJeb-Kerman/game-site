@@ -38,6 +38,23 @@ export function providerMeta(name) {
   return META[String(name || '')] || null;
 }
 
+/**
+ * Provider 端点可被环境变量覆盖，方便接自建网关，也让本地端到端测试能指向假服务端：
+ *   OAUTH_GITHUB_AUTHORIZE_URL / OAUTH_GITHUB_TOKEN_URL / OAUTH_GITHUB_USER_URL / OAUTH_GITHUB_EMAILS_URL
+ *   OAUTH_GOOGLE_AUTHORIZE_URL / OAUTH_GOOGLE_TOKEN_URL / OAUTH_GOOGLE_USER_URL
+ * 不设时用 META 里的官方地址。
+ */
+function endpoint(name, key, fallback) {
+  return process.env['OAUTH_' + String(name).toUpperCase() + '_' + key] || fallback;
+}
+
+/** 后台「集成自检」用：只回报配没配，绝不回显密钥内容 */
+export function providerCreds(name) {
+  const m = META[name];
+  if (!m || m.mock) return null;
+  return { id: process.env[m.env[0]] || '', secret: process.env[m.env[1]] || '' };
+}
+
 function creds(name) {
   const m = META[name];
   if (!m || m.mock) return null;
@@ -81,7 +98,7 @@ export function authorizeUrl(name, origin, state) {
     response_type: 'code'
   });
   if (name === 'google') { p.set('access_type', 'online'); p.set('prompt', 'select_account'); }
-  return m.authorize + '?' + p.toString();
+  return endpoint(name, 'AUTHORIZE_URL', m.authorize) + '?' + p.toString();
 }
 
 async function postForm(url, body, headers = {}) {
@@ -99,10 +116,10 @@ async function postForm(url, body, headers = {}) {
 
 async function githubProfile(token) {
   const h = { Authorization: 'Bearer ' + token, 'User-Agent': 'game-site', Accept: 'application/vnd.github+json' };
-  const u = await (await fetch('https://api.github.com/user', { headers: h })).json();
+  const u = await (await fetch(endpoint('github', 'USER_URL', 'https://api.github.com/user'), { headers: h })).json();
   let email = u.email || '';
   if (!email) {
-    const list = await (await fetch('https://api.github.com/user/emails', { headers: h })).json();
+    const list = await (await fetch(endpoint('github', 'EMAILS_URL', 'https://api.github.com/user/emails'), { headers: h })).json();
     const pick = Array.isArray(list) ? list.find((e) => e.primary && e.verified) || list.find((e) => e.verified) : null;
     email = pick ? pick.email : '';
   }
@@ -110,7 +127,7 @@ async function githubProfile(token) {
 }
 
 async function googleProfile(token) {
-  const u = await (await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+  const u = await (await fetch(endpoint('google', 'USER_URL', 'https://openidconnect.googleapis.com/v1/userinfo'), {
     headers: { Authorization: 'Bearer ' + token }
   })).json();
   return { uid: String(u.sub || ''), name: u.name || '', email: u.email || '' };
@@ -131,7 +148,7 @@ export async function exchangeCode(name, origin, code) {
     grant_type: 'authorization_code'
   };
   try {
-    const { ok, json } = await postForm(META[name].token, body);
+    const { ok, json } = await postForm(endpoint(name, 'TOKEN_URL', META[name].token), body);
     if (!ok || !json.access_token) return { error: 'exchange_failed' };
     const profile = name === 'github' ? await githubProfile(json.access_token) : await googleProfile(json.access_token);
     if (!profile.uid) return { error: 'no_profile' };

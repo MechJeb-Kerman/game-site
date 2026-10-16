@@ -611,6 +611,46 @@ export async function setGamesStatus(db, slugs, status) {
   return { status: s, changed, missing };
 }
 
+/* ---------- 彻底删除 ---------- */
+
+/** 彻底删除前的连带数据量，确认页与审计日志共用（D1 版） */
+export async function gamePurgeInfo(db, slug) {
+  const g = await stmt(db, 'SELECT id, slug, title, status, emoji FROM games WHERE slug = ?', [String(slug)]).first();
+  if (!g) return null;
+  const one = async (sql, params) => (await stmt(db, sql, params).first()).n;
+  return {
+    slug: g.slug,
+    id: g.id,
+    title: g.title,
+    emoji: g.emoji || '',
+    status: Number(g.status),
+    comments: await one('SELECT COUNT(*) n FROM comments WHERE game_id = ?', [g.id]),
+    reports: await one('SELECT COUNT(*) n FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE game_id = ?)', [g.id]),
+    ratings: await one('SELECT COUNT(*) n FROM ratings WHERE game_id = ?', [g.id]),
+    favorites: await one('SELECT COUNT(*) n FROM favorites WHERE game_id = ?', [g.id]),
+    plays: await one('SELECT COUNT(*) n FROM play_logs WHERE game_id = ?', [g.id]),
+    file: await one('SELECT COUNT(*) n FROM game_files WHERE slug = ?', [g.slug])
+  };
+}
+
+/** 彻底删除（D1 版）：必须先下架；批量语句在一个事务里执行 */
+export async function deleteGame(db, slug) {
+  const info = await gamePurgeInfo(db, slug);
+  if (!info) return { error: 'not_found' };
+  if (info.status === 1) return { error: 'online' };
+  const one = (sql) => db.prepare(sql).bind(info.id);
+  await db.batch([
+    one('DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE game_id = ?)'),
+    one('DELETE FROM comments WHERE game_id = ?'),
+    one('DELETE FROM ratings WHERE game_id = ?'),
+    one('DELETE FROM favorites WHERE game_id = ?'),
+    one('DELETE FROM play_logs WHERE game_id = ?'),
+    db.prepare('DELETE FROM game_files WHERE slug = ?').bind(info.slug),
+    db.prepare('DELETE FROM games WHERE id = ?').bind(info.id)
+  ]);
+  return { info };
+}
+
 /* ---------- 账号管理 ---------- */
 
 /** 后台用户列表：带评论数、投稿数、是否封禁 */

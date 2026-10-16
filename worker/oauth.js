@@ -40,6 +40,24 @@ export function providerMeta(name) {
   return META[String(name || '')] || null;
 }
 
+/**
+ * Provider 端点可被 env 覆盖（wrangler 的 vars / 本地测试的假服务端）：
+ *   OAUTH_GITHUB_AUTHORIZE_URL / OAUTH_GITHUB_TOKEN_URL / OAUTH_GITHUB_USER_URL / OAUTH_GITHUB_EMAILS_URL
+ *   OAUTH_GOOGLE_AUTHORIZE_URL / OAUTH_GOOGLE_TOKEN_URL / OAUTH_GOOGLE_USER_URL
+ */
+function endpoint(name, key, fallback, env) {
+  const e = env || {};
+  return e['OAUTH_' + String(name).toUpperCase() + '_' + key] || fallback;
+}
+
+/** 后台「集成自检」用：只回报配没配，绝不回显密钥内容 */
+export function providerCreds(name, env) {
+  const m = META[name];
+  if (!m || m.mock) return null;
+  const e = env || {};
+  return { id: e[m.env[0]] || '', secret: e[m.env[1]] || '' };
+}
+
 function creds(name, env) {
   const m = META[name];
   if (!m || m.mock) return null;
@@ -85,7 +103,7 @@ export function authorizeUrl(name, origin, state, env) {
     response_type: 'code'
   });
   if (name === 'google') { p.set('access_type', 'online'); p.set('prompt', 'select_account'); }
-  return m.authorize + '?' + p.toString();
+  return endpoint(name, 'AUTHORIZE_URL', m.authorize, env) + '?' + p.toString();
 }
 
 async function postForm(url, body, headers = {}) {
@@ -101,20 +119,20 @@ async function postForm(url, body, headers = {}) {
   return { ok: res.ok, json };
 }
 
-async function githubProfile(token) {
+async function githubProfile(token, env) {
   const h = { Authorization: 'Bearer ' + token, 'User-Agent': 'game-site', Accept: 'application/vnd.github+json' };
-  const u = await (await fetch('https://api.github.com/user', { headers: h })).json();
+  const u = await (await fetch(endpoint('github', 'USER_URL', 'https://api.github.com/user', env), { headers: h })).json();
   let email = u.email || '';
   if (!email) {
-    const list = await (await fetch('https://api.github.com/user/emails', { headers: h })).json();
+    const list = await (await fetch(endpoint('github', 'EMAILS_URL', 'https://api.github.com/user/emails', env), { headers: h })).json();
     const pick = Array.isArray(list) ? list.find((e) => e.primary && e.verified) || list.find((e) => e.verified) : null;
     email = pick ? pick.email : '';
   }
   return { uid: String(u.id || ''), name: u.name || u.login || '', username: u.login || '', email };
 }
 
-async function googleProfile(token) {
-  const u = await (await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+async function googleProfile(token, env) {
+  const u = await (await fetch(endpoint('google', 'USER_URL', 'https://openidconnect.googleapis.com/v1/userinfo', env), {
     headers: { Authorization: 'Bearer ' + token }
   })).json();
   return { uid: String(u.sub || ''), name: u.name || '', email: u.email || '' };
@@ -135,9 +153,9 @@ export async function exchangeCode(name, origin, code, env) {
     grant_type: 'authorization_code'
   };
   try {
-    const { ok, json } = await postForm(META[name].token, body);
+    const { ok, json } = await postForm(endpoint(name, 'TOKEN_URL', META[name].token, env), body);
     if (!ok || !json.access_token) return { error: 'exchange_failed' };
-    const profile = name === 'github' ? await githubProfile(json.access_token) : await googleProfile(json.access_token);
+    const profile = name === 'github' ? await githubProfile(json.access_token, env) : await googleProfile(json.access_token, env);
     if (!profile.uid) return { error: 'no_profile' };
     return { profile };
   } catch (err) {
