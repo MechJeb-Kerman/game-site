@@ -5,7 +5,8 @@ export const SITE = {
   name: '趣玩小游戏',
   tagline: '免费在线小游戏，即点即玩，无需下载',
   logo: '🎮',
-  icp: '本站游戏均为自研或已获授权，仅供学习交流使用'
+  icp: '本站游戏均为自研或已获授权，仅供学习交流使用',
+  contact: 'maohong0831@outlook.com'
 };
 
 // 静态导出（GitHub Pages）模式：没有服务端，账号/评分/评论/收藏/游玩统计一律不渲染
@@ -179,7 +180,7 @@ function footer() {
   <div class="wrap">
     <p class="ftr-note">${esc(SITE.name)} · ${esc(SITE.tagline)}</p>
     <p class="ftr-note">${esc(SITE.icp)}</p>
-    <p class="ftr-links"><a href="/sitemap.xml">网站地图</a><span>·</span><a href="/robots.txt">robots.txt</a>${STATIC_MODE ? '' : '<span>·</span><a href="/api/games">开放接口</a>'}</p>
+    <p class="ftr-links"><a href="/privacy">隐私政策</a><span>·</span><a href="/terms">用户协议</a><span>·</span><a href="/sitemap.xml">网站地图</a><span>·</span><a href="/robots.txt">robots.txt</a>${STATIC_MODE ? '' : '<span>·</span><a href="/api/games">开放接口</a>'}</p>
   </div>
 </footer>`;
 }
@@ -577,12 +578,125 @@ export function registerPage({ origin, user = null, next = '/', error = '', user
       <label>用户名<input name="username" value="${esc(username)}" autocomplete="username" required maxlength="16" autofocus><small>2~16 位中文、字母、数字、下划线或短横线</small></label>
       <label>昵称（可选）<input name="display_name" value="${esc(displayName)}" maxlength="20"><small>留空就用用户名</small></label>
       <label>密码<input type="password" name="password" autocomplete="new-password" required maxlength="72"><small>至少 6 位</small></label>
+      <label class="check agree"><input type="checkbox" name="agree" value="1" required><span>我已阅读并同意 <a href="/terms" target="_blank" rel="noopener">《用户协议》</a>与<a href="/privacy" target="_blank" rel="noopener">《隐私政策》</a></span></label>
       <button class="btn btn-primary" type="submit">注册并登录</button>
     </form>
     ${oauthButtons(providers, next)}
     <p class="auth-foot">已经有账号？<a href="/login?next=${encodeURIComponent(next)}">去登录</a></p>`;
   return authCard({ origin, user, title: '注册', heading: '注册', sub: '注册后即可评分、评论和收藏', body, path: '/register' });
 }
+
+/* ================= 法律页面（隐私政策 / 用户协议） ================= */
+
+const LEGAL_UPDATED = '2026-10-17';
+
+const PRIVACY_SECTIONS = [
+  { h: '1. 这份政策管什么', p: [
+    '本站是 ' + SITE.name + '（' + SITE.tagline + '），一个免费在线小游戏站。这份政策说明：你用本站时我们会拿到哪些信息、拿来做什么、存在哪里、你能怎么处理。它适用于本站所有页面以及各游戏的试玩页；页面里嵌入的第三方网站（比如投稿者自己域名下的游戏）由对方负责，不适用这份政策。'
+  ] },
+  { h: '2. 我们收集哪些信息', p: [
+    '<b>账号信息</b>：注册时你填的用户名、昵称，以及可选填的邮箱；密码只保存加盐哈希，我们看不到也无法还原你的明文密码。',
+    '<b>使用记录</b>：你的评分、评论与回复、收藏、投稿内容，以及每款游戏的游玩次数。',
+    '<b>技术信息</b>：IP 地址（只用于限流防刷：同一 IP 对同一游戏 30 秒内只计一次游玩、发表评论 10 秒一条、举报一人一条），以及浏览器 Cookie 里的会话标识。本站没有埋点统计，也不采集设备指纹。'
+  ] },
+  { h: '3. Cookie', p: [
+    '本站只用两个必要的 Cookie：<code>sid</code> 保存登录态（登录后才有，最长 30 天），<code>oauth_state</code> 用于第三方登录时的临时校验（10 分钟）。没有广告 Cookie，也没有第三方分析脚本。清掉浏览器 Cookie 会退出登录，不影响浏览与游玩。'
+  ] },
+  { h: '4. 第三方登录', p: [
+    '用 GitHub 或 Google 登录时，我们只会拿到该平台返回的用户 ID、昵称和邮箱，用来创建账号或绑定到你已有的账号；你在那边的密码不会经过本站，我们也拿不到。<a href="/account">账号设置</a>里可以随时解绑。'
+  ] },
+  { h: '5. 邮件', p: [
+    '只有在你绑定邮箱、重新发送验证邮件或申请找回密码时，本站才会往你的邮箱发信；收件地址会经过邮件服务商（Resend 或本站自建的发信接口）。我们不会用邮箱做推广。'
+  ] },
+  { h: '6. 这些信息拿来做什么', p: [
+    '展示你的昵称与评论、统计评分与游玩热度、生成排行榜、防止刷分与灌水、处理举报与后台运营、发送验证与密码重置邮件。除此之外不做其他用途。'
+  ] },
+  { h: '7. 存在哪里、留多久', p: [
+    '数据存在本站服务器与云端数据库中。站长在后台可以<strong>彻底删除</strong>一款游戏，删除时会连带它的评论与回复、评论举报、评分、收藏、游玩记录和上传的游戏文件一起删掉；不再需要的举报与日志也会按运营需要清理。要注销账号或导出自己的数据，发邮件给站长即可。'
+  ] },
+  { h: '8. 你的权利', p: [
+    '在 <a href="/account">账号设置</a>里可以改密码、绑定或更换邮箱、解绑第三方登录。想删除账号、更正信息或了解自己有哪些数据，联系站长处理。'
+  ] },
+  { h: '9. 未成年人', p: [
+    '注册本站不需要填写真实姓名、手机号或身份证件；评论与投稿会公开展示。未满 14 周岁的用户请在监护人同意后使用；监护人若发现未成年人注册，可以联系站长删除账号与内容。'
+  ] },
+  { h: '10. 政策更新', p: [
+    '政策有变化时会在本页更新「最后更新」日期，重大变更会在站内公告。继续使用本站即视为接受更新后的版本。'
+  ] },
+  { h: '11. 联系方式', p: [
+    '站长邮箱：<a href="mailto:' + SITE.contact + '">' + esc(SITE.contact) + '</a>。'
+  ] }
+];
+
+const TERMS_SECTIONS = [
+  { h: '1. 接受条款', p: [
+    '注册、登录或以其他方式使用 ' + SITE.name + '，即表示你已阅读并同意本协议与<a href="/privacy">《隐私政策》</a>。注册页必须勾选同意后才能提交。如果你不同意，请不要注册或使用本站。'
+  ] },
+  { h: '2. 你的账号', p: [
+    '用户名不得冒充他人、不得包含违法或不良信息；请不要与他人共用账号。账号下发生的操作视为你本人所为，密码请自行保管好，怀疑被盗用请立即改密码并联系站长。'
+  ] },
+  { h: '3. 你发布的内容', p: [
+    '评论、回复与投稿都由你负责。你保证对这些内容拥有权利，并且不上传违法、侵权、含恶意代码、赌博、诱导分享或骚扰他人的内容。评论区一人一条、同一游戏 10 秒一条，刷屏或灌水会被清理。'
+  ] },
+  { h: '4. 投稿与授权', p: [
+    '投稿的单文件 HTML 游戏会保存在本站、在隔离环境中试玩（沙箱不允许它读取本站数据）。游戏上架即表示你授权本站免费展示、缓存并向访客提供试玩；下架或彻底删除后该授权终止，服务器日志与备份可能再短期保留一段时间。请只在游戏里放游戏本身，不要放隐私数据或密钥。'
+  ] },
+  { h: '5. 我们保留的权利', p: [
+    '站长可以审核、下架或彻底删除任何游戏、评论与投稿，也可以封禁违规账号（封禁会在账号页给出理由，封禁后无法登录）。发现误判可以发邮件申诉。'
+  ] },
+  { h: '6. 举报与处理', p: [
+    '游戏详情页与评论区都可以举报（垃圾广告、辱骂攻击、剧透、其他），同一人对同一条内容只计一次，处理结果在站长后台留档。'
+  ] },
+  { h: '7. 第三方内容', p: [
+    '本站可能嵌入第三方地址的游戏、使用第三方登录（GitHub / Google）。这些服务由对方提供与维护，其内容、可用性和数据处理不归本站管，请自行判断。'
+  ] },
+  { h: '8. 免责', p: [
+    '本站免费、按「现状」提供，不对数据丢失、服务中断或第三方内容承担责任；游戏进度一般只存在你的浏览器里，清缓存可能丢失。上传的单文件 HTML 上架后任何人都能取到，请不要在里面存放敏感数据。'
+  ] },
+  { h: '9. 服务变更与终止', p: [
+    '本站可以随时调整、暂停或停止部分功能；重要变更会在站内公告或本页说明。你如果不再同意本协议，可以停止使用并联系站长删除账号。'
+  ] },
+  { h: '10. 其他', p: [
+    '本协议适用中华人民共和国法律。发生争议双方先友好协商；协商不成，由站长所在地有管辖权的法院处理。'
+  ] },
+  { h: '11. 联系方式', p: [
+    '站长邮箱：<a href="mailto:' + SITE.contact + '">' + esc(SITE.contact) + '</a>。'
+  ] }
+];
+
+function legalSection(s) {
+  return '<h2>' + esc(s.h) + '</h2>' + s.p.map(function (t) { return '<p>' + t + '</p>'; }).join('');
+}
+
+function legalPage({ origin, user = null, title, heading, sub, path, sections }) {
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>${esc(heading)}</b></nav>
+  <div class="page-head">
+    <h1>${esc(heading)}</h1>
+    <p class="page-sub">${esc(sub)}</p>
+  </div>
+  <article class="prose">
+    <p class="legal-updated">最后更新：${LEGAL_UPDATED}</p>
+    ${sections.map(legalSection).join('')}
+  </article>
+</div>`;
+  return layout({ origin, user, title, description: sub, path, content });
+}
+
+export function privacyPage({ origin, user = null }) {
+  return legalPage({
+    origin, user, path: '/privacy', title: '隐私政策', heading: '隐私政策',
+    sub: '本站会拿到哪些信息、怎么用、你怎么处理', sections: PRIVACY_SECTIONS
+  });
+}
+
+export function termsPage({ origin, user = null }) {
+  return legalPage({
+    origin, user, path: '/terms', title: '用户协议', heading: '用户协议',
+    sub: '注册与使用本站的规则', sections: TERMS_SECTIONS
+  });
+}
+
 
 export function favoritesPage({ origin, user, list, total }) {
   const content = `<div class="wrap page">

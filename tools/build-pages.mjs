@@ -138,6 +138,10 @@ page("search.html", ui.listPage({
   list: games, total: games.length, query: "", sort: "hot", base: "/search", user: null
 }));
 
+/* 法律页面：纯文本，静态版照样导出（页脚每一页都链过来） */
+page("privacy.html", ui.privacyPage({ origin: origin, user: null }));
+page("terms.html", ui.termsPage({ origin: origin, user: null }));
+
 for (const c of categories) {
   const list = data.listGames({ category: c.slug, sort: "hot", limit: 200 });
   if (!list.length) continue;
@@ -219,6 +223,8 @@ const robots = ["User-agent: *", "Allow: /",
 put("robots.txt", robots);
 
 const locs = [origin + mapRel("/")];
+locs.push({ loc: origin + mapRel("/privacy"), pri: "0.3", last: "" });
+locs.push({ loc: origin + mapRel("/terms"), pri: "0.3", last: "" });
 for (const t of boardTabs) locs.push({ loc: origin + mapRel("/rank/" + t.kind), pri: "0.7", last: "" });
 for (const c of categories) if (c.total) locs.push({ loc: origin + mapRel("/category/" + c.slug), pri: "0.8", last: "" });
 for (const g of games) locs.push({ loc: origin + mapRel("/game/" + g.slug), pri: "0.9", last: String(g.created_at || "").slice(0, 10) });

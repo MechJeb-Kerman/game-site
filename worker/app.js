@@ -346,10 +346,22 @@ async function doRegister(ctx) {
     providers: await oauth.enabledProviders(ctx.env)
   }), status);
   if (v.error) return fail(v.error, 400);
+  // 注册页必须勾选同意《用户协议》与《隐私政策》（表单里是必填 checkbox，这里再兜一次）
+  if (!b.agree) return fail('请先阅读并勾选同意《用户协议》与《隐私政策》', 400);
   if (await auth.findUser(ctx.db, v.username)) return fail('这个用户名已经被注册了，换一个吧', 409);
   const user = await auth.createUser(ctx.db, v.username, v.password, v.displayName);
   ctx.cookies.push(auth.sessionCookie(await auth.createSession(ctx.db, user.id), auth.SESSION_DAYS * 24 * 3600));
   return redirectTo(ctx, next);
+}
+
+/* ---------- 法律页面（静态文本，登录与否都可看） ---------- */
+
+async function pagePrivacy(ctx) {
+  return okHtml(ctx, ui.privacyPage({ origin: ctx.origin, user: ctx.user }));
+}
+
+async function pageTerms(ctx) {
+  return okHtml(ctx, ui.termsPage({ origin: ctx.origin, user: ctx.user }));
 }
 
 async function doLogout(ctx) {
@@ -907,6 +919,8 @@ const ROUTES = [
   { m: 'POST', p: '/login', fn: doLogin },
   { m: 'GET', p: '/register', fn: pageRegister },
   { m: 'POST', p: '/register', fn: doRegister },
+  { m: 'GET', p: '/privacy', fn: pagePrivacy },
+  { m: 'GET', p: '/terms', fn: pageTerms },
   { m: 'POST', p: '/logout', fn: doLogout },
   { m: 'GET', p: '/favorites', fn: pageFavorites, need: 'user' },
   { m: 'GET', p: '/submit', fn: pageSubmit, need: 'user' },
@@ -961,7 +975,8 @@ function robotsText(origin) {
 }
 
 async function sitemapXml(ctx) {
-  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }];
+  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' },
+    { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
   for (const c of await data.listCategories(ctx.db)) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }

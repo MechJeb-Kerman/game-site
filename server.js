@@ -347,7 +347,8 @@ app.get('/robots.txt', (req, res) => {
 
 app.get('/sitemap.xml', (req, res) => {
   const origin = originOf(req);
-  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }];
+  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' },
+    { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
   for (const c of data.listCategories()) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }
@@ -508,10 +509,22 @@ app.post('/register', (req, res) => {
     origin: originOf(req), next, error, username, displayName, providers: oauth.enabledProviders()
   }));
   if (v.error) return fail(v.error, 400);
+  // 注册页必须勾选同意《用户协议》与《隐私政策》（表单里是必填 checkbox，这里再兜一次）
+  if (!b.agree) return fail('请先阅读并勾选同意《用户协议》与《隐私政策》', 400);
   if (auth.findUser(v.username)) return fail('这个用户名已经被注册了，换一个吧', 409);
   const user = auth.createUser(v.username, v.password, v.displayName);
   auth.startSession(res, user.id);
   res.redirect(next);
+});
+
+/* ---------- 法律页面（静态文本，登录与否都可看） ---------- */
+
+app.get('/privacy', (req, res) => {
+  res.send(ui.privacyPage({ origin: originOf(req), user: req.user }));
+});
+
+app.get('/terms', (req, res) => {
+  res.send(ui.termsPage({ origin: originOf(req), user: req.user }));
 });
 
 app.post('/logout', (req, res) => {
