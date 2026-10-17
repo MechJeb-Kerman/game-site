@@ -4,7 +4,9 @@
  *
  * 注意：会真的写库（建三个随机名字的测试账号、一条评论+回复+举报、两条测试投稿——其中一条是上传的
  * 单文件 HTML，跑完会退回待审留在库里——以及几条操作日志），
- * 结束时会把测试账号封禁再解封、把举报标记为已处理、把一首测试投稿真正彻底删掉（日志会留下 game.delete 记录）。想彻底干净：停服 → 删 data/games.db → 重启。
+ * 结束时会把测试账号封禁再解封、把举报标记为已处理、把一首测试投稿真正彻底删掉（日志会留下 game.delete 记录），
+ * 并留下一条已发布的公告（标题「验收公告<stamp>」）和它下面的评论/回复/举报——公告可以反复改和撤回，重复跑不会互相干扰。
+ * 想彻底干净：停服 → 删 data/games.db → 重启。
  * 邮件走开发发件箱（没配 RESEND_API_KEY / MAIL_API_URL 时不会真发信）。
  */
 const BASE = process.env.BASE || 'http://127.0.0.1:3000';
@@ -383,6 +385,108 @@ async function main() {
     r = await req('/admin/games/' + delSlug + '/delete', { j: jarAd });
     ok('已被删掉的游戏再进确认页是 404', r.status === 404, r.status);
   }
+
+
+  /* ---------- 7. 公告（发布 / 编辑 / 撤回 + 可评论）与更新说明 ---------- */
+  console.log('--- 公告与更新说明 ---');
+  const NT_TITLE = '验收公告' + STAMP;          /* 中文标题：slug 保留中文，正好走一遍百分号编码路径 */
+  const NT_BODY = '第一段正文 ' + STAMP + '\n\n第二段正文（换段）';
+  r = await req('/admin/posts/new', { j: jarAd });
+  ok('写公告页面能打开（有标题/正文/置顶）',
+    r.status === 200 && r.text.includes('name="title"') && r.text.includes('name="body"') && r.text.includes('name="pinned"'), r.status);
+  r = await req('/admin/posts/new', { method: 'POST', j: jarAd, form: { title: NT_TITLE, body: NT_BODY, pinned: '1' }, redirect: 'manual' });
+  ok('发布一条置顶公告并跳回后台', r.status === 302 && r.location === '/admin?ok=post', r.status + ' ' + r.location);
+
+  r = await req('/admin?ok=post', { j: jarAd });
+  const nSlug = decodeURIComponent(((r.text.match(/\/admin\/posts\/([^/"]+)\/edit/) || [])[1] || ''));
+  const nEnc = encodeURIComponent(nSlug);
+  ok('后台公告管理区列出新公告', r.status === 200 && !!nSlug && r.text.includes('📢 公告管理') && r.text.includes(NT_TITLE), r.status + ' slug=' + nSlug);
+
+  r = await req('/notice');
+  ok('/notice 列表 200 且列出这条公告（链到百分号编码的地址）',
+    r.status === 200 && r.text.includes(NT_TITLE) && r.text.includes('/notice/' + nEnc), r.status);
+  r = await req('/');
+  ok('首页顶部挂出最新公告横幅（带 slug，供关闭记忆用）',
+    r.status === 200 && r.text.includes('id="noticeBar"') && r.text.includes('data-slug="' + nSlug + '"'), r.status);
+  r = await req('/notice/' + nEnc);
+  ok('公告详情 200：正文按空行分段渲染',
+    r.status === 200 && r.text.includes('第一段正文 ' + STAMP) && r.text.includes('<p>第二段正文（换段）</p>') &&
+    r.text.includes('class="post-text"'), r.status);
+  ok('游客在公告页看到的是登录引导，而不是评论表单',
+    r.text.includes('id="cmtPanel"') && !r.text.includes('id="cmtForm"') && r.text.includes('cmt-login'), '');
+  r = await req('/notice/' + encodeURIComponent('根本没有这条公告'));
+  ok('不存在的公告 404', r.status === 404, r.status);
+
+  r = await req('/api/notices/' + nEnc + '/comments', { method: 'POST', json: { body: '游客发不了' } });
+  ok('游客给公告发评论 401', r.status === 401 && r.text.includes('login_required'), r.status + ' ' + r.text.slice(0, 80));
+
+  const jarNt = jar();
+  r = await req('/api/auth/register', { method: 'POST', j: jarNt, json: { username: 'nt' + STAMP, password: 'pass1234', display_name: '公告评论' } });
+  ok('注册公告评论账号', r.status === 201, r.status + ' ' + r.text.slice(0, 80));
+  r = await req('/api/notices/' + nEnc + '/comments', { method: 'POST', j: jarNt, json: { body: '公告评论 ' + STAMP } });
+  const nCid = ((json(r.text) || {}).id) || 0;
+  ok('给公告发评论成功', r.status === 200 && nCid > 0, r.status + ' ' + r.text.slice(0, 100));
+  r = await req('/notice/' + nEnc, { j: jarNt });
+  ok('登录后公告详情复用同一块评论面板（端点是 /api/notices/）',
+    r.status === 200 && r.text.includes('id="cmtForm"') && r.text.includes('data-endpoint="/api/notices/' + nEnc + '/comments"'), r.status);
+
+  /* 回复换个人发：同一用户对同一目标 10 秒内只能发一条（和游戏评论一个限流器） */
+  const jarNt2 = jar();
+  r = await req('/api/auth/register', { method: 'POST', j: jarNt2, json: { username: 'nr' + STAMP, password: 'pass1234', display_name: '公告回复' } });
+  ok('注册第二个公告评论账号（用来发回复）', r.status === 201, r.status + ' ' + r.text.slice(0, 80));
+  r = await req('/api/notices/' + nEnc + '/comments', { method: 'POST', j: jarNt2, json: { body: '回复一层 ' + STAMP, parent_id: nCid } });
+  const nPid = ((json(r.text) || {}).parent_id) || 0;
+  ok('公告评论也能楼中楼（回复挂同一顶层）', r.status === 200 && nPid === nCid, r.status + ' ' + r.text.slice(0, 100));
+  r = await req('/api/notices/' + nEnc + '/comments');
+  const ntData = json(r.text) || {};
+  const ntTop = (ntData.items || [])[0] || {};
+  ok('公告评论 JSON：total 只数顶层，回复挂在 replies 里',
+    ntData.total === 1 && (ntTop.replies || []).length === 1, JSON.stringify(ntData).slice(0, 200));
+  r = await req('/notice/' + nEnc);
+  ok('详情页把评论与回复都渲染出来，角标数是顶层+回复的总数',
+    r.status === 200 && r.text.includes('公告评论 ' + STAMP) && r.text.includes('回复一层 ' + STAMP) &&
+    r.text.includes('id="cmtCount">2<'), r.status);
+
+  r = await req('/comments/' + nCid + '/report', { method: 'POST', j: jarNt, form: { reason: 'spam' }, redirect: 'manual' });
+  ok('举报公告评论成功（和游戏评论共用举报表）', r.status === 302 && r.location.indexOf('report=ok') >= 0, r.status + ' ' + r.location);
+  r = await req('/comments/' + nCid + '/report', { method: 'POST', j: jarNt, form: { reason: 'spam' }, redirect: 'manual' });
+  ok('同一个人重复举报只算一次（already）', r.status === 302 && r.location.indexOf('report=already') >= 0, r.status + ' ' + r.location);
+  r = await req('/admin', { j: jarAd });
+  ok('后台举报表把公告评论链到 /notice/<slug>（不是 /game/）',
+    r.status === 200 && r.text.includes('/notice/' + nEnc), r.status);
+
+  r = await req('/admin/posts/' + nEnc + '/edit', { j: jarAd });
+  ok('公告编辑页带出原文与置顶状态', r.status === 200 && r.text.includes(NT_TITLE) && r.text.includes('第一段正文 ' + STAMP), r.status);
+  r = await req('/admin/posts/' + nEnc + '/edit', { method: 'POST', j: jarAd, form: { title: NT_TITLE + '(改)', body: NT_BODY + '\n\n第三段（改后加的）', pinned: '1' }, redirect: 'manual' });
+  ok('保存公告修改', r.status === 302 && r.location === '/admin?ok=post', r.status + ' ' + r.location);
+  r = await req('/notice/' + nEnc);
+  ok('前台看到改后的标题、新段落与「最后修改」', r.status === 200 && r.text.includes('第三段（改后加的）') && r.text.includes('最后修改'), r.status);
+
+  r = await req('/admin/posts/' + nEnc + '/status', { method: 'POST', j: jarAd, form: { status: '0' }, redirect: 'manual' });
+  ok('撤回公告', r.status === 302 && r.location === '/admin?ok=postStatus', r.status + ' ' + r.location);
+  r = await req('/notice/' + nEnc);
+  ok('撤回后前台详情立刻 404', r.status === 404, r.status);
+  r = await req('/notice');
+  ok('撤回后列表里也没有了', r.status === 200 && !r.text.includes(NT_TITLE + '(改)'), r.status);
+  r = await req('/');
+  ok('撤回后首页横幅不再出现这条（软撤回、前台当场消失）',
+    r.status === 200 && !r.text.includes('data-slug="' + nSlug + '"'), r.status);
+  r = await req('/admin', { j: jarAd });
+  ok('后台仍看得到已撤回的公告（可再发布），统计里有「已发布公告」一格',
+    r.status === 200 && r.text.includes('已撤回') && /<b>\d+<\/b><span>已发布公告<\/span>/.test(r.text), r.status);
+  ok('公告的操作都写进了操作日志', r.text.includes('post.create') && r.text.includes('post.update') && r.text.includes('post.retract'), '');
+  r = await req('/admin/posts/' + nEnc + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+  ok('重新发布这条公告', r.status === 302 && r.location === '/admin?ok=postStatus', r.status);
+  r = await req('/notice/' + nEnc);
+  ok('重新发布后评论与回复都还在（撤回不动数据）',
+    r.status === 200 && r.text.includes('公告评论 ' + STAMP) && r.text.includes('回复一层 ' + STAMP), r.status);
+
+  r = await req('/changelog');
+  ok('/changelog 200 且是从 git 提交历史生成的（有 kind 标签与 sha）',
+    r.status === 200 && r.text.includes('更新说明') && /<code>[0-9a-f]{7}<\/code>/.test(r.text), r.status);
+  ok('更新说明标出提交总数与生成时间', r.text.includes('条提交') && r.text.includes('生成于'), '');
+  r = await req('/sitemap.xml');
+  ok('sitemap 收录 /notice 与 /changelog', r.text.includes('/notice') && r.text.includes('/changelog'), r.status);
 
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

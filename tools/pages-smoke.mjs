@@ -282,11 +282,55 @@ const TARGETS = [
     want: function (s) { var e = []; if (s.h1 !== "用户协议") e.push("用户协议标题不对：" + s.h1); if (s.h2 < 8) e.push("用户协议章节太少：" + s.h2); if (!s.mail) e.push("协议里没有联系方式"); return e; }
   },
   {
+    n: "pages-changelog", w: 1280, h: 1200, u: BASE + "changelog.html",
+    js: `(function(){ var items = [].slice.call(document.querySelectorAll(".log-list li")); return { h1: (document.querySelector("h1")||{}).textContent || "", n: items.length, kinds: document.querySelectorAll(".log-kind").length, sha: document.querySelectorAll(".log-list code").length, head: (document.querySelector(".page-count")||{}).textContent || "" }; })()`,
+    want: function (s) {
+      var e = [];
+      if (!has(s.h1, "更新说明")) e.push("更新说明标题不对：" + s.h1);
+      if (s.n < 1) e.push("更新说明一条提交都没有");
+      if (s.kinds < 1) e.push("更新说明没有提交类型标签");
+      if (s.sha < 1) e.push("更新说明没有提交短哈希");
+      if (!has(s.head, String(s.n))) e.push("更新说明的计数与条数对不上：" + s.head + " / " + s.n);
+      return e;
+    }
+  },
+  {
+    n: "pages-notice", w: 1280, h: 1000, u: BASE + "notice.html",
+    js: `(function(){ var items = [].slice.call(document.querySelectorAll(".notice-item")); return { h1: (document.querySelector("h1")||{}).textContent || "", n: items.length, first: items.length ? (items[0].querySelector(".ni-title")||{}).textContent || "" : "", href: items.length ? (items[0].querySelector("a")||{}).getAttribute("href") : "", empty: !!document.querySelector(".cmt-empty") }; })()`,
+    want: function (s) {
+      var e = [];
+      if (!has(s.h1, "公告")) e.push("公告页标题不对：" + s.h1);
+      if (s.n < 1 && !s.empty) e.push("公告页既没有条目也没有空状态");
+      if (s.n && !/notice\/[^/]+\.html$/.test(String(s.href))) e.push("公告条目链接不是静态页：" + s.href);
+      return e;
+    }
+  },
+  {
     n: "pages-mobile", w: 390, h: 844, u: BASE,
     js: `(function(){ return { cards: document.querySelectorAll(".card").length, scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth }; })()`,
     want: function (s) { var e = []; if (s.cards < 1) e.push("手机端没有卡片"); if (s.scrollW > s.clientW + 2) e.push("手机端横向溢出：" + s.scrollW + " > " + s.clientW); return e; }
   }
 ];
+
+/* 库里已经有已发布公告时（dist/notice/*.html），再真实打开第一条详情页：
+   静态版没有服务端，评论区整块不渲染，只能看正文。 */
+const noticeDir = path.join(OUT, "notice");
+if (fs.existsSync(noticeDir)) {
+  const firstNotice = fs.readdirSync(noticeDir).filter(function (f) { return /\.html$/.test(f); })[0];
+  if (firstNotice) {
+    TARGETS.push({
+      n: "pages-notice-detail", w: 1280, h: 1100, u: BASE + "notice/" + firstNotice,
+      js: `(function(){ return { file: location.pathname, h1: (document.querySelector(".post-title")||{}).textContent || "", body: ((document.querySelector(".post-text")||{}).textContent || "").trim().length, form: !!document.getElementById("cmtForm"), count: !!document.querySelector(".cmt-count") }; })()`,
+      want: function (s) {
+        var e = [];
+        if (!s.h1) e.push("公告详情页没有标题：" + s.file);
+        if (s.body < 1) e.push("公告详情页正文是空的");
+        if (s.form) e.push("静态版不该出现评论表单");
+        return e;
+      }
+    });
+  }
+}
 
 /* ---------- 跑起来 ---------- */
 await ready();

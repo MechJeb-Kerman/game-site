@@ -289,7 +289,7 @@ async function main() {
 
   // ---- 站内链接全量爬一遍 ----
   const pages = ['/', '/games', '/search?q=' + encodeURIComponent('方块'), '/category/puzzle',
-    '/tag/' + encodeURIComponent('益智'), '/game/2048', '/game/tetris', '/404'];
+    '/tag/' + encodeURIComponent('益智'), '/game/2048', '/game/tetris', '/notice', '/changelog', '/404'];
   const linkRe = /(?:href|src)\s*=\s*"([^"]*)"/g;
   const seen = new Set();
   const broken = [];

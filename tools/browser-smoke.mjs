@@ -215,6 +215,37 @@ const TARGETS = [
         " if (d.rows.length) throw new Error('没有结果时不该有建议链接：' + JSON.stringify(d.rows));" +
         " return { initials: a.rows[0].t, full: b.rows[0].t, cn: c.rows[0].t, top: e.rows[0].t, none: d.hidden ? 'hidden' : 'empty-tip' }; })()"
   },
+  {
+    n: 'changelog', w: 1280, h: 1200, u: BASE + '/changelog',
+    js: "(function(){ var items = [].slice.call(document.querySelectorAll('.log-list li'));" +
+        " if (!/更新说明/.test(document.querySelector('h1').textContent)) throw new Error('更新说明没有标题：' + document.querySelector('h1').textContent);" +
+        " if (!items.length) throw new Error('更新说明一条提交都没有');" +
+        " if (!document.querySelectorAll('.log-kind').length) throw new Error('更新说明没有提交类型标签');" +
+        " if (!document.querySelectorAll('.log-list code').length) throw new Error('更新说明没有提交短哈希');" +
+        " return { rows: items.length, kinds: document.querySelectorAll('.log-kind').length, head: (document.querySelector('.page-count') || {}).textContent || '' }; })()"
+  },
+  {
+    n: 'notice', w: 1280, h: 1000, u: BASE + '/notice',
+    js: "(function(){ var items = [].slice.call(document.querySelectorAll('.notice-item'));" +
+        " if (!/公告/.test(document.querySelector('h1').textContent)) throw new Error('公告页没有标题：' + document.querySelector('h1').textContent);" +
+        " var bad = items.filter(function(li){ var a = li.querySelector('a'); return !a || (a.getAttribute('href') || '').indexOf('/notice/') !== 0; });" +
+        " if (bad.length) throw new Error('公告条目链接不对');" +
+        " return { items: items.length, first: items.length ? (items[0].querySelector('.ni-title') || {}).textContent || '' : ''," +
+        "   pinned: document.querySelectorAll('.notice-item.pinned').length }; })()"
+  },
+  {
+    n: 'notice-banner', w: 1280, h: 1050, u: HOME,
+    js: "(async function(){ var bar = document.querySelector('.notice-bar');" +
+        " if (!bar) return { banner: false };" +
+        " var slug = bar.getAttribute('data-slug') || '';" +
+        " bar.querySelector('.nb-close').click();" +
+        " await new Promise(function(r){ setTimeout(r, 250); });" +
+        " var gone = !document.querySelector('.notice-bar') || getComputedStyle(document.querySelector('.notice-bar')).display === 'none';" +
+        " var off = localStorage.getItem('noticeOff:' + slug);" +
+        " if (!gone) throw new Error('点了关闭横幅还在');" +
+        " if (!off) throw new Error('关闭没写 localStorage：noticeOff:' + slug);" +
+        " return { banner: true, slug: slug, off: off, href: (bar.querySelector('.nb-txt') || {}).getAttribute ? bar.querySelector('.nb-txt').getAttribute('href') : '' }; })()"
+  },
   { n: 'mobile', w: 390, h: 844, u: HOME, js: null },
   {
     n: 'game-2048', w: 560, h: 760, u: BASE + '/games/2048/index.html',
