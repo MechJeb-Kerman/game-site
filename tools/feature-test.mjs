@@ -4,6 +4,7 @@
  *
  * 注意：会真的写库（建三个随机名字的测试账号、一条评论+回复+举报、两条测试投稿——其中一条是上传的
  * 单文件 HTML，跑完会退回待审留在库里——以及几条操作日志），
+ * 还会建两个论坛测试账号（甲/乙）与一条站长主题、若干待审帖，会加/删一条黑名单规则、禁言再解禁，并处理掉自己造的举报；
  * 结束时会把测试账号封禁再解封、把举报标记为已处理、把一首测试投稿真正彻底删掉（日志会留下 game.delete 记录），
  * 并留下一条已发布的公告（标题「验收公告<stamp>」）和它下面的评论/回复/举报——公告可以反复改和撤回，重复跑不会互相干扰。
  * 想彻底干净：停服 → 删 data/games.db → 重启。
@@ -487,6 +488,202 @@ async function main() {
   ok('更新说明标出提交总数与生成时间', r.text.includes('条提交') && r.text.includes('生成于'), '');
   r = await req('/sitemap.xml');
   ok('sitemap 收录 /notice 与 /changelog', r.text.includes('/notice') && r.text.includes('/changelog'), r.status);
+
+  /* ---------- 7. 论坛（安全措施与审核措施） ---------- */
+  const jarF1 = jar(), jarF2 = jar();
+  console.log('--- 论坛：游客可见与登录门槛 ---');
+  r = await req('/forum');
+  ok('/forum 200 且列出默认板块', r.status === 200 && r.text.includes('综合讨论') && r.text.includes('攻略心得'), r.status);
+  r = await req('/forum/f/general');
+  ok('板块页 200', r.status === 200 && r.text.includes('综合讨论'), r.status);
+  r = await req('/forum/new');
+  ok('游客打开发帖页只有登录提示，页面里没有一次性令牌',
+    r.status === 200 && r.text.includes('forum-gate') && !r.text.includes('name="form_token"'), r.status);
+  r = await req('/forum/new', { method: 'POST', form: { forum: 'general', title: '游客 ' + STAMP, body: 'x' }, redirect: 'manual' });
+  ok('游客提交发帖被挡回登录页并带 next', r.status === 302 && r.location.indexOf('/login?next=') === 0, r.status + ' ' + r.location);
+  r = await req('/forum/t/999999');
+  ok('不存在的主题给 404', r.status === 404, r.status);
+  r = await req('/forum/admin', { redirect: 'manual' });
+  ok('论坛后台未登录时跳登录页', r.status === 302 && r.location.indexOf('/login') === 0, r.status + ' ' + r.location);
+  r = await req('/robots.txt');
+  ok('robots 屏蔽 /forum/admin', r.text.includes('Disallow: /forum/admin'), '');
+  r = await req('/');
+  ok('主导航里加了论坛入口', r.text.includes('href="/forum"'), '');
+
+  console.log('--- 论坛：站长发主题（邮箱已验证的账号直接公开） ---');
+  r = await req('/api/me', { j: jarAd });
+  const adId = ((json(r.text) || {}).user || {}).id;
+  ok('拿到站长账号 id', !!adId, r.text.slice(0, 120));
+  r = await req('/admin/users/' + adId + '/verify', { method: 'POST', j: jarAd, redirect: 'manual' });
+  ok('站长把邮箱标记为已验证', r.status === 302, r.status);
+  r = await req('/forum/new', { j: jarAd });
+  const adTok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  ok('登录后发帖页带一次性令牌与蜜罐字段', r.status === 200 && !!adTok && r.text.includes('name="website"'), r.status + ' tok=' + !!adTok);
+  const fTitle = '验收主题' + STAMP, fBody = '第一楼正文 ' + STAMP;
+  r = await req('/forum/new', { method: 'POST', j: jarAd, form: { forum: 'general', title: fTitle, body: fBody, form_token: adTok, website: '' }, redirect: 'manual' });
+  ok('站长发主题直接公开（ok=published）', r.status === 302 && r.location.indexOf('ok=published') > 0, r.status + ' ' + r.location);
+  const fPath = (r.location.match(/^(\/forum\/t\/\d+)/) || [])[1];
+  const fId = Number(String(fPath || '').replace(/\D+/g, ''));
+  r = await req(fPath);
+  ok('匿名能看到新主题（标题、首楼、#1 楼）', r.status === 200 && r.text.includes(fTitle) && r.text.includes(fBody) && r.text.includes('#1 楼'), r.status);
+  r = await req(fPath, { j: jarAd });
+  const fOpId = Number(((r.text.match(/id="p(\d+)"/) || [])[1]) || 0);
+  ok('主题页给出首楼 id（编辑与审核要用）', !!fOpId, r.status);
+
+  console.log('--- 论坛：邮箱门槛、黑名单、蜜罐、一次性令牌与限流 ---');
+  const f1Name = 'fu' + STAMP + 'a';
+  r = await req('/api/auth/register', { method: 'POST', j: jarF1, json: { username: f1Name, password: 'pass1234', display_name: '论坛甲' } });
+  if (r.status !== 201) r = await req('/api/auth/login', { method: 'POST', j: jarF1, json: { username: f1Name, password: 'pass1234' } });
+  const f1LoginOk = r.status === 201 || r.status === 200;
+  r = await req('/api/me', { j: jarF1 });
+  const f1Id = ((json(r.text) || {}).user || {}).id;
+  ok('论坛测试账号甲就绪', f1LoginOk && !!f1Id, r.status + ' ' + r.text.slice(0, 100));
+  r = await req('/forum/new', { j: jarF1 });
+  ok('邮箱没验证时发帖页只提示去验证邮箱、不给表单',
+    r.status === 200 && r.text.includes('验证邮箱') && !r.text.includes('name="form_token"'), r.status);
+  r = await req('/admin/users/' + f1Id + '/verify', { method: 'POST', j: jarAd, redirect: 'manual' });
+  ok('站长在后台手动标记该账号邮箱已验证', r.status === 302, r.status);
+  const badWord = '禁词' + STAMP;
+  r = await req('/forum/admin/blacklist', { method: 'POST', j: jarAd, form: { pattern: badWord, kind: 'word', action: 'reject', note: '验收用，跑完会删' }, redirect: 'manual' });
+  ok('后台加一条关键词黑名单（命中直接拒绝）', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/new', { j: jarF1 });
+  ok('验证邮箱后发帖表单出现', r.status === 200 && r.text.includes('name="form_token"'), r.status);
+  let f1Tok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  r = await req('/forum/new', { method: 'POST', j: jarF1, form: { forum: 'general', title: '黑名单 ' + STAMP, body: '正文里有 ' + badWord, form_token: f1Tok, website: '' }, redirect: 'manual' });
+  ok('命中关键词的正文发不出去（err=blocked）', r.status === 302 && r.location.indexOf('err=blocked') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/new', { j: jarF1 });
+  f1Tok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  r = await req('/forum/new', { method: 'POST', j: jarF1, form: { forum: 'general', title: '蜜罐 ' + STAMP, body: 'x ' + STAMP, form_token: f1Tok, website: 'http://spam.example' }, redirect: 'manual' });
+  ok('蜜罐字段被填（机器人）直接拒绝（err=bot）', r.status === 302 && r.location.indexOf('err=bot') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/new', { method: 'POST', j: jarF1, form: { forum: 'general', title: '假令牌 ' + STAMP, body: 'x ' + STAMP, form_token: 'a'.repeat(32), website: '' }, redirect: 'manual' });
+  ok('伪造或过期的表单令牌被拒（err=stale）', r.status === 302 && r.location.indexOf('err=stale') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/new', { j: jarF1 });
+  f1Tok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  const nTitle = '新人主题' + STAMP, nBody = '新人正文 ' + STAMP;
+  r = await req('/forum/new', { method: 'POST', j: jarF1, form: { forum: 'general', title: nTitle, body: nBody, form_token: f1Tok, website: '' }, redirect: 'manual' });
+  ok('新人（发帖不足 3 条）发主题进待审（ok=pending）', r.status === 302 && r.location.indexOf('ok=pending') > 0, r.status + ' ' + r.location);
+  const nPath = (r.location.match(/^(\/forum\/t\/\d+)/) || [])[1];
+  const nId = Number(String(nPath || '').replace(/\D+/g, ''));
+  r = await req(nPath);
+  ok('待审主题对游客是 404', r.status === 404, r.status);
+  r = await req(nPath, { j: jarF1 });
+  ok('作者自己能看到待审主题与「待审核」标记', r.status === 200 && r.text.includes(nTitle) && r.text.includes('待审核'), r.status);
+  const nOpId = Number(((r.text.match(/id="p(\d+)"/) || [])[1]) || 0);
+  ok('拿到新人主题的首楼 id', !!nOpId, r.status);
+  r = await req('/forum');
+  ok('待审主题不出现在论坛首页', r.status === 200 && !r.text.includes(nTitle), '');
+  r = await req('/forum/f/general');
+  ok('待审主题也不出现在板块页', !r.text.includes(nTitle), '');
+  r = await req('/forum/new', { j: jarF1 });
+  f1Tok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  r = await req('/forum/new', { method: 'POST', j: jarF1, form: { forum: 'general', title: '连发第二条 ' + STAMP, body: 'x ' + STAMP, form_token: f1Tok, website: '' }, redirect: 'manual' });
+  ok('同一账号 60 秒内不能连发主题（err=too_fast）', r.status === 302 && r.location.indexOf('err=too_fast') > 0, r.status + ' ' + r.location);
+
+  console.log('--- 论坛：回复待审、编辑留痕与举报 ---');
+  const f2Name = 'fu' + STAMP + 'b';
+  r = await req('/api/auth/register', { method: 'POST', j: jarF2, json: { username: f2Name, password: 'pass1234', display_name: '论坛乙' } });
+  if (r.status !== 201) r = await req('/api/auth/login', { method: 'POST', j: jarF2, json: { username: f2Name, password: 'pass1234' } });
+  r = await req('/api/me', { j: jarF2 });
+  const f2Id = ((json(r.text) || {}).user || {}).id;
+  ok('论坛测试账号乙就绪', !!f2Id, r.text.slice(0, 100));
+  r = await req('/admin/users/' + f2Id + '/verify', { method: 'POST', j: jarAd, redirect: 'manual' });
+  ok('把乙的邮箱也标记为已验证', r.status === 302, r.status);
+  r = await req(fPath, { j: jarF2 });
+  const f2Tok0 = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  ok('登录后在主题页拿到回复用的令牌', !!f2Tok0, r.status);
+  const rBody = '新人的回复 ' + STAMP;
+  r = await req(fPath + '/reply', { method: 'POST', j: jarF2, form: { body: rBody, parent_id: '0', form_token: f2Tok0, website: '' }, redirect: 'manual' });
+  ok('新人回复也进待审（ok=pending）', r.status === 302 && r.location.indexOf('ok=pending') > 0, r.status + ' ' + r.location);
+  const rPid = Number(((r.location.match(/#p(\d+)/) || [])[1]) || 0);
+  r = await req(fPath);
+  ok('游客看不到待审回复', r.status === 200 && !r.text.includes(rBody), r.status);
+  r = await req(fPath, { j: jarF2 });
+  ok('作者自己能看到待审回复', r.status === 200 && r.text.includes(rBody), r.status);
+  const f2TokM = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  r = await req(fPath + '/reply', { method: 'POST', j: jarF2, form: { body: '第二条 ' + STAMP, form_token: f2TokM, website: '' }, redirect: 'manual' });
+  ok('同一账号 20 秒内不能连发回复（err=too_fast）', r.status === 302 && r.location.indexOf('err=too_fast') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/report', { method: 'POST', j: jarF2, form: { target_type: 'thread', target_id: String(fId), reason: 'spam', detail: '验收举报 ' + STAMP }, redirect: 'manual' });
+  ok('举报主题成功（ok=reported）', r.status === 302 && r.location.indexOf('ok=reported') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/report', { method: 'POST', j: jarF2, form: { target_type: 'thread', target_id: String(fId), reason: 'spam', detail: '再来一次' }, redirect: 'manual' });
+  ok('同一个人重复举报只算一次', r.status === 302 && r.location.indexOf('ok=reported') > 0, r.status + ' ' + r.location);
+
+  console.log('--- 论坛后台：审核、置顶锁定、举报处理、禁言与审计 ---');
+  r = await req('/forum/admin', { j: jarAd });
+  ok('论坛后台 200，五个区域都在', r.status === 200 && r.text.includes('论坛管理') && r.text.includes('待审主题') &&
+    r.text.includes('待审回复') && r.text.includes('待处理举报') && r.text.includes('关键词 / 正则黑名单') &&
+    r.text.includes('被禁言的用户'), r.status);
+  ok('后台看得到待审主题、待审回复、两条举报与刚加的黑名单',
+    r.text.includes(nTitle) && r.text.includes(rBody) && r.text.includes('验收举报 ' + STAMP) && r.text.includes(badWord), '');
+  r = await req('/forum/admin/threads/' + nId + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+  ok('后台通过待审主题', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+  r = await req(nPath);
+  ok('通过后游客就能看到这个主题', r.status === 200 && r.text.includes(nTitle) && r.text.includes(nBody), r.status);
+  r = await req('/forum/admin/posts/' + rPid + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+  ok('后台通过待审回复', r.status === 302, r.status);
+  r = await req(fPath);
+  ok('通过后游客能看到这条回复', r.status === 200 && r.text.includes(rBody), r.status);
+  r = await req('/forum/report', { method: 'POST', j: jarF1, form: { target_type: 'post', target_id: String(rPid), reason: 'abuse', detail: '举报回复 ' + STAMP }, redirect: 'manual' });
+  ok('举报回复（target_type=post）', r.status === 302 && r.location.indexOf('ok=reported') > 0, r.status + ' ' + r.location);
+
+  r = await req('/forum/post/' + nOpId + '/edit', { j: jarF1 });
+  const eTok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  ok('编辑页带出原文与一次性令牌（编辑也要过防刷）', r.status === 200 && r.text.includes(nBody) && !!eTok, r.status);
+  const nBody2 = '新人正文（改过）' + STAMP;
+  r = await req('/forum/post/' + nOpId + '/edit', { method: 'POST', j: jarF1, form: { body: nBody2, form_token: eTok, website: '' }, redirect: 'manual' });
+  ok('普通用户编辑后重新进待审（ok=pending）', r.status === 302 && r.location.indexOf('ok=pending') > 0, r.status + ' ' + r.location);
+  r = await req(nPath);
+  ok('编辑后游客看不到新正文（首楼一改，整个主题退回待审，先发干净再改成广告这条路被堵住）',
+    r.status === 404 || (r.status === 200 && !r.text.includes(nBody2)), r.status);
+  r = await req('/forum/admin', { j: jarAd });
+  ok('后台看得到这条「编辑后重新待审」的楼层', r.text.includes(nBody2), '');
+  const admHtml = r.text;
+  r = await req('/forum/admin/threads/' + nId + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+  ok('首楼改回待审时整个主题也回待审，站长在「待审主题」里通过一次即可（ok=done）',
+    r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+  r = await req(nPath);
+  ok('通过后游客看到改后正文，并标出「已编辑」', r.status === 200 && r.text.includes(nBody2) && r.text.includes('已编辑'), r.status);
+  r = await req('/forum/post/' + fOpId + '/edit', { j: jarF2 });
+  ok('别人不能编辑站长的楼层（拿不到编辑页）', r.status === 404, r.status);
+
+  r = await req('/forum/admin/threads/' + nId + '/flags', { method: 'POST', j: jarAd, form: { pinned: '1', locked: '1' }, redirect: 'manual' });
+  ok('后台置顶 + 锁定这个主题', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+  r = await req('/forum');
+  ok('置顶主题排到列表最前', r.status === 200 && r.text.indexOf(nTitle) >= 0 && r.text.indexOf(nTitle) < r.text.indexOf(fTitle), '');
+  r = await req(nPath);
+  ok('锁定后页面显示「已被站长锁定，不能再回复」', r.status === 200 && r.text.includes('不能再回复'), r.status);
+  r = await req(nPath, { j: jarF2 });
+  ok('锁定后登录用户也拿不到回复表单', r.status === 200 && !r.text.includes('name="form_token"'), r.status);
+
+  r = await req(fPath, { j: jarF2 });
+  const f2TokN = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  ok('禁言前先拿一个还没用过的令牌（禁言后页面就不给表单了）', !!f2TokN, r.status);
+  r = await req('/forum/admin/users/mute', { method: 'POST', j: jarAd, form: { username: f2Name, minutes: '60', reason: '验收禁言 ' + STAMP }, redirect: 'manual' });
+  ok('后台按用户名禁言', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/admin', { j: jarAd });
+  ok('被禁言列表里出现该用户与理由', r.text.includes('@' + f2Name) && r.text.includes('验收禁言 ' + STAMP), '');
+  r = await req(fPath + '/reply', { method: 'POST', j: jarF2, form: { body: '禁言期间发帖 ' + STAMP, form_token: f2TokN, website: '' }, redirect: 'manual' });
+  ok('禁言用户即使拿着有效令牌也发不出（err=muted）', r.status === 302 && r.location.indexOf('err=muted') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/admin/users/' + f2Id + '/mute', { method: 'POST', j: jarAd, form: { minutes: '0', reason: '' }, redirect: 'manual' });
+  ok('后台解除禁言（minutes=0）', r.status === 302, r.status);
+
+  r = await req('/forum/admin', { j: jarAd });
+  const repId = Number((((r.text.match(new RegExp('验收举报 ' + esc8(STAMP) + '[\\s\\S]{0,800}?reports/(\\d+)/status')) || [])[1]) || 0));
+  ok('从后台页拿到举报行 id', !!repId, r.status);
+  r = await req('/forum/admin/reports/' + repId + '/status', { method: 'POST', j: jarAd, form: { status: '1' }, redirect: 'manual' });
+  ok('后台把举报标记为已处理', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+  r = await req('/forum/admin', { j: jarAd });
+  const blId = Number((((r.text.match(new RegExp('<code>' + esc8(badWord) + '</code>[\\s\\S]{0,600}?blacklist/(\\d+)/delete')) || [])[1]) || 0));
+  ok('从后台页拿到黑名单行 id', !!blId, r.status);
+  r = await req('/forum/admin/blacklist/' + blId + '/delete', { method: 'POST', j: jarAd, redirect: 'manual' });
+  ok('删掉这条验收用黑名单（不留给以后的测试添乱）', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
+
+  r = await req('/admin', { j: jarAd });
+  ok('论坛的每一步都进了审计日志',
+    r.text.includes('forum.thread.create') && r.text.includes('forum.post.create') &&
+    r.text.includes('forum.post.edit') && r.text.includes('forum.thread.status') &&
+    r.text.includes('forum.report') && r.text.includes('forum.user.mute') &&
+    r.text.includes('forum.blacklist.add'), '');
+  ok('论坛后台与站点后台互相有入口', admHtml.includes('/admin') && admHtml.includes('/forum/admin'), '');
 
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

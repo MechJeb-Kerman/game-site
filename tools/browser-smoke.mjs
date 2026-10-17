@@ -246,6 +246,36 @@ const TARGETS = [
         " if (!off) throw new Error('关闭没写 localStorage：noticeOff:' + slug);" +
         " return { banner: true, slug: slug, off: off, href: (bar.querySelector('.nb-txt') || {}).getAttribute ? bar.querySelector('.nb-txt').getAttribute('href') : '' }; })()"
   },
+  {
+    n: 'forum', w: 1280, h: 1100, u: BASE + '/forum',
+    js: "(function(){ var h1 = (document.querySelector('h1') || {}).textContent || '';" +
+        " if (!/论坛/.test(h1)) throw new Error('论坛首页没有标题：' + h1);" +
+        " var boards = [].slice.call(document.querySelectorAll('.fboards li a'));" +
+        " if (boards.length < 4) throw new Error('板块导航不对：' + boards.length);" +
+        " if (!boards.some(function(a){ return /综合讨论/.test(a.textContent); })) throw new Error('没有综合讨论板块');" +
+        " if (!document.querySelector('a[href$=\"/forum/new\"]')) throw new Error('没有「发新帖」入口');" +
+        " if (!document.querySelector('.forum-search')) throw new Error('论坛没有搜索框');" +
+        " return { boards: boards.length, threads: document.querySelectorAll('.thr').length, h1: h1.trim() }; })()"
+  },
+  {
+    n: 'forum-thread', w: 1280, h: 1100, u: BASE + '/forum',
+    js: "(async function(){ var a = document.querySelector('.thr-link');" +
+        " if (!a) return { threads: 0, mode: 'empty' };" +
+        " var href = a.getAttribute('href');" +
+        " var html = await (await fetch(href)).text();" +
+        " var doc = new DOMParser().parseFromString(html, 'text/html');" +
+        " var form = doc.querySelector('form.fpost-form');" +
+        " var gate = doc.querySelector('.forum-gate');" +
+        " if (!form && !gate) throw new Error('主题页既没有回复表单也没有说明为什么不能发帖');" +
+        " if (!form) return { href: href, posts: doc.querySelectorAll('.fpost').length, mode: 'gate', why: gate.textContent.trim().slice(0, 30) };" +
+        " var tok = form.querySelector('input[name=form_token]');" +
+        " if (!tok || !/^[0-9a-f]{32}$/.test(tok.value)) throw new Error('回复表单没有一次性令牌：' + (tok && tok.value));" +
+        " var hp = form.querySelector('.hp');" +
+        " var hpInput = hp ? hp.querySelector('input') : null;" +
+        " if (!hpInput) throw new Error('回复表单没有蜜罐字段');" +
+        " if (!hp.hasAttribute('hidden')) throw new Error('蜜罐字段没藏起来（浏览器里应该看不见）');" +
+        " return { href: href, posts: doc.querySelectorAll('.fpost').length, mode: 'form', hp: hpInput.name, token: tok.value.slice(0, 6) + '…' }; })()"
+  },
   { n: 'mobile', w: 390, h: 844, u: HOME, js: null },
   {
     n: 'game-2048', w: 560, h: 760, u: BASE + '/games/2048/index.html',
