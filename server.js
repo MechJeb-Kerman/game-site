@@ -169,7 +169,9 @@ app.get('/', (req, res) => {
       newest: data.listGames({ sort: 'new', limit: 8 }),
       categories: data.listCategories(),
       tags: data.listTags(20),
-      stats: data.siteStats()
+      stats: data.siteStats(),
+      // 首页顶部横幅：置顶优先，其次最新的一条已发布公告
+      notice: data.latestNotice()
     })
   );
 });
@@ -297,6 +299,40 @@ app.get('/game/:slug', (req, res) => {
   );
 });
 
+app.get('/notice', (req, res) => {
+  const list = data.listPublishedPosts({ page: Math.max(1, Number(req.query.page) || 1) });
+  res.send(
+    ui.noticeListPage({
+      origin: originOf(req),
+      user: req.user,
+      items: list.items,
+      total: list.total,
+      page: list.page,
+      pages: list.pages
+    })
+  );
+});
+
+app.get('/notice/:slug', (req, res) => {
+  const post = data.getPost(String(req.params.slug));
+  if (!post) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  const cpage = Math.max(1, Number(req.query.cpage) || 1);
+  res.send(
+    ui.noticePage({
+      origin: originOf(req),
+      user: req.user,
+      post,
+      thread: data.noticeThread(post.id, cpage),
+      commentTotal: data.countNoticeComments(post.id),
+      cmtNotice: CMT_NOTICE[String(req.query.report || '')] || ''
+    })
+  );
+});
+
+app.get('/changelog', (req, res) => {
+  res.send(ui.changelogPage({ origin: originOf(req), user: req.user }));
+});
+
 // ---------- 封面 / SEO 资源 ----------
 app.get('/cover/:slug.svg', (req, res) => {
   const game = data.getGame(String(req.params.slug));
@@ -348,7 +384,11 @@ app.get('/robots.txt', (req, res) => {
 app.get('/sitemap.xml', (req, res) => {
   const origin = originOf(req);
   const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' },
+    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' },
     { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
+  for (const p of data.listPosts({ status: 1, limit: 50 })) {
+    urls.push({ loc: '/notice/' + encodeURIComponent(p.slug), pri: '0.6', lm: String(p.published_at || p.created_at).slice(0, 10) });
+  }
   for (const c of data.listCategories()) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }
@@ -793,6 +833,7 @@ app.get('/admin', requireAdmin, (req, res) => {
     filter: { q, status, category },
     outbox: mail.outbox(20),
     mailTransport: mail.transportName(),
+    posts: data.listPosts({ limit: 100 }),
     notice: String(req.query.ok || ''),
     integrations: integrationsOf(originOf(req))
   }));
@@ -855,6 +896,41 @@ app.post('/admin/games/batch', requireAdmin, (req, res) => {
   data.logAudit(req.user, 'game.batch', data.STATUS_LABEL[r.status] || String(r.status),
     r.changed.length + ' 条：' + r.changed.slice(0, 12).join(', ') + (r.missing.length ? ' / 未找到 ' + r.missing.length + ' 条' : ''));
   res.redirect('/admin?ok=batch');
+});
+
+// ---------- 公告管理（发布 / 编辑 / 撤回） ----------
+app.get('/admin/posts/new', requireAdmin, (req, res) => {
+  res.send(ui.postFormPage({ origin: originOf(req), user: req.user, error: String(req.query.error || '') }));
+});
+
+app.post('/admin/posts/new', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = data.createPost({ title: b.title, body: b.body, pinned: b.pinned, status: b.draft ? 0 : 1 }, req.user.id);
+  if (r.error) return res.redirect('/admin/posts/new?error=' + encodeURIComponent(r.error));
+  data.logAudit(req.user, 'post.create', r.slug, r.title + (r.status ? '' : '（先存着，未发布）'));
+  res.redirect('/admin?ok=post');
+});
+
+app.get('/admin/posts/:slug/edit', requireAdmin, (req, res) => {
+  const post = data.getPostAny(String(req.params.slug));
+  if (!post) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  res.send(ui.postFormPage({ origin: originOf(req), user: req.user, post, error: String(req.query.error || '') }));
+});
+
+app.post('/admin/posts/:slug/edit', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = data.updatePost(String(req.params.slug), { title: b.title, body: b.body, pinned: b.pinned });
+  if (r.error === 'not_found') return res.status(404).type('text/plain').send('没有这条公告');
+  if (r.error) return res.redirect('/admin/posts/' + encodeURIComponent(req.params.slug) + '/edit?error=' + encodeURIComponent(r.error));
+  data.logAudit(req.user, 'post.update', r.slug, r.title);
+  res.redirect('/admin?ok=post');
+});
+
+app.post('/admin/posts/:slug/status', requireAdmin, (req, res) => {
+  const r = data.setPostStatus(String(req.params.slug), (req.body || {}).status);
+  if (r.error) return res.status(404).type('text/plain').send('没有这条公告');
+  data.logAudit(req.user, r.status ? 'post.publish' : 'post.retract', String(req.params.slug), r.status ? '发布' : '撤回（前台隐藏，评论保留）');
+  res.redirect('/admin?ok=postStatus');
 });
 
 app.post('/admin/comments/:id/status', requireAdmin, (req, res) => {
@@ -937,6 +1013,36 @@ app.post('/api/games/:slug/comments', (req, res) => {
   const parentId = (req.body && req.body.parent_id) || null;
   const r = data.addComment(slug, req.user.id, req.body && req.body.body, parentId);
   if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+  if (r.error) {
+    const hint = r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字'
+      : r.error === 'bad_parent' ? '要回复的评论已经不存在了'
+      : '评论不能为空';
+    return res.status(400).json({ error: r.error, hint });
+  }
+  commentGate.set(key, now);
+  if (commentGate.size > 5000) commentGate.clear();
+  res.json({ id: r.id, body: r.body, name: req.user.name, parent_id: r.parent_id });
+});
+
+/** 公告评论：和游戏评论同一套（分页 + 楼中楼 + 10 秒限流） */
+app.get('/api/notices/:slug/comments', (req, res) => {
+  const post = data.getPost(String(req.params.slug));
+  if (!post) return res.status(404).json({ error: 'not_found' });
+  const pageSize = Math.max(1, Math.min(50, Number(req.query.pageSize) || data.COMMENT_PAGE_SIZE));
+  const thread = data.noticeThread(post.id, Math.max(1, Number(req.query.page) || 1), pageSize);
+  res.json({ slug: post.slug, total: thread.total, page: thread.page, pages: thread.pages, pageSize: thread.pageSize, items: thread.items });
+});
+
+app.post('/api/notices/:slug/comments', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'login_required', hint: '登录后才能评论' });
+  const post = data.getPost(String(req.params.slug));
+  if (!post) return res.status(404).json({ error: 'not_found' });
+  const key = 'post:' + req.user.id + ':' + post.id;
+  const now = Date.now();
+  if (now - (commentGate.get(key) || 0) < 10000) {
+    return res.status(429).json({ error: 'too_fast', hint: '发得太快了，歇 10 秒再发' });
+  }
+  const r = data.addNoticeComment(post.id, req.user.id, req.body && req.body.body, (req.body && req.body.parent_id) || null);
   if (r.error) {
     const hint = r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字'
       : r.error === 'bad_parent' ? '要回复的评论已经不存在了'

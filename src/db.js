@@ -171,6 +171,21 @@ export function migrate() {
       html       TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
+
+    -- 公告：站长随时发布/修改/撤回（status 1 已发布 / 0 已撤回，软撤回，评论保留）
+    CREATE TABLE IF NOT EXISTS posts (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug         TEXT NOT NULL UNIQUE,
+      title        TEXT NOT NULL,
+      body         TEXT NOT NULL,
+      pinned       INTEGER DEFAULT 0,
+      status       INTEGER DEFAULT 1,
+      author_id    INTEGER,
+      created_at   TEXT DEFAULT (datetime('now','localtime')),
+      updated_at   TEXT,
+      published_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, pinned DESC, id DESC);
   `);
 
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核
@@ -185,6 +200,10 @@ export function migrate() {
   // 评论楼中楼：parent_id 为空 = 顶层评论
   addColumn('comments', 'parent_id', 'parent_id INTEGER');
   addIndex('idx_comments_parent', 'comments(parent_id)');
+
+  // 评论可以挂在游戏（target='game'）或公告（target='post'）上；game_id 是通用目标 id
+  addColumn('comments', 'target', "target TEXT NOT NULL DEFAULT 'game'");
+  addIndex('idx_comments_target', 'comments(target, game_id, status, id DESC)');
 
   // 账号：邮箱验证 / 封禁
   addColumn('users', 'email', 'email TEXT');

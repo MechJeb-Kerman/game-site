@@ -60,8 +60,14 @@ function mapRel(p) {
   else if (seg.length === 1 && seg[0] === "games") out = "/games.html";
   else if (seg.length === 1 && seg[0] === "search") out = "/search.html";
   else if (seg.length === 1 && seg[0] === "404") out = "/404.html";
+  /* 公告与更新说明：列表 / 详情 / 更新记录都导出成 .html。
+     公告 slug 允许中文（postSlug 保留中文），所以文件名要 decode 回原始字符，
+     否则浏览器请求 /notice/<百分号编码>.html 会和磁盘上字面量的百分号文件名对不上 */
+  else if (seg.length === 1 && seg[0] === "notice") out = "/notice.html";
+  else if (seg.length === 1 && seg[0] === "changelog") out = "/changelog.html";
   else if (seg.length === 2 && (seg[0] === "category" || seg[0] === "tag" || seg[0] === "game")) out = "/" + seg[0] + "/" + seg[1] + ".html";
   /* 排行榜：导航里的 /rank 落到今日榜，榜单切换链接是 /rank/<kind>（views.js 在 STATIC_MODE 下这么发） */
+  else if (seg.length === 2 && seg[0] === "notice") out = "/notice/" + decodeURIComponent(seg[1]) + ".html";
   else if (seg.length === 1 && seg[0] === "rank") out = "/rank/today.html";
   else if (seg.length === 2 && seg[0] === "rank") out = "/rank/" + seg[1] + ".html";
   else out = "/" + seg.join("/");
@@ -123,7 +129,8 @@ page("index.html", ui.homePage({
   featured: data.listGames({ sort: "hot", limit: 1 })[0] || null,
   hot: data.listGames({ sort: "hot", limit: 8 }),
   newest: data.listGames({ sort: "new", limit: 8 }),
-  categories: categories, tags: data.listTags(20), stats: stats
+  categories: categories, tags: data.listTags(20), stats: stats,
+  notice: data.latestNotice()
 }));
 
 page("games.html", ui.listPage({
@@ -141,6 +148,23 @@ page("search.html", ui.listPage({
 /* 法律页面：纯文本，静态版照样导出（页脚每一页都链过来） */
 page("privacy.html", ui.privacyPage({ origin: origin, user: null }));
 page("terms.html", ui.termsPage({ origin: origin, user: null }));
+
+/* 公告：只导出已发布的（撤回的只有站长后台看得到），首页横幅也只在有已发布公告时出现。
+   公告评论要服务端，静态版整块不渲染（commentPanel 在 STATIC_MODE 下返回空） */
+const notices = data.listPosts({ status: 1, limit: 200 });
+const noticeCount = data.countPosts(1);
+page("notice.html", ui.noticeListPage({
+  origin: origin, user: null, items: notices, total: noticeCount,
+  page: 1, pages: 1, banner: null
+}));
+for (const p of notices) {
+  page("notice/" + p.slug + ".html", ui.noticePage({
+    origin: origin, user: null, post: p, thread: null, commentTotal: 0
+  }));
+}
+
+/* 更新说明：读 src/changelog-data.js（由 tools/gen-changelog.mjs 从 git log 生成） */
+page("changelog.html", ui.changelogPage({ origin: origin, user: null }));
 
 for (const c of categories) {
   const list = data.listGames({ category: c.slug, sort: "hot", limit: 200 });
@@ -225,6 +249,9 @@ put("robots.txt", robots);
 const locs = [origin + mapRel("/")];
 locs.push({ loc: origin + mapRel("/privacy"), pri: "0.3", last: "" });
 locs.push({ loc: origin + mapRel("/terms"), pri: "0.3", last: "" });
+locs.push({ loc: origin + mapRel("/changelog"), pri: "0.4", last: "" });
+locs.push({ loc: origin + mapRel("/notice"), pri: "0.6", last: "" });
+for (const p of notices) locs.push({ loc: origin + mapRel("/notice/" + encodeURIComponent(p.slug)), pri: "0.6", last: "" });
 for (const t of boardTabs) locs.push({ loc: origin + mapRel("/rank/" + t.kind), pri: "0.7", last: "" });
 for (const c of categories) if (c.total) locs.push({ loc: origin + mapRel("/category/" + c.slug), pri: "0.8", last: "" });
 for (const g of games) locs.push({ loc: origin + mapRel("/game/" + g.slug), pri: "0.9", last: String(g.created_at || "").slice(0, 10) });
@@ -354,7 +381,7 @@ console.log("静态站点已生成：" + OUT);
 console.log("  base   = " + base);
 console.log("  origin = " + origin + (PLACEHOLDER ? "   <== 占位域名！发布前请用 --origin 换成真实地址" : ""));
 console.log("  文件 " + written.length + " 个，合计 " + (totalBytes / 1024).toFixed(1) + " KB");
-console.log("  页面：index / games / search / 404 / " + boardTabs.length + " 个排行榜" + (categories.length ? " / " + categories.filter(function (c) { return c.total; }).length + " 个分类" : "") + " / " + tags.length + " 个标签 / " + games.length + " 个游戏详情");
+console.log("  页面：index / games / search / 404 / " + boardTabs.length + " 个排行榜" + (notices.length ? " / " + notices.length + " 条公告" : "") + " / changelog" + (categories.length ? " / " + categories.filter(function (c) { return c.total; }).length + " 个分类" : "") + " / " + tags.length + " 个标签 / " + games.length + " 个游戏详情");
 console.log("");
 console.log("本地预览：node tools/serve-dist.mjs --base=" + base + "   然后打开 http://127.0.0.1:4173" + base);
 console.log(CF_MODE

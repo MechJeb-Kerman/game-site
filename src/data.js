@@ -240,20 +240,22 @@ export const REPLY_PREVIEW = 20;       // 每条顶层评论一次最多带出�
 
 const COMMENT_COLS = 'c.id, c.body, c.created_at, c.parent_id, u.id AS user_id, u.display_name AS name';
 
-/** 某游戏的可见顶层评论（新的在前，分页） */
-export function listComments(slug, { page = 1, pageSize = COMMENT_PAGE_SIZE } = {}) {
+/* 评论挂在什么上：游戏 target='game'（game_id = games.id）或公告 target='post'（game_id = posts.id） */
+export const TARGET_GAME = 'game';
+export const TARGET_POST = 'post';
+
+/** 某个目标（游戏 / 公告）下的可见顶层评论，新的在前，分页 */
+function listCommentsFor(target, targetId, { page = 1, pageSize = COMMENT_PAGE_SIZE } = {}) {
   const size = Math.max(1, Math.min(50, Number(pageSize) || COMMENT_PAGE_SIZE));
-  const total = db.prepare(`SELECT COUNT(*) AS n FROM comments c
-    JOIN games g ON g.id = c.game_id
-    WHERE g.slug = ? AND c.status = 1 AND c.parent_id IS NULL`).get(slug).n;
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM comments
+    WHERE target = ? AND game_id = ? AND status = 1 AND parent_id IS NULL`).get(target, targetId).n;
   const pages = Math.max(1, Math.ceil(total / size));
   const p = Math.max(1, Math.min(pages, Number(page) || 1));
   const items = db.prepare(`SELECT ${COMMENT_COLS}
     FROM comments c
     JOIN users u ON u.id = c.user_id
-    JOIN games g ON g.id = c.game_id
-    WHERE g.slug = ? AND c.status = 1 AND c.parent_id IS NULL
-    ORDER BY c.id DESC LIMIT ? OFFSET ?`).all(slug, size, (p - 1) * size);
+    WHERE c.target = ? AND c.game_id = ? AND c.status = 1 AND c.parent_id IS NULL
+    ORDER BY c.id DESC LIMIT ? OFFSET ?`).all(target, targetId, size, (p - 1) * size);
   return { items: items.map((r) => ({ ...r, replies: [], reply_total: 0 })), total, page: p, pages, pageSize: size };
 }
 
@@ -277,17 +279,52 @@ export function attachReplies(thread) {
   return thread;
 }
 
+/** 目标版：分页 + 回复一次取好 */
+function threadFor(target, targetId, page = 1, pageSize = COMMENT_PAGE_SIZE) {
+  return attachReplies(listCommentsFor(target, targetId, { page, pageSize }));
+}
+
+function countFor(target, targetId) {
+  return db.prepare('SELECT COUNT(*) AS n FROM comments WHERE target = ? AND game_id = ? AND status = 1')
+    .get(target, targetId).n;
+}
+
+/** 游戏版：slug → games.id */
+function gameId(slug, onlyPublished = false) {
+  return db.prepare(`SELECT id FROM games WHERE slug = ?${onlyPublished ? ' AND status = 1' : ''}`).get(slug) || null;
+}
+
+export function listComments(slug, opts = {}) {
+  const g = gameId(slug);
+  if (!g) {
+    const size = Math.max(1, Math.min(50, Number(opts.pageSize) || COMMENT_PAGE_SIZE));
+    return { items: [], total: 0, page: 1, pages: 1, pageSize: size };
+  }
+  return listCommentsFor(TARGET_GAME, g.id, opts);
+}
+
 /** 详情页用：分页 + 回复一次取好 */
 export function commentThread(slug, page = 1, pageSize = COMMENT_PAGE_SIZE) {
-  const thread = listComments(slug, { page, pageSize });
-  return attachReplies(thread);
+  return threadFor(TARGET_GAME, gameId(slug) ? gameId(slug).id : -1, page, pageSize);
 }
 
 /** 全部可见评论数（顶层 + 回复），详情页「玩家评论」角标用 */
 export function countComments(slug) {
-  return db.prepare(`SELECT COUNT(*) AS n FROM comments c
-    JOIN games g ON g.id = c.game_id
-    WHERE g.slug = ? AND c.status = 1`).get(slug).n;
+  const g = gameId(slug);
+  return g ? countFor(TARGET_GAME, g.id) : 0;
+}
+
+/** 公告版：post id */
+export function noticeThread(postId, page = 1, pageSize = COMMENT_PAGE_SIZE) {
+  return threadFor(TARGET_POST, Number(postId) || -1, page, pageSize);
+}
+
+export function countNoticeComments(postId) {
+  return countFor(TARGET_POST, Number(postId) || -1);
+}
+
+export function addNoticeComment(postId, userId, body, parentId = null) {
+  return addCommentTo(TARGET_POST, Number(postId) || -1, userId, body, parentId);
 }
 
 export const COMMENT_MAX = 500;
@@ -297,18 +334,17 @@ export const COMMENT_MAX = 500;
  * 只做两级（楼中楼）：回复「回复」时自动挂到同一顶层评论下，并在正文前带上 @昵称。
  * @returns {{error:string}|{id:number, body:string, parent_id:number|null, name:string}}
  */
-export function addComment(slug, userId, body, parentId = null) {
+function addCommentTo(target, targetId, userId, body, parentId = null) {
   const text = String(body || '').replace(/\s+/g, ' ').trim();
   if (!text) return { error: 'empty' };
   if (text.length > COMMENT_MAX) return { error: 'too_long' };
-  const g = db.prepare(`SELECT id FROM games WHERE slug = ? AND status = 1`).get(slug);
-  if (!g) return { error: 'not_found' };
 
   let root = null;
   let finalText = text;
   if (parentId) {
-    const p = db.prepare(`SELECT id, parent_id, user_id, status FROM comments WHERE id = ? AND game_id = ?`)
-      .get(Number(parentId), g.id);
+    const p = db.prepare(`SELECT id, parent_id, user_id, status FROM comments
+      WHERE id = ? AND target = ? AND game_id = ?`)
+      .get(Number(parentId), target, targetId);
     if (!p || !Number(p.status)) return { error: 'bad_parent' };
     root = p.parent_id ? p.parent_id : p.id;
     // 回复「回复」时补一个 @ 提醒（正文已经以 @ 开头就不重复加）
@@ -319,9 +355,16 @@ export function addComment(slug, userId, body, parentId = null) {
     }
   }
 
-  const info = db.prepare('INSERT INTO comments (game_id, user_id, body, parent_id) VALUES (?, ?, ?, ?)')
-    .run(g.id, userId, finalText, root);
+  const info = db.prepare('INSERT INTO comments (target, game_id, user_id, body, parent_id) VALUES (?, ?, ?, ?, ?)')
+    .run(target, targetId, userId, finalText, root);
   return { id: Number(info.lastInsertRowid), body: finalText, parent_id: root, name: null };
+}
+
+/** 发一条游戏评论 / 回复（游戏必须已上架） */
+export function addComment(slug, userId, body, parentId = null) {
+  const g = gameId(slug, true);
+  if (!g) return { error: 'not_found' };
+  return addCommentTo(TARGET_GAME, g.id, userId, body, parentId);
 }
 
 /* ---------- 举报 ---------- */
@@ -354,16 +397,18 @@ function reportCount(commentId) {
     .get(Number(commentId)).n;
 }
 
-/** 后台：待处理举报（带评论正文与游戏） */
+/** 后台：待处理举报（带评论正文与来源：游戏或公告） */
 export function listReports(status = 0, limit = 50) {
   return db.prepare(`SELECT r.id, r.reason, r.status, r.created_at,
-      c.id AS comment_id, c.body, c.status AS comment_status,
-      u.display_name AS reporter, cu.display_name AS author, g.title, g.slug
+      c.id AS comment_id, c.body, c.status AS comment_status, c.target,
+      u.display_name AS reporter, cu.display_name AS author,
+      COALESCE(g.title, p.title) AS title, COALESCE(g.slug, p.slug) AS slug
     FROM comment_reports r
     JOIN comments c ON c.id = r.comment_id
     JOIN users u  ON u.id = r.user_id
     JOIN users cu ON cu.id = c.user_id
-    JOIN games g  ON g.id = c.game_id
+    LEFT JOIN games g ON c.target = 'game' AND g.id = c.game_id
+    LEFT JOIN posts p ON c.target = 'post' AND p.id = c.game_id
     WHERE r.status = ?
     ORDER BY r.id DESC LIMIT ?`).all(Number(status) || 0, limit);
 }
@@ -378,6 +423,114 @@ export function setReportStatus(id, status) {
   const s = Number(status) === 2 ? 2 : 1;
   const info = db.prepare('UPDATE comment_reports SET status = ? WHERE id = ?').run(s, Number(id));
   return info.changes ? { status: s } : { error: 'not_found' };
+}
+
+/* ---------- 公告 ---------- */
+
+export const POST_STATUS_LABEL = { 0: '已撤回', 1: '已发布' };
+export const POST_TITLE_MAX = 80;
+export const POST_BODY_MAX = 10000;
+
+const POST_COLS = `p.id, p.slug, p.title, p.body, p.pinned, p.status, p.author_id, p.created_at, p.updated_at, p.published_at,
+  (SELECT COUNT(*) FROM comments c WHERE c.target = 'post' AND c.game_id = p.id AND c.status = 1) AS comments,
+  (SELECT COUNT(*) FROM comments c WHERE c.target = 'post' AND c.game_id = p.id AND c.parent_id IS NULL AND c.status = 1) AS top_comments`;
+
+/** 公告 slug：中文标题会保留中文，路由侧负责百分号解码 */
+function postSlug(title) {
+  const base = (slugify(title) || 'notice').slice(0, 48);
+  let slug = base;
+  let n = 2;
+  while (db.prepare('SELECT 1 AS x FROM posts WHERE slug = ?').get(slug)) {
+    if (n > 200) { slug = base + '-' + Date.now().toString(36); break; }
+    slug = base + '-' + n;
+    n++;
+  }
+  return slug;
+}
+
+/** 公告字段校验（标题、正文都必填） */
+function postFields(f = {}) {
+  const title = String(f.title || '').replace(/\s+/g, ' ').trim();
+  const body = String(f.body || '').replace(/\r\n?/g, '\n').trim();
+  if (!title) return { error: 'title_empty' };
+  if (title.length > POST_TITLE_MAX) return { error: 'title_long' };
+  if (!body) return { error: 'body_empty' };
+  if (body.length > POST_BODY_MAX) return { error: 'body_long' };
+  return { title, body, pinned: Number(f.pinned) ? 1 : 0 };
+}
+
+/** 新建公告：默认直接发布，status=0 就是先存着不发布 */
+export function createPost(f = {}, userId = null) {
+  const v = postFields(f);
+  if (v.error) return v;
+  const slug = postSlug(v.title);
+  const status = Number(f.status) === 0 ? 0 : 1;
+  const info = db.prepare(`INSERT INTO posts (slug, title, body, pinned, status, author_id, published_at)
+    VALUES (?, ?, ?, ?, ?, ?, ${status ? "datetime('now','localtime')" : 'NULL'})`)
+    .run(slug, v.title, v.body, v.pinned, status, userId ? Number(userId) : null);
+  return { slug, id: Number(info.lastInsertRowid), status, ...v };
+}
+
+/** 修改公告正文/标题/置顶（不动发布状态） */
+export function updatePost(slug, f = {}) {
+  const v = postFields(f);
+  if (v.error) return v;
+  const info = db.prepare(`UPDATE posts SET title = ?, body = ?, pinned = ?, updated_at = datetime('now','localtime')
+    WHERE slug = ?`).run(v.title, v.body, v.pinned, slug);
+  return info.changes ? { slug, ...v } : { error: 'not_found' };
+}
+
+/** 发布 / 撤回（软撤回：前台消失，后台还在，评论保留） */
+export function setPostStatus(slug, status) {
+  const s = Number(status) ? 1 : 0;
+  /* 只动发布状态与首次发布时间：updated_at 留给「真的改过正文」用，撤回/发布不算内容修改 */
+  const info = db.prepare(`UPDATE posts SET status = ?,
+      published_at = CASE WHEN ? = 1 AND published_at IS NULL THEN datetime('now','localtime') ELSE published_at END
+    WHERE slug = ?`).run(s, s, slug);
+  return info.changes ? { status: s } : { error: 'not_found' };
+}
+
+/** 前台取公告：只有已发布的能取到 */
+export function getPost(slug) {
+  return db.prepare(`SELECT ${POST_COLS} FROM posts p WHERE p.slug = ? AND p.status = 1`).get(slug) || null;
+}
+
+/** 后台取公告：撤回的也能取到 */
+export function getPostAny(slug) {
+  return db.prepare(`SELECT ${POST_COLS} FROM posts p WHERE p.slug = ?`).get(slug) || null;
+}
+
+/** 后台：公告列表（撤回的也在，置顶优先） */
+export function listPosts(opts = {}) {
+  const { status = null, limit = 100, offset = 0 } = opts;
+  const where = status === null || status === undefined || status === '' ? '' : ' WHERE p.status = ' + (Number(status) ? 1 : 0);
+  return db.prepare(`SELECT ${POST_COLS} FROM posts p${where}
+    ORDER BY p.pinned DESC, p.id DESC LIMIT ? OFFSET ?`)
+    .all(Math.max(1, Math.min(200, Number(limit) || 100)), Math.max(0, Number(offset) || 0));
+}
+
+export function countPosts(status = null) {
+  if (status === null || status === undefined || status === '') {
+    return db.prepare('SELECT COUNT(*) AS n FROM posts').get().n;
+  }
+  return db.prepare('SELECT COUNT(*) AS n FROM posts WHERE status = ?').get(Number(status) ? 1 : 0).n;
+}
+
+/** 前台：已发布公告分页列表（置顶优先，其次新的在前） */
+export function listPublishedPosts({ page = 1, pageSize = 10 } = {}) {
+  const size = Math.max(1, Math.min(50, Number(pageSize) || 10));
+  const total = countPosts(1);
+  const pages = Math.max(1, Math.ceil(total / size));
+  const p = Math.max(1, Math.min(pages, Number(page) || 1));
+  const items = db.prepare(`SELECT ${POST_COLS} FROM posts p WHERE p.status = 1
+    ORDER BY p.pinned DESC, p.id DESC LIMIT ? OFFSET ?`).all(size, (p - 1) * size);
+  return { items, total, page: p, pages, pageSize: size };
+}
+
+/** 首页横幅：置顶优先，其次最新的已发布公告；没有就返回 null */
+export function latestNotice() {
+  return db.prepare(`SELECT ${POST_COLS} FROM posts p WHERE p.status = 1
+    ORDER BY p.pinned DESC, p.id DESC LIMIT 1`).get() || null;
 }
 
 /** 收藏 / 取消收藏，返回 { error } 或 { favorited, count } */
@@ -695,12 +848,13 @@ export function setUserBanned(id, banned, reason = '') {
 /** 后台：最近评论（含被隐藏的、带父评论与待处理举报数） */
 export function listRecentComments(opts = {}) {
   const { limit = 30, offset = 0 } = typeof opts === 'number' ? { limit: opts } : opts;
-  return db.prepare(`SELECT c.id, c.body, c.status, c.parent_id, c.created_at,
-      u.display_name AS name, g.title, g.slug,
+  return db.prepare(`SELECT c.id, c.body, c.status, c.parent_id, c.created_at, c.target,
+      u.display_name AS name, COALESCE(g.title, p.title) AS title, COALESCE(g.slug, p.slug) AS slug,
       (SELECT COUNT(*) FROM comment_reports r WHERE r.comment_id = c.id AND r.status = 0) AS reports
     FROM comments c
     JOIN users u ON u.id = c.user_id
-    JOIN games g ON g.id = c.game_id
+    LEFT JOIN games g ON c.target = 'game' AND g.id = c.game_id
+    LEFT JOIN posts p ON c.target = 'post' AND p.id = c.game_id
     ORDER BY c.id DESC LIMIT ? OFFSET ?`)
     .all(Math.max(1, Math.min(200, Number(limit) || 30)), Math.max(0, Number(offset) || 0));
 }
@@ -762,6 +916,8 @@ export function adminStats() {
     " (SELECT COUNT(*) FROM users) AS users," +
     " (SELECT COUNT(*) FROM users WHERE banned = 1) AS banned," +
     " (SELECT COUNT(*) FROM comments WHERE status = 1) AS comments," +
+    " (SELECT COUNT(*) FROM posts WHERE status = 1) AS posts," +
+    " (SELECT COUNT(*) FROM posts WHERE status = 0) AS posts_offline," +
     " (SELECT COUNT(*) FROM comment_reports WHERE status = 0) AS reports," +
     " (SELECT COUNT(*) FROM favorites) AS favorites"
   ).get();

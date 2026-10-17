@@ -145,7 +145,20 @@ export const DDL = [
   "  size       INTEGER DEFAULT 0,",
   "  html       TEXT NOT NULL,",
   "  created_at TEXT DEFAULT (datetime('now','localtime'))",
-  ");"
+  ");",
+  "CREATE TABLE IF NOT EXISTS posts (",
+  "  id           INTEGER PRIMARY KEY AUTOINCREMENT,",
+  "  slug         TEXT NOT NULL UNIQUE,",
+  "  title        TEXT NOT NULL,",
+  "  body         TEXT NOT NULL,",
+  "  pinned       INTEGER DEFAULT 0,",
+  "  status       INTEGER DEFAULT 1,",
+  "  author_id    INTEGER,",
+  "  created_at   TEXT DEFAULT (datetime('now','localtime')),",
+  "  updated_at   TEXT,",
+  "  published_at TEXT",
+  ");",
+  "CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, pinned DESC, id DESC);"
 ].join("\n");
 
 /** 老库补字段：D1 的 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列（对应 src/db.js 的 addColumn） */
@@ -159,13 +172,16 @@ export const ADD_COLUMNS = [
   ['users', 'banned', 'banned INTEGER DEFAULT 0'],
   ['users', 'banned_reason', 'banned_reason TEXT'],
   ['users', 'verify_token', 'verify_token TEXT'],
-  ['users', 'verify_expires', 'verify_expires TEXT']
+  ['users', 'verify_expires', 'verify_expires TEXT'],
+  // comments.target 是第三批加的：评论可以挂在游戏（game）或公告（post）上
+  ['comments', 'target', "target TEXT NOT NULL DEFAULT 'game'"]
 ];
 
 /** 老库补索引（对应 src/db.js 的 addIndex） */
 export const ADD_INDEXES = [
   ['idx_games_status', 'games(status, plays DESC)'],
-  ['idx_comments_parent', 'comments(parent_id)']
+  ['idx_comments_parent', 'comments(parent_id)'],
+  ['idx_comments_target', 'comments(target, game_id, status, id DESC)']
 ];
 
 /**

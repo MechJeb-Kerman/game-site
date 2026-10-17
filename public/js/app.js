@@ -113,6 +113,18 @@
     });
   })();
 
+  /* 公告横幅：关掉后同一条不再弹（关闭状态记在浏览器本地） */
+  (function () {
+    var bar = document.getElementById('noticeBar');
+    if (!bar) return;
+    var key = 'noticeOff:' + (bar.dataset.slug || '');
+    try { if (localStorage.getItem(key)) { bar.remove(); return; } } catch (e) { }
+    var btn = document.getElementById('noticeClose');
+    if (btn) btn.addEventListener('click', function () {
+      try { localStorage.setItem(key, '1'); } catch (e) { }
+      bar.remove();
+    });
+  })();
   /* ---------- 游戏播放器 ---------- */
   var player = document.getElementById('player');
   if (!player) return;
@@ -318,7 +330,9 @@
       var btn = cmtForm.querySelector('button[type="submit"]') || cmtForm.querySelector('button');
       btn.disabled = true;
       var payload = cmtParent ? { body: text, parent_id: cmtParent } : { body: text };
-      fetch('/api/games/' + encodeURIComponent(cmtForm.dataset.slug) + '/comments', {
+      // 游戏详情页与公告详情页共用同一块评论面板，端点由模板写在 data-endpoint 上
+      var cmtUrl = cmtForm.dataset.endpoint || ('/api/games/' + encodeURIComponent(cmtForm.dataset.slug) + '/comments');
+      fetch(cmtUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -417,4 +431,5 @@
       if (has) focusFrame();
     }, 1000);
   })();
+
 })();

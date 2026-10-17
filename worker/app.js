@@ -214,7 +214,9 @@ async function pageHome(ctx) {
   const categories = await data.listCategories(db);
   const tags = await data.listTags(db, 20);
   const stats = await data.siteStats(db);
-  return okHtml(ctx, ui.homePage({ origin: ctx.origin, user: ctx.user, featured, hot, newest, categories, tags, stats }));
+  // 首页顶部横幅：置顶优先，其次最新的一条已发布公告
+  const notice = await data.latestNotice(db);
+  return okHtml(ctx, ui.homePage({ origin: ctx.origin, user: ctx.user, featured, hot, newest, categories, tags, stats, notice: notice }));
 }
 
 async function pageGames(ctx) {
@@ -291,6 +293,37 @@ async function pageGame(ctx, params) {
     commentTotal: await data.countComments(db, game.slug),
     cmtNotice: CMT_NOTICE[String(ctx.url.searchParams.get('report') || '')] || ''
   }));
+}
+
+/* ---------- 公告与更新说明 ---------- */
+
+/** 公告列表：只列已发布的（撤回的只有站长在后台看得到） */
+async function pageNotice(ctx) {
+  const page = Math.max(1, Number(ctx.url.searchParams.get('page')) || 1);
+  const list = await data.listPublishedPosts(ctx.db, { page: page });
+  return okHtml(ctx, ui.noticeListPage({
+    origin: ctx.origin, user: ctx.user,
+    items: list.items, total: list.total, page: list.page, pages: list.pages
+  }));
+}
+
+/** 公告详情：正文 + 评论区（和游戏详情页共用一块评论面板） */
+async function pageNoticeDetail(ctx, params) {
+  const db = ctx.db;
+  const post = await data.getPost(db, String(params.slug));
+  if (!post) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  const cpage = Math.max(1, Number(ctx.url.searchParams.get('cpage')) || 1);
+  return okHtml(ctx, ui.noticePage({
+    origin: ctx.origin, user: ctx.user, post: post,
+    thread: await data.noticeThread(db, post.id, cpage),
+    commentTotal: await data.countNoticeComments(db, post.id),
+    cmtNotice: CMT_NOTICE[String(ctx.url.searchParams.get('report') || '')] || ''
+  }));
+}
+
+/** 更新说明：读 src/changelog-data.js（tools/gen-changelog.mjs 从 git log 生成） */
+async function pageChangelog(ctx) {
+  return okHtml(ctx, ui.changelogPage({ origin: ctx.origin, user: ctx.user }));
 }
 
 /** 排行榜：热玩榜按天聚合的纯 SQLite 查询，7 个榜单切着看 */
@@ -648,6 +681,7 @@ async function pageAdmin(ctx) {
     filter: { q: q, status: status, category: category },
     outbox: mail.outbox(20),
     mailTransport: mail.transportName(ctx.env),
+    posts: await data.listPosts(db, { limit: 100 }),
     notice: String(ctx.url.searchParams.get('ok') || ''),
     integrations: integrationsOf(ctx)
   }));
@@ -712,6 +746,51 @@ async function adminBatch(ctx) {
     r.changed.length + ' 条：' + r.changed.slice(0, 12).join(', ') +
     (r.missing.length ? ' / 未找到 ' + r.missing.length + ' 条' : ''));
   return redirectTo(ctx, '/admin?ok=batch');
+}
+
+/* ---------- 后台：公告发布 / 编辑 / 撤回 ---------- */
+
+async function adminPostNew(ctx) {
+  return okHtml(ctx, ui.postFormPage({
+    origin: ctx.origin, user: ctx.user,
+    error: String(ctx.url.searchParams.get('error') || '')
+  }));
+}
+
+async function doPostNew(ctx) {
+  const b = await readBody(ctx.request);
+  const r = await data.createPost(ctx.db, { title: b.title, body: b.body, pinned: b.pinned, status: b.draft ? 0 : 1 }, ctx.user.id);
+  if (r.error) return redirectTo(ctx, '/admin/posts/new?error=' + encodeURIComponent(r.error));
+  await data.logAudit(ctx.db, ctx.user, 'post.create', r.slug, r.title + (r.status ? '' : '（先存着，未发布）'));
+  return redirectTo(ctx, '/admin?ok=post');
+}
+
+async function adminPostEdit(ctx, params) {
+  const post = await data.getPostAny(ctx.db, String(params.slug));
+  if (!post) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  return okHtml(ctx, ui.postFormPage({
+    origin: ctx.origin, user: ctx.user, post: post,
+    error: String(ctx.url.searchParams.get('error') || '')
+  }));
+}
+
+async function doPostEdit(ctx, params) {
+  const b = await readBody(ctx.request);
+  const slug = String(params.slug);
+  const r = await data.updatePost(ctx.db, slug, { title: b.title, body: b.body, pinned: b.pinned });
+  if (r.error === 'not_found') return plainText(ctx, '没有这条公告', 404);
+  if (r.error) return redirectTo(ctx, '/admin/posts/' + encodeURIComponent(slug) + '/edit?error=' + encodeURIComponent(r.error));
+  await data.logAudit(ctx.db, ctx.user, 'post.update', r.slug, r.title);
+  return redirectTo(ctx, '/admin?ok=post');
+}
+
+async function adminPostStatus(ctx, params) {
+  const b = await readBody(ctx.request);
+  const slug = String(params.slug);
+  const r = await data.setPostStatus(ctx.db, slug, b.status);
+  if (r.error) return plainText(ctx, '没有这条公告', 404);
+  await data.logAudit(ctx.db, ctx.user, r.status ? 'post.publish' : 'post.retract', slug, r.status ? '发布' : '撤回（前台隐藏，评论保留）');
+  return redirectTo(ctx, '/admin?ok=postStatus');
 }
 
 async function adminSetComment(ctx, params) {
@@ -864,6 +943,43 @@ async function apiComment(ctx, params) {
 }
 
 /** 搜索建议：和列表页同一套相关度排序，输入拼音/首字母也能命中 */
+/** 公告评论：和游戏评论同一套（分页 + 楼中楼 + 10 秒限流） */
+async function apiNoticeComments(ctx, params) {
+  const post = await data.getPost(ctx.db, String(params.slug));
+  if (!post) return okJson(ctx, { error: 'not_found' }, 404);
+  const pageSize = Math.max(1, Math.min(50,
+    Number(ctx.url.searchParams.get('pageSize')) || data.COMMENT_PAGE_SIZE));
+  const page = Math.max(1, Number(ctx.url.searchParams.get('page')) || 1);
+  const thread = await data.noticeThread(ctx.db, post.id, page, pageSize);
+  return okJson(ctx, {
+    slug: post.slug, total: thread.total, page: thread.page, pages: thread.pages,
+    pageSize: thread.pageSize, items: thread.items
+  });
+}
+
+async function apiNoticeComment(ctx, params) {
+  if (!ctx.user) return okJson(ctx, { error: 'login_required', hint: '登录后才能评论' }, 401);
+  const post = await data.getPost(ctx.db, String(params.slug));
+  if (!post) return okJson(ctx, { error: 'not_found' }, 404);
+  const key = 'post:' + ctx.user.id + ':' + post.id;
+  const now = Date.now();
+  if (now - (commentGate.get(key) || 0) < 10000) {
+    return okJson(ctx, { error: 'too_fast', hint: '发得太快了，歇 10 秒再发' }, 429);
+  }
+  const body = await readBody(ctx.request);
+  const r = await data.addNoticeComment(ctx.db, post.id, ctx.user.id, body.body, body.parent_id || null);
+  if (r.error) {
+    const hint = r.error === 'too_long' ? '评论最多 ' + data.COMMENT_MAX + ' 字'
+      : r.error === 'bad_parent' ? '要回复的评论已经不存在了'
+      : '评论不能为空';
+    return okJson(ctx, { error: r.error, hint: hint }, 400);
+  }
+  commentGate.set(key, now);
+  if (commentGate.size > 5000) commentGate.clear();
+  return okJson(ctx, { id: r.id, body: r.body, name: ctx.user.name, parent_id: r.parent_id });
+}
+
+/** 搜索建议：和列表页同一套相关度排序，输入拼音/首字母也能命中 */
 async function apiSuggest(ctx) {
   const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 40);
   if (!q) return okJson(ctx, { q: '', items: [] });
@@ -914,6 +1030,9 @@ const ROUTES = [
   { m: 'GET', p: '/search', fn: pageSearch },
   { m: 'GET', p: '/game/:slug', fn: pageGame },
   { m: 'GET', p: '/ugc/:file', fn: pageUgcFile },
+  { m: 'GET', p: '/notice', fn: pageNotice },
+  { m: 'GET', p: '/notice/:slug', fn: pageNoticeDetail },
+  { m: 'GET', p: '/changelog', fn: pageChangelog },
   { m: 'GET', p: '/rank', fn: pageRank },
   { m: 'GET', p: '/login', fn: pageLogin },
   { m: 'POST', p: '/login', fn: doLogin },
@@ -942,6 +1061,8 @@ const ROUTES = [
   { m: 'POST', p: '/api/games/:slug/comments', fn: apiComment },
   { m: 'GET', p: '/api/search/suggest', fn: apiSuggest },
   { m: 'GET', p: '/api/games/:slug/comments', fn: apiComments },
+  { m: 'GET', p: '/api/notices/:slug/comments', fn: apiNoticeComments },
+  { m: 'POST', p: '/api/notices/:slug/comments', fn: apiNoticeComment },
   { m: 'POST', p: '/comments/:id/report', fn: doReport },
   { m: 'GET', p: '/account', fn: pageAccount, need: 'user' },
   { m: 'POST', p: '/account/email', fn: doAccountEmail },
@@ -955,6 +1076,11 @@ const ROUTES = [
   { m: 'POST', p: '/reset', fn: doReset },
   { m: 'GET', p: '/auth/:provider', fn: doAuthProvider },
   { m: 'GET', p: '/auth/:provider/callback', fn: doAuthCallback },
+  { m: 'GET', p: '/admin/posts/new', fn: adminPostNew, need: 'admin' },
+  { m: 'POST', p: '/admin/posts/new', fn: doPostNew, need: 'admin' },
+  { m: 'GET', p: '/admin/posts/:slug/edit', fn: adminPostEdit, need: 'admin' },
+  { m: 'POST', p: '/admin/posts/:slug/edit', fn: doPostEdit, need: 'admin' },
+  { m: 'POST', p: '/admin/posts/:slug/status', fn: adminPostStatus, need: 'admin' },
   { m: 'GET', p: '/admin/preview/:slug', fn: adminPreview, need: 'admin' },
   { m: 'POST', p: '/admin/games/batch', fn: adminBatch, need: 'admin' },
   { m: 'POST', p: '/admin/reports/:id/status', fn: adminReportStatus, need: 'admin' },
@@ -976,12 +1102,17 @@ function robotsText(origin) {
 
 async function sitemapXml(ctx) {
   const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' },
-    { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
+    { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' },
+    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' }];
   for (const c of await data.listCategories(ctx.db)) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }
   for (const g of await data.listGames(ctx.db, { sort: 'new', limit: 100 })) {
     urls.push({ loc: '/game/' + g.slug, pri: '0.9', lm: String(g.created_at).slice(0, 10) });
+  }
+  /* 公告：只收录已发布的（撤回的前台看不到） */
+  for (const p of await data.listPosts(ctx.db, { status: 1, limit: 50 })) {
+    urls.push({ loc: '/notice/' + encodeURIComponent(p.slug), pri: '0.6' });
   }
   const body = '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +

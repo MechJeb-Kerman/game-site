@@ -438,10 +438,66 @@ code{background:rgba(0,0,0,.35);padding:2px 7px;border-radius:6px;font-size:13px
 .acct-links{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 .acct-links .btn{font-size:13px;padding:8px 14px}
 
+/* ---------- 公告：首页横幅 ---------- */
+.notice-bar{display:flex;align-items:center;gap:10px;margin:0 0 16px;padding:10px 12px;
+  background:linear-gradient(135deg,rgba(99,102,241,.2),rgba(168,85,247,.14));
+  border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:14px}
+.nb-tag{flex:none;font-size:12px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand-2));
+  border-radius:999px;padding:3px 10px}
+.nb-txt{flex:1;min-width:0;color:var(--txt);text-decoration:none;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.nb-txt:hover{color:var(--brand-2)}
+.nb-pin{font-style:normal;font-size:11px;color:#fcd34d;border:1px solid rgba(252,211,77,.5);
+  border-radius:999px;padding:1px 7px;margin-left:6px}
+.nb-close{flex:none;background:transparent;border:0;color:var(--dim);font-size:15px;cursor:pointer;
+  line-height:1;padding:4px 6px;border-radius:8px}
+.nb-close:hover{color:var(--txt);background:rgba(255,255,255,.08)}
+
+/* ---------- 公告列表 ---------- */
+.notice-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.notice-item{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+.notice-item.pinned{border-color:rgba(252,211,77,.4);background:var(--card-2)}
+.ni-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ni-title{font-size:16px;font-weight:700;color:var(--txt);text-decoration:none}
+.ni-title:hover{color:var(--brand-2)}
+.ni-head time{font-size:12px;color:var(--dim)}
+.ni-excerpt{margin:8px 0 0;font-size:13px;color:var(--dim);line-height:1.75}
+.ni-meta{margin:8px 0 0;font-size:12px;color:var(--dim);display:flex;gap:12px;flex-wrap:wrap}
+
+/* ---------- 公告详情 ---------- */
+.post-body{padding:22px 24px}
+.post-title{margin:0 0 8px;font-size:22px;line-height:1.45}
+.post-meta{margin:0 0 16px;font-size:12px;color:var(--dim)}
+.post-text{font-size:14px;line-height:1.95}
+.post-text p{margin:0 0 14px}
+.post-text p:last-child{margin-bottom:0}
+
+/* ---------- 更新说明 ---------- */
+.log-list{list-style:none;margin:0;padding:0}
+.log-list li{display:flex;align-items:baseline;gap:10px;padding:7px 0;font-size:13.5px;line-height:1.7;
+  border-bottom:1px solid var(--line)}
+.log-list li:last-child{border-bottom:0}
+.log-list b{font-weight:500;flex:1;min-width:0}
+.log-kind{flex:none;font-size:11px;font-weight:700;border-radius:999px;padding:2px 9px;
+  background:var(--card-2);border:1px solid var(--line-2);color:var(--dim)}
+.k-feat{color:#a7f3d0;border-color:rgba(167,243,208,.4)}
+.k-fix{color:#fca5a5;border-color:rgba(252,165,165,.4)}
+.k-test{color:#bfdbfe;border-color:rgba(191,219,254,.4)}
+.k-docs{color:#fde68a;border-color:rgba(253,230,138,.4)}
+.k-refactor,.k-perf,.k-style{color:#ddd6fe;border-color:rgba(221,214,254,.4)}
+.log-list code{flex:none;font-size:12px;color:var(--brand-2);background:var(--bg-soft);
+  border-radius:6px;padding:1px 6px}
+
+/* ---------- 后台写公告 ---------- */
+.post-form{display:flex;flex-direction:column;gap:14px;max-width:780px}
+.post-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:2px}
+
 @media (max-width:860px){
   .acct{margin-left:auto}
   .search-wrap{order:3;flex-basis:100%;max-width:none;margin:0}
   .row2{grid-template-columns:1fr}
   .auth{padding:24px 14px 40px}
   .auth-card{padding:20px}
+  .nb-txt{white-space:normal}
+  .log-list li{flex-wrap:wrap}
 }

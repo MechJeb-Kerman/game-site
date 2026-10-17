@@ -3,6 +3,19 @@
 (function () {
   "use strict";
 
+  /* 公告横幅：关掉后同一条不再弹（关闭状态记在浏览器本地） */
+  (function () {
+    var bar = document.getElementById('noticeBar');
+    if (!bar) return;
+    var key = 'noticeOff:' + (bar.dataset.slug || '');
+    try { if (localStorage.getItem(key)) { bar.remove(); return; } } catch (e) { }
+    var btn = document.getElementById('noticeClose');
+    if (btn) btn.addEventListener('click', function () {
+      try { localStorage.setItem(key, '1'); } catch (e) { }
+      bar.remove();
+    });
+  })();
+
   var frame = document.getElementById("gameFrame");
   var player = document.getElementById("player");
   var params = new URLSearchParams(location.search);
