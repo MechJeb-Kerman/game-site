@@ -1,0 +1,181 @@
+// 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
+export const CHANGELOG_GENERATED = "2026-10-17 10:55";
+export const CHANGELOG_TOTAL = 22;
+export const CHANGELOG = [
+  {
+    "hash": "4e4de17",
+    "date": "2026-10-17 18:54",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "公告与更新说明的断言"
+  },
+  {
+    "hash": "adffa49",
+    "date": "2026-10-17 18:54",
+    "day": "2026-10-17",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "站内公告与更新说明"
+  },
+  {
+    "hash": "4def0dd",
+    "date": "2026-10-17 16:23",
+    "day": "2026-10-17",
+    "kind": "chore",
+    "kindLabel": "杂项",
+    "subject": "修正 Google OAuth 的 Client ID"
+  },
+  {
+    "hash": "ba4bd41",
+    "date": "2026-10-17 15:31",
+    "day": "2026-10-17",
+    "kind": "chore",
+    "kindLabel": "杂项",
+    "subject": "修正 GitHub OAuth 的 Client ID"
+  },
+  {
+    "hash": "10ef02b",
+    "date": "2026-10-17 04:58",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与部署文档同步隐私政策/用户协议"
+  },
+  {
+    "hash": "e835a4a",
+    "date": "2026-10-17 04:58",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "补 12 项隐私政策/用户协议与注册同意断言"
+  },
+  {
+    "hash": "e3d4299",
+    "date": "2026-10-17 04:58",
+    "day": "2026-10-17",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "新增隐私政策与用户协议页面，注册需勾选同意条款"
+  },
+  {
+    "hash": "8263ca9",
+    "date": "2026-10-17 04:11",
+    "day": "2026-10-17",
+    "kind": "chore",
+    "kindLabel": "杂项",
+    "subject": "把非机密的 OAuth 客户端 ID 与 MAIL_FROM 写进 wrangler.d1.toml 的 [vars]"
+  },
+  {
+    "hash": "9b09591",
+    "date": "2026-10-17 04:00",
+    "day": "2026-10-17",
+    "kind": "chore",
+    "kindLabel": "杂项",
+    "subject": "触发重新部署，应用 Cloudflare 上新加的环境变量"
+  },
+  {
+    "hash": "73eb386",
+    "date": "2026-10-17 03:08",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与部署文档补彻底删除、集成自检与邮件/第三方登录，并重跑冒烟截图"
+  },
+  {
+    "hash": "4042434",
+    "date": "2026-10-17 03:08",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "彻底删除 15 项断言 + 邮件与第三方登录端到端 42 项（Express 与 D1 各一遍）"
+  },
+  {
+    "hash": "ebce780",
+    "date": "2026-10-17 03:08",
+    "day": "2026-10-17",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "游戏可彻底删除 + 后台集成自检 + 邮件/OAuth 端点可覆盖"
+  },
+  {
+    "hash": "af7fd8a",
+    "date": "2026-10-17 02:42",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与部署文档补 frame-src 放行外站游戏，并同步测试计数与截图"
+  },
+  {
+    "hash": "96ea08a",
+    "date": "2026-10-17 02:42",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "用真浏览器守住 frame-src 放行外站（外站 iframe 回归断言）"
+  },
+  {
+    "hash": "7ced99d",
+    "date": "2026-10-17 02:42",
+    "day": "2026-10-17",
+    "kind": "fix",
+    "kindLabel": "修复",
+    "subject": "放行外站游戏的 iframe —— frame-src 从 'self' 扩到 'self' https: http:"
+  },
+  {
+    "hash": "b5d4969",
+    "date": "2026-10-17 02:27",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与四份部署文档补投稿上传，并重跑冒烟截图"
+  },
+  {
+    "hash": "3866696",
+    "date": "2026-10-17 02:27",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "投稿上传的端到端断言（功能用例 70 → 88 项）"
+  },
+  {
+    "hash": "9edc6f1",
+    "date": "2026-10-17 02:27",
+    "day": "2026-10-17",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "投稿支持上传单文件 HTML（存库 / 严格沙箱 / /ugc/:file）"
+  },
+  {
+    "hash": "384df54",
+    "date": "2026-10-17 01:16",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与四份部署文档同步第二批功能，并重跑冒烟截图"
+  },
+  {
+    "hash": "f4f0d6c",
+    "date": "2026-10-17 01:16",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "第二批功能的断言测试，并让账号验收脚本可以反复跑"
+  },
+  {
+    "hash": "0da5490",
+    "date": "2026-10-17 01:16",
+    "day": "2026-10-17",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "第二批功能——评论分页/楼中楼/举报、SQLite 排行榜、拼音搜索、账号增强、后台增强"
+  },
+  {
+    "hash": "bc48d8a",
+    "date": "2026-10-16 14:27",
+    "day": "2026-10-16",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "新增 zip-dist.mjs 打 Cloudflare Pages 拖拽包；--cf 默认输出目录改为 dist-cf"
+  }
+];
