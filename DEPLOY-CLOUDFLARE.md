@@ -8,8 +8,8 @@
 
 | 产物 | 说明 |
 | --- | --- |
-| `dist-cf/` | Cloudflare 用构建产物，50 个文件 / 363.3 KB，`--base=/`（域名根） |
-| `cloudflare-pages.zip` | 同一份内容的 zip，111 KB / 50 个条目，控制台可以直接拖 |
+| `dist-cf/` | Cloudflare 用构建产物，65 个文件 / 482.9 KB，`--base=/`（域名根） |
+| `cloudflare-pages.zip` | 同一份内容的 zip，155.8 KB / 65 个条目（`pnpm zip:cf` 生成），控制台可以直接拖 |
 | `dist-cf/_headers` | Cloudflare Pages 专属：安全响应头 + 静态资源缓存策略 |
 
 ## 为什么 Cloudflare 版和 GitHub 版是两个目录
@@ -19,7 +19,7 @@
 | GitHub Pages 项目站 | `https://用户名.github.io/仓库名/` | `/game-site/` |
 | Cloudflare Pages | `https://项目名.pages.dev/` 或自定义域名根 | `/` |
 
-同一份源码渲染两次：`dist/`（GitHub）和 `dist-cf/`（Cloudflare）。两个目录都通过了同样的 9 项冒烟测试。
+同一份源码渲染两次：`dist/`（GitHub）和 `dist-cf/`（Cloudflare）。两个目录都通过了同样的 18 项冒烟测试。
 
 ## 路线 A：控制台直接上传（最快，本机什么都不用装）
 
@@ -89,7 +89,7 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ## 如果要用「有服务端」的 Express 版（不是静态版）
 
-静态版没有登录 / 评分 / 评论 / 收藏 / 投稿（含上传单文件 HTML）/ 后台（页面里已经隐藏或只读）。要把完整功能挂到公网，三条路：
+静态版没有登录 / 评分 / 评论 / 收藏 / 投稿（含上传单文件 HTML）/ 后台，公告与更新说明是**只读导出**（公告列表、公告详情、`/changelog` 都在，公告的评论区不渲染）。这些页面里已经隐藏或只读。要把完整功能挂到公网，三条路：
 
 1. **Cloudflare Tunnel**（最快，不需要公网 IP、不用开路由器端口）：
    ```powershell
@@ -115,12 +115,13 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ```
 node tools/build-pages.mjs --cf --base=/ --origin=https://game-site.pages.dev --out=dist-cf
-  → 游戏 6 款 / 分类 4 个 / 标签 13 个 / 排行榜 7 个；56 个文件，427.6 KB
+  → 游戏 6 款 / 分类 4 个 / 标签 13 个 / 排行榜 7 个 / 公告 3 条 / 更新说明 1 页；65 个文件，482.9 KB
 
 node tools/pages-smoke.mjs --base=/ --out=dist-cf
   → pages-home / pages-list / pages-search / pages-tag / pages-detail /
     pages-play / pages-game-tetris / pages-404 / pages-mobile /
-    pages-rank / pages-rank-week / pages-search-pinyin / pages-suggest  13 项全部通过
+    pages-rank / pages-rank-week / pages-search-pinyin / pages-suggest /
+    pages-privacy / pages-terms / pages-changelog / pages-notice / pages-notice-detail  18 项全部通过
     （无 console 报错、无资源 404；含在详情页 iframe 里真按键把 2048 打到 20 分）
 ```
 

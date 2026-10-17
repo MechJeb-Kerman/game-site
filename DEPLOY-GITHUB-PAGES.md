@@ -40,7 +40,7 @@ node tools/build-pages.mjs --base=/ --origin=https://用户名.github.io
 
 ```
 游戏 6 款 / 分类 4 个 / 标签 13 个
-文件 47 个，合计 347.8 KB
+文件 64 个，合计 482.2 KB
 写入 dist（base=/仓库名/，origin=https://用户名.github.io/仓库名）
 ```
 
