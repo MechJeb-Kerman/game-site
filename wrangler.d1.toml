@@ -56,6 +56,10 @@ GOOGLE_CLIENT_ID = "572690505711-cdnfel89qrll44lul046k4fnhlceuv70.apps.googleuse
 # GOOGLE_CLIENT_SECRET = "..."  # secret：同上
 # OAUTH_DEV = "1"               # 生产环境也开放「演示登录」时才需要
 
+# 让 game-site.fishport.cn 与 forum.fishport.cn 共用同一个登录态（cookie 的 Domain）。
+# 本机开发不要设：127.0.0.1 这种主机名带上 Domain，浏览器会把整条 cookie 丢掉、登录永远失败。
+COOKIE_DOMAIN = ".fishport.cn"
+
 # 自建 OAuth 网关 / 测试环境：# OAUTH_GITHUB_AUTHORIZE_URL / OAUTH_GITHUB_TOKEN_URL /
 # OAUTH_GITHUB_USER_URL / OAUTH_GITHUB_EMAILS_URL（Google 同理，去掉 EMAILS_URL）可覆盖官方地址。
 

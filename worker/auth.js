@@ -22,9 +22,16 @@ export function readCookie(headerValue, name) {
   return '';
 }
 
+/** 设了 COOKIE_DOMAIN 就带上 Domain：game-site.fishport.cn 与 forum.fishport.cn 共用一个登录态 */
+function cookieDomain(env) {
+  const d = String((env && env.COOKIE_DOMAIN) || '').trim();
+  if (!d) return '';
+  return '; Domain=' + (d.charAt(0) === '.' ? d : '.' + d);
+}
+
 /** 生成 Set-Cookie 头；退出登录时 maxAge=0 立即失效 */
-export function sessionCookie(value, maxAge) {
-  return COOKIE + '=' + value + '; Path=/; Max-Age=' + maxAge + '; SameSite=Lax; HttpOnly';
+export function sessionCookie(value, maxAge, env) {
+  return COOKIE + '=' + value + '; Path=/; Max-Age=' + maxAge + cookieDomain(env) + '; SameSite=Lax; HttpOnly';
 }
 
 /* ---------- 口令 ---------- */

@@ -188,6 +188,100 @@ export function migrate() {
     CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, pinned DESC, id DESC);
   `);
 
+  // 第四批：论坛（板块 / 主题 / 楼层 / 编辑留痕 / 举报 / 内容黑名单 / 表单 nonce）
+  db.exec(`
+    -- 论坛（第四批）：板块 / 主题 / 楼层 / 编辑留痕 / 举报 / 内容黑名单 / 表单 nonce
+    CREATE TABLE IF NOT EXISTS forums (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug        TEXT UNIQUE NOT NULL,
+      name        TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      icon        TEXT DEFAULT '💬',
+      sort        INTEGER DEFAULT 0,
+      status      INTEGER DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 主题：status 0 待审 / 1 已发布 / 2 已下架（软删，可恢复）
+    CREATE TABLE IF NOT EXISTS forum_threads (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      forum_id      INTEGER NOT NULL REFERENCES forums(id) ON DELETE CASCADE,
+      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title         TEXT NOT NULL,
+      status        INTEGER DEFAULT 0,
+      pinned        INTEGER DEFAULT 0,
+      locked        INTEGER DEFAULT 0,
+      reply_count   INTEGER DEFAULT 0,
+      view_count    INTEGER DEFAULT 0,
+      last_reply_at TEXT,
+      created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_threads_forum  ON forum_threads(forum_id, status, pinned DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_threads_recent ON forum_threads(status, pinned DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_threads_user   ON forum_threads(user_id, id DESC);
+
+    -- 楼层：status 0 待审 / 1 已发布 / 2 已隐藏（软删）；is_op=1 是该主题的首楼
+    CREATE TABLE IF NOT EXISTS forum_posts (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id  INTEGER NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body       TEXT NOT NULL,
+      status     INTEGER DEFAULT 0,
+      is_op      INTEGER DEFAULT 0,
+      parent_id  INTEGER,
+      edited_at  TEXT,
+      edit_count INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fposts_thread ON forum_posts(thread_id, status, id);
+    CREATE INDEX IF NOT EXISTS idx_fposts_user   ON forum_posts(user_id, id DESC);
+
+    -- 编辑留痕：改一次存一条 before/after，站长与楼主都能看到改了什么
+    CREATE TABLE IF NOT EXISTS forum_post_edits (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id     INTEGER NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+      editor_id   INTEGER NOT NULL REFERENCES users(id),
+      before_body TEXT NOT NULL,
+      after_body  TEXT NOT NULL,
+      created_at  TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fedits_post ON forum_post_edits(post_id, id DESC);
+
+    -- 举报：同一用户对同一个目标只能报一次（UNIQUE 天然去重）
+    CREATE TABLE IF NOT EXISTS forum_reports (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_type TEXT NOT NULL,
+      target_id   INTEGER NOT NULL,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reason      TEXT NOT NULL,
+      detail      TEXT DEFAULT '',
+      status      INTEGER DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE (target_type, target_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_freports_status ON forum_reports(status, id DESC);
+
+    -- 内容黑名单：word 子串 / regex 正则；action reject 直接拦，review 只让内容进待审
+    CREATE TABLE IF NOT EXISTS forum_blacklist (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      pattern    TEXT NOT NULL,
+      kind       TEXT DEFAULT 'word',
+      action     TEXT DEFAULT 'review',
+      note       TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 人机校验用的一次性 nonce（表单页发、提交时核销；没有引第三方验证码）
+    CREATE TABLE IF NOT EXISTS form_nonces (
+      token      TEXT PRIMARY KEY,
+      user_id    INTEGER,
+      kind       TEXT DEFAULT '',
+      used_at    TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_nonces_created ON form_nonces(created_at);
+  `);
+
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核
   addColumn('games', 'submitted_by', 'submitted_by INTEGER');
 
@@ -212,6 +306,10 @@ export function migrate() {
   addColumn('users', 'banned_reason', 'banned_reason TEXT');
   addColumn('users', 'verify_token', 'verify_token TEXT');
   addColumn('users', 'verify_expires', 'verify_expires TEXT');
+
+  // 论坛禁言：到点自动解除，是否禁言由 muted_until > now 判断（封禁仍走 users.banned）
+  addColumn('users', 'muted_until', 'muted_until TEXT');
+  addColumn('users', 'mute_reason', 'mute_reason TEXT');
 }
 
 /** 幂等补索引 */

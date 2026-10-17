@@ -106,6 +106,7 @@ function header(user = null) {
       <a href="/games">全部游戏</a>
       <a href="/rank">排行榜</a>
       <a href="/notice">公告</a>
+      ${STATIC_MODE ? '' : '<a href="/forum">论坛</a>'}
       <a href="/category/action">动作</a>
       <a href="/category/puzzle">益智</a>
       <a href="/category/casual">休闲</a>
@@ -1268,3 +1269,326 @@ export function deleteGamePage({ origin, user = null, game, counts = {} }) {
   });
 }
 
+
+
+/* ==================== 论坛 ==================== */
+/* 论坛挂两种路径：游戏站的 /forum/*，以及 forum.fishport.cn 的根路径。
+   所以论坛正文的链接一律用路由传进来的 base（'' 或 '/forum'）拼，别写死；
+   后台的路由固定是 /forum/admin（两种挂载下都存在，见 server.js / worker/app.js 的重写规则）。 */
+
+const FT_STATUS = { 0: '待审核', 1: '已发布', 2: '已下架' };
+const FP_STATUS = { 0: '待审核', 1: '已发布', 2: '已隐藏' };
+const FR_STATUS = { 0: '待处理', 1: '已处理', 2: '已忽略' };
+const FR_LABEL = { spam: '垃圾广告', ad: '推广刷屏', abuse: '人身攻击', illegal: '违法内容', other: '其他' };
+
+function ftime(v) {
+  return esc(String(v || '').slice(0, 16));
+}
+
+function ftext(body) {
+  return esc(body).replace(/\r?\n/g, '<br>');
+}
+
+function fpill(status, map) {
+  return '<span class="pill f' + Number(status) + '">' + esc(map[Number(status)] || '未知') + '</span>';
+}
+
+/** 论坛分页：基址与查询串由调用方给，两种挂载路径共用一个实现 */
+function forumPager(base, path, page, pages, qs = '') {
+  if (pages <= 1) return '';
+  const href = (p) => base + path + '?page=' + p + (qs ? '&' + qs : '');
+  return '<nav class="pager" aria-label="分页">' +
+    (page > 1 ? '<a class="pg" href="' + esc(href(page - 1)) + '" rel="prev">‹ 上一页</a>' : '<span class="pg off">‹ 上一页</span>') +
+    '<span class="pg-info">' + page + ' / ' + pages + ' 页</span>' +
+    (page < pages ? '<a class="pg" href="' + esc(href(page + 1)) + '" rel="next">下一页 ›</a>' : '<span class="pg off">下一页 ›</span>') +
+  '</nav>';
+}
+
+/** 人机校验：一次性令牌（服务端签发、一人一用、30 分钟过期）+ 蜜罐字段 */
+function antispamFields(form = {}) {
+  return '<input type="hidden" name="form_token" value="' + esc(form.token || '') + '">' +
+    '<div class="hp" aria-hidden="true" hidden><label>网址（这一栏请留空）' +
+    '<input type="text" name="' + esc(form.honeypot || 'website') + '" tabindex="-1" autocomplete="off"></label></div>';
+}
+
+/** 不能发帖时给一句话说明，并把去路指清楚 */
+function gateBox(gate, base, next) {
+  const err = gate && gate.error ? gate.error : 'login';
+  const login = '/login?next=' + encodeURIComponent((base || '') + (next || '/'));
+  const map = {
+    login: '<a href="' + esc(login) + '">登录</a>或<a href="/register">注册</a>后才能发帖',
+    banned: '你的账号已被封禁，无法发言',
+    muted: '你正在被禁言',
+    email: '<a href="/account">去「账号」页验证邮箱</a>后才能发帖'
+  };
+  return '<p class="forum-gate">🔒 ' + (map[err] || esc((gate && gate.message) || '现在不能发帖')) +
+    (err === 'muted' && gate && gate.message ? '<small>' + esc(gate.message) + '</small>' : '') + '</p>';
+}
+
+function threadItem(t, base) {
+  return '<li class="thr' + (Number(t.pinned) ? ' pinned' : '') + '">' +
+    '<a class="thr-link" href="' + base + '/t/' + Number(t.id) + '">' +
+      '<span class="thr-title">' + (Number(t.pinned) ? '📌 ' : '') + (Number(t.locked) ? '🔒 ' : '') + esc(t.title) + '</span>' +
+      '<span class="thr-meta">' + esc(t.forum_name || '') + ' · ' + esc(t.name || t.username || '—') + ' · ' + ftime(t.last_reply_at || t.created_at) +
+      ' · ' + fmtNum(t.reply_count) + ' 回复 · ' + fmtNum(t.view_count) + ' 浏览</span>' +
+    '</a>' +
+    (Number(t.status) !== 1 ? fpill(t.status, FT_STATUS) : '') +
+    '</li>';
+}
+
+/** 论坛首页：板块导航 + 最新主题 + 搜索 */
+export function forumHomePage({ origin, user = null, forums = [], threads = [], stats = {}, q = '', page = 1, pages = 1, total = 0, base = '/forum', notice = '' }) {
+  const cards = forums.length
+    ? '<ul class="fboards">' + forums.map((f) =>
+      '<li><a href="' + base + '/f/' + encodeURIComponent(f.slug) + '">' +
+      '<span class="fb-ico">' + esc(f.icon || '💬') + '</span>' +
+      '<span class="fb-name">' + esc(f.name) + '</span>' +
+      '<span class="fb-desc">' + esc(f.description || '') + '</span>' +
+      '<span class="fb-count">' + fmtNum(f.thread_count) + ' 主题 / ' + fmtNum(f.post_count) + ' 回复</span>' +
+      '</a></li>').join('') + '</ul>'
+    : '<p class="cmt-empty">还没有板块</p>';
+  const list = threads.length
+    ? '<ul class="thr-list">' + threads.map((t) => threadItem(t, base)).join('') + '</ul>' +
+      forumPager(base, '/', page, pages, q ? 'q=' + encodeURIComponent(q) : '')
+    : '<p class="cmt-empty">' + (q ? '没有搜到相关主题' : '还没有主题，来发第一帖吧') + '</p>';
+  const content = `<div class="wrap forum">
+  <div class="forum-head">
+    <h1>💬 论坛</h1>
+    <p class="forum-sub">${esc(SITE.name)}的玩家讨论区：攻略、求助、站务都在这儿。发帖用游戏站账号；新账号的前 3 帖会先进待审队列，站长放行后大家才看得到。</p>
+    <div class="forum-stats">
+      <span><b>${fmtNum(stats.threads)}</b> 主题</span>
+      <span><b>${fmtNum(stats.posts)}</b> 回复</span>
+      <span><b>${fmtNum(stats.today)}</b> 今日新增</span>
+      ${user && user.role === 'admin' ? '<span><b>' + fmtNum((stats.pendingThreads || 0) + (stats.pendingPosts || 0)) + '</b> 待审</span><span><b>' + fmtNum(stats.reports) + '</b> 待处理举报</span>' : ''}
+    </div>
+    <div class="forum-actions">
+      <a class="btn ok" href="${base}/new">✏️ 发新帖</a>
+      ${user && user.role === 'admin' ? '<a class="btn" href="/forum/admin">🛡 论坛管理</a>' : ''}
+      ${notice ? '<span class="forum-notice">' + esc(notice) + '</span>' : ''}
+    </div>
+    <form class="forum-search" method="get" action="${base}/" role="search">
+      <input type="search" name="q" value="${esc(q)}" placeholder="搜主题标题或正文" aria-label="搜索帖子">
+      <button type="submit">搜索</button>
+    </form>
+  </div>
+  <section class="sec"><div class="sec-head"><h2>板块</h2></div>${cards}</section>
+  <section class="sec">
+    <div class="sec-head"><h2>${q ? '搜索结果' : '最新主题'}</h2>${q ? '<span class="more">「' + esc(q) + '」共 ' + fmtNum(total) + ' 条</span>' : ''}</div>
+    ${list}
+  </section>
+</div>`;
+  return layout({ origin, user, title: '论坛', description: '玩家论坛：攻略心得、求助答疑与站务反馈', path: base + '/', content });
+}
+
+/** 单个板块的主题列表 */
+export function forumBoardPage({ origin, user = null, forum, threads = [], q = '', page = 1, pages = 1, total = 0, base = '/forum' }) {
+  const list = threads.length
+    ? '<ul class="thr-list">' + threads.map((t) => threadItem(t, base)).join('') + '</ul>' +
+      forumPager(base, '/f/' + encodeURIComponent(forum.slug), page, pages, q ? 'q=' + encodeURIComponent(q) : '')
+    : '<p class="cmt-empty">这个板块还没有主题，来发第一帖吧</p>';
+  const content = `<div class="wrap forum">
+  <nav class="crumb"><a href="${base}/">论坛</a> › <span>${esc(forum.name)}</span></nav>
+  <div class="forum-head">
+    <h1>${esc(forum.icon || '💬')} ${esc(forum.name)}</h1>
+    <p class="forum-sub">${esc(forum.description || '')}</p>
+    <div class="forum-actions">
+      <a class="btn ok" href="${base}/new?forum=${encodeURIComponent(forum.slug)}">✏️ 在本板块发帖</a>
+    </div>
+    <form class="forum-search" method="get" action="${base}/f/${encodeURIComponent(forum.slug)}" role="search">
+      <input type="search" name="q" value="${esc(q)}" placeholder="搜这个板块的主题" aria-label="搜索帖子">
+      <button type="submit">搜索</button>
+    </form>
+  </div>
+  <section class="sec">
+    <div class="sec-head"><h2>主题</h2><span class="more">共 ${fmtNum(total)} 条${q ? '（搜索：' + esc(q) + '）' : ''}</span></div>
+    ${list}
+  </section>
+</div>`;
+  return layout({ origin, user, title: forum.name, description: forum.description || forum.name, path: base + '/f/' + forum.slug, content });
+}
+
+/** 一个楼层：左边作者信息，右边正文与操作（回复 / 编辑 / 举报） */
+function forumPostItem(p, { user, base }) {
+  const mine = !!user && Number(p.user_id) === Number(user.id);
+  const isAdmin = !!user && user.role === 'admin';
+  const pending = Number(p.status) !== 1;
+  const report = user && !mine
+    ? '<details class="rp"><summary>举报</summary><form method="post" action="' + base + '/report">' +
+      '<input type="hidden" name="target_type" value="post"><input type="hidden" name="target_id" value="' + Number(p.id) + '">' +
+      '<select name="reason" aria-label="举报理由">' + Object.keys(FR_LABEL).map((k) => '<option value="' + k + '">' + esc(FR_LABEL[k]) + '</option>').join('') + '</select>' +
+      '<input type="text" name="detail" maxlength="200" placeholder="补充说明（可留空）">' +
+      '<button class="btn btn-sm danger" type="submit">提交举报</button></form></details>'
+    : '';
+  return '<li class="fpost' + (pending ? ' pend' : '') + '" id="p' + Number(p.id) + '">' +
+    '<div class="fp-side"><b>' + esc(p.name || p.username || '—') + '</b>' + (p.role === 'admin' ? '<i class="badge">站长</i>' : '') +
+      '<small>' + (Number(p.floor) ? '#' + Number(p.floor) + ' 楼' : '') + '</small><small>' + ftime(p.created_at) + '</small>' +
+      (Number(p.edit_count) ? '<small class="dim">已编辑 ' + Number(p.edit_count) + ' 次</small>' : '') + '</div>' +
+    '<div class="fp-main">' +
+      (p.parent_name ? '<div class="fp-quote">回复 @' + esc(p.parent_name) + '</div>' : '') +
+      '<div class="fp-body">' + ftext(p.body) + '</div>' +
+      '<div class="fp-act">' + (pending ? fpill(p.status, FP_STATUS) : '') +
+      (!pending ? '<a class="btn btn-sm" href="' + base + '/t/' + Number(p.thread_id || 0) + '?reply=' + Number(p.id) + '#reply">回复</a>' : '') +
+      (mine || isAdmin ? '<a class="btn btn-sm" href="' + base + '/post/' + Number(p.id) + '/edit">编辑</a>' : '') +
+      report + '</div>' +
+    '</div></li>';
+}
+
+/** 主题详情：楼层列表 + 回复框；站长在页内就能通过 / 下架 / 置顶 / 锁定 */
+export function forumThreadPage({ origin, user = null, thread, forum = null, posts = [], page = 1, pages = 1, total = 0, base = '/forum', gate = null, error = '', notice = '', form = null, replyTo = null }) {
+  const isAdmin = !!user && user.role === 'admin';
+  const locked = Number(thread.locked) === 1;
+  const adminBar = isAdmin
+    ? '<div class="forum-adminbar">' +
+      fpill(thread.status, FT_STATUS) +
+      '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/status">' +
+      '<input type="hidden" name="status" value="1"><button class="btn btn-sm ok" type="submit">✅ 通过</button></form>' +
+      '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/status">' +
+      '<input type="hidden" name="status" value="2"><button class="btn btn-sm danger" type="submit">✖ 下架</button></form>' +
+      '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/flags">' +
+      '<input type="hidden" name="pinned" value="' + (Number(thread.pinned) ? '0' : '1') + '">' +
+      '<button class="btn btn-sm" type="submit">' + (Number(thread.pinned) ? '取消置顶' : '📌 置顶') + '</button></form>' +
+      '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/flags">' +
+      '<input type="hidden" name="locked" value="' + (locked ? '0' : '1') + '">' +
+      '<button class="btn btn-sm" type="submit">' + (locked ? '🔓 解锁' : '🔒 锁定') + '</button></form></div>'
+    : '';
+  const replyBox = locked && !isAdmin
+    ? '<p class="forum-gate">🔒 这个主题已被站长锁定，不能再回复</p>'
+    : !user
+      ? gateBox({ error: 'login' }, base, '/t/' + Number(thread.id))
+      : (gate && !gate.ok)
+        ? gateBox(gate, base, '/t/' + Number(thread.id))
+        : '<form class="fpost-form" id="reply" method="post" action="' + base + '/t/' + Number(thread.id) + '/reply">' +
+          antispamFields(form || {}) +
+          '<input type="hidden" name="parent_id" value="' + (replyTo ? Number(replyTo.id) : 0) + '">' +
+          (replyTo ? '<p class="dim">正在回复' + (Number(replyTo.floor) ? ' #' + Number(replyTo.floor) + ' 楼' : '') + ' @' + esc(replyTo.name || '') +
+            '（<a href="' + base + '/t/' + Number(thread.id) + '#reply">取消</a>）</p>' : '') +
+          '<label>回复<textarea name="body" rows="5" maxlength="3000" required placeholder="友善发言；广告、刷屏、人身攻击会被下架，严重者封禁"></textarea></label>' +
+          '<button class="btn ok" type="submit">发表回复</button></form>';
+  const content = `<div class="wrap forum">
+  <nav class="crumb"><a href="${base}/">论坛</a> › <a href="${base}/f/${encodeURIComponent(forum ? forum.slug : '')}">${esc(forum ? forum.name : '板块')}</a> › <span>${esc(thread.title)}</span></nav>
+  <article class="fthread">
+    <h1>${Number(thread.pinned) ? '📌 ' : ''}${locked ? '🔒 ' : ''}${esc(thread.title)}</h1>
+    <p class="fthread-meta">${esc(thread.name || thread.username || '—')} · ${ftime(thread.created_at)} · ${fmtNum(thread.view_count)} 浏览 · ${fmtNum(thread.reply_count)} 回复</p>
+    ${adminBar}
+    ${notice ? '<p class="forum-notice">' + esc(notice) + '</p>' : ''}
+    ${error ? '<p class="auth-err">' + esc(error) + '</p>' : ''}
+    <ul class="fpost-list">${posts.map((p) => forumPostItem(p, { user, base })).join('') || '<li class="cmt-empty">还没有内容</li>'}</ul>
+    ${forumPager(base, '/t/' + Number(thread.id), page, pages, '')}
+    <section class="sec" id="reply-wrap"><div class="sec-head"><h2>回复</h2><span class="more">共 ${fmtNum(total)} 条</span></div>${replyBox}</section>
+  </article>
+</div>`;
+  return layout({ origin, user, title: thread.title, description: excerpt(thread.title + ' — ' + (thread.body || ''), 140), path: base + '/t/' + thread.id, content });
+}
+
+/** 发新帖 */
+export function forumNewPage({ origin, user = null, forums = [], forumSlug = '', error = '', values = {}, form = null, gate = null, base = '/forum' }) {
+  const v = (k) => esc(values[k] || '');
+  const opts = forums.map((f) => '<option value="' + esc(f.slug) + '"' + (f.slug === forumSlug ? ' selected' : '') + '>' +
+    esc(f.icon || '') + ' ' + esc(f.name) + '</option>').join('');
+  const body = !user
+    ? gateBox({ error: 'login' }, base, '/new')
+    : (gate && !gate.ok)
+      ? gateBox(gate, base, '/new')
+      : `<form class="fpost-form" method="post" action="${base}/new">
+    ${antispamFields(form || {})}
+    <label>板块<select name="forum">${opts}</select></label>
+    <label>标题<input name="title" value="${v('title')}" required maxlength="80" placeholder="一句话说清楚问题或话题"></label>
+    <label>正文<textarea name="body" rows="10" maxlength="3000" required placeholder="把情况说清楚，方便别人帮你">${v('body')}</textarea></label>
+    ${error ? '<p class="auth-err">' + esc(error) + '</p>' : ''}
+    <button class="btn ok" type="submit">发布主题</button>
+    <p class="dim">新账号的前 3 帖会先进入待审队列，站长通过后公开。提交即表示同意<a href="/terms">用户协议</a>，请勿发布违法或广告内容。</p>
+  </form>`;
+  const content = `<div class="wrap forum">
+  <nav class="crumb"><a href="${base}/">论坛</a> › <span>发新帖</span></nav>
+  <h1>✏️ 发新帖</h1>
+  ${body}
+</div>`;
+  return layout({ origin, user, title: '发新帖', description: '在论坛发布新主题', path: base + '/new', content });
+}
+
+/** 编辑楼层：非站长的编辑会重新进入待审队列，改动留痕 */
+export function forumEditPage({ origin, user = null, post, thread = null, error = '', form = null, base = '/forum' }) {
+  const body = `<form class="fpost-form" method="post" action="${base}/post/${Number(post.id)}/edit">
+    ${antispamFields(form || {})}
+    <label>正文<textarea name="body" rows="12" maxlength="3000" required>${esc(post.body || '')}</textarea></label>
+    ${error ? '<p class="auth-err">' + esc(error) + '</p>' : ''}
+    <button class="btn ok" type="submit">保存修改</button>
+    <p class="dim">只有自己能编辑自己的帖子，站长能看到全部历史版本。<b>普通用户编辑后这条会重新进入待审队列</b>，站长确认后才会再公开。</p>
+  </form>`;
+  const content = `<div class="wrap forum">
+  <nav class="crumb"><a href="${base}/">论坛</a> › <a href="${base}/t/${Number(post.thread_id)}">${esc(thread ? thread.title : '返回主题')}</a> › <span>编辑</span></nav>
+  <h1>✏️ 编辑${Number(post.floor) ? ' #' + Number(post.floor) + ' 楼' : '帖子'}</h1>
+  ${body}
+</div>`;
+  return layout({ origin, user, title: '编辑帖子', description: '编辑论坛帖子', path: base + '/post/' + post.id + '/edit', content });
+}
+
+/** 论坛管理页：待审主题 / 待审回复 / 举报 / 黑名单 / 禁言，都在这一页 */
+export function forumAdminPage({ origin, user, stats = {}, pendingThreads = [], pendingPosts = [], reports = [], blacklist = [], muted = [], notice = '' }) {
+  const thRow = (t) => '<tr><td><b>' + esc(t.title) + '</b><br><small class="dim">' +
+    esc(t.forum_name || '') + ' · ' + esc(t.name || t.username || '—') + ' · ' + ftime(t.created_at) + '</small><br><small class="dim">' +
+    esc(excerpt(t.body || '', 90)) + '</small></td><td class="act">' +
+    '<a class="btn btn-sm" href="/forum/t/' + Number(t.id) + '" target="_blank" rel="noopener">预览</a>' +
+    '<form class="inline" method="post" action="/forum/admin/threads/' + Number(t.id) + '/status"><input type="hidden" name="status" value="1"><button class="btn btn-sm ok" type="submit">✅ 通过</button></form>' +
+    '<form class="inline" method="post" action="/forum/admin/threads/' + Number(t.id) + '/status"><input type="hidden" name="status" value="2"><button class="btn btn-sm danger" type="submit">✖ 拒绝</button></form>' +
+    '</td></tr>';
+  const pRow = (p) => '<tr><td><b>' + esc(p.thread_title || '（主题已删）') + '</b><br><small class="dim">' +
+    esc(p.name || p.username || '—') + ' · ' + ftime(p.created_at) + '</small><br><small class="dim">' +
+    esc(excerpt(p.body || '', 90)) + '</small></td><td class="act">' +
+    '<form class="inline" method="post" action="/forum/admin/posts/' + Number(p.id) + '/status"><input type="hidden" name="status" value="1"><button class="btn btn-sm ok" type="submit">✅ 通过</button></form>' +
+    '<form class="inline" method="post" action="/forum/admin/posts/' + Number(p.id) + '/status"><input type="hidden" name="status" value="2"><button class="btn btn-sm danger" type="submit">✖ 隐藏</button></form>' +
+    '</td></tr>';
+  const rRow = (r) => '<tr><td><b>' + esc(FR_LABEL[r.reason] || r.reason) + '</b> <small class="dim">' +
+    esc(r.target_type === 'thread' ? '主题' : '回复') + '</small><br><small class="dim">' + esc(r.thread_title || '') +
+    (r.thread_id ? ' · <a href="/forum/t/' + Number(r.thread_id) + '" target="_blank" rel="noopener">去看</a>' : '') +
+    '</small><br><small class="dim">' + esc(excerpt(r.target_text || '', 80)) + '</small>' +
+    (r.detail ? '<br><small class="dim">补充：' + esc(excerpt(r.detail, 80)) + '</small>' : '') +
+    '</td><td>' + esc(r.reporter || '—') + '<br><small class="dim">' + ftime(r.created_at) + '</small></td><td class="act">' +
+    '<form class="inline" method="post" action="/forum/admin/reports/' + Number(r.id) + '/status"><input type="hidden" name="status" value="1"><button class="btn btn-sm ok" type="submit">已处理</button></form>' +
+    '<form class="inline" method="post" action="/forum/admin/reports/' + Number(r.id) + '/status"><input type="hidden" name="status" value="2"><button class="btn btn-sm" type="submit">忽略</button></form>' +
+    '</td></tr>';
+  const bRow = (b) => '<tr><td><code>' + esc(b.pattern) + '</code></td><td>' + (b.kind === 'regex' ? '正则' : '关键词') + '</td>' +
+    '<td>' + (b.action === 'reject' ? '<span class="pill f2">直接拒绝</span>' : '<span class="pill f0">转人工待审</span>') + '</td>' +
+    '<td><small class="dim">' + esc(b.note || '') + '</small></td><td class="act">' +
+    '<form class="inline" method="post" action="/forum/admin/blacklist/' + Number(b.id) + '/delete"><button class="btn btn-sm danger" type="submit">删除</button></form></td></tr>';
+  const mRow = (m) => '<tr><td><b>' + esc(m.display_name || m.username) + '</b><br><small class="dim">@' + esc(m.username) + '</small></td>' +
+    '<td><small class="dim">' + esc(m.mute_reason || '') + '</small></td><td>' + ftime(m.muted_until) + '</td><td class="act">' +
+    '<form class="inline" method="post" action="/forum/admin/users/' + Number(m.id) + '/mute"><input type="hidden" name="minutes" value="0"><button class="btn btn-sm ok" type="submit">解除禁言</button></form></td></tr>';
+  const table = (head, rows, empty) => rows
+    ? '<table class="tbl"><thead><tr>' + head.map((h) => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>'
+    : '<p class="cmt-empty">' + esc(empty) + '</p>';
+  const content = `<div class="wrap">
+  <h1>🛡 论坛管理</h1>
+  <p class="dim">待审主题 ${fmtNum(stats.pendingThreads)} · 待审回复 ${fmtNum(stats.pendingPosts)} · 待处理举报 ${fmtNum(stats.reports)} · 板块 ${fmtNum(stats.forums)} · 主题 ${fmtNum(stats.threads)} · 回复 ${fmtNum(stats.posts)} · 今日新增 ${fmtNum(stats.today)} · 被禁言 ${fmtNum(stats.muted)}</p>
+  ${notice ? '<p class="forum-notice">' + esc(notice) + '</p>' : ''}
+  <p><a class="btn" href="/forum">← 回论坛</a> <a class="btn" href="/admin">→ 站点后台</a></p>
+  <section class="sec"><div class="sec-head"><h2>待审主题</h2></div>${table(['内容', '操作'], pendingThreads.map(thRow), '没有待审主题')}</section>
+  <section class="sec"><div class="sec-head"><h2>待审回复</h2></div>${table(['内容', '操作'], pendingPosts.map(pRow), '没有待审回复')}</section>
+  <section class="sec"><div class="sec-head"><h2>待处理举报</h2></div>${table(['被举报内容', '举报人', '操作'], reports.map(rRow), '没有待处理举报')}</section>
+  <section class="sec"><div class="sec-head"><h2>关键词 / 正则黑名单</h2></div>
+    <form class="auth-form wide fbl" method="post" action="/forum/admin/blacklist">
+      <div class="row2">
+        <label>内容<select name="kind"><option value="word">关键词（含到就命中）</option><option value="regex">正则表达式</option></select></label>
+        <label>命中后<select name="action"><option value="review">转人工待审</option><option value="reject">直接拒绝</option></select></label>
+      </div>
+      <label>匹配内容 / 表达式<input name="pattern" required maxlength="120" placeholder="如 加微信 或 (加|＋)\s*微信"></label>
+      <label>备注<input name="note" maxlength="120" placeholder="为什么加这条（可选）"></label>
+      <button class="btn ok" type="submit">加入黑名单</button>
+    </form>
+    ${table(['规则', '类型', '命中后', '备注', '操作'], blacklist.map(bRow), '还没有黑名单规则')}
+  </section>
+  <section class="sec"><div class="sec-head"><h2>被禁言的用户</h2></div>
+    <form class="auth-form wide fbl" method="post" action="/forum/admin/users/mute">
+      <div class="row2">
+        <label>用户名<input name="username" required maxlength="32" placeholder="要禁言谁（填用户名）"></label>
+        <label>时长<select name="minutes"><option value="60">1 小时</option><option value="1440">1 天</option><option value="10080" selected>7 天</option><option value="43200">30 天</option></select></label>
+      </div>
+      <label>理由<input name="reason" maxlength="80" placeholder="如：刷屏发广告"></label>
+      <button class="btn danger" type="submit">禁言</button>
+      <p class="dim">禁言只是不能发主题和回复，仍可浏览；封禁请到<a href="/admin">站点后台</a>（封禁会让登录立即失效）。</p>
+    </form>
+    ${table(['用户', '理由', '解禁时间', '操作'], muted.map(mRow), '没有正在被禁言的用户')}
+  </section>
+</div>`;
+  return layout({ origin, user, title: '论坛管理', description: '论坛审核后台', path: '/forum/admin', content, noindex: true });
+}

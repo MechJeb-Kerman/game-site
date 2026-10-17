@@ -20,9 +20,20 @@ export function readCookie(req, name) {
   return '';
 }
 
+/**
+ * 想让 game-site.fishport.cn 与 forum.fishport.cn 共用登录态，就把 COOKIE_DOMAIN 设成 .fishport.cn。
+ * 不设时是「只对当前主机有效」的普通 cookie——本机 127.0.0.1 与 *.workers.dev 必须这样，
+ * 那种主机名写了 Domain，浏览器会把整条 cookie 直接丢掉（登录于是永远失败）。
+ */
+function cookieDomain() {
+  const d = String(process.env.COOKIE_DOMAIN || '').trim();
+  if (!d) return '';
+  return '; Domain=' + (d.charAt(0) === '.' ? d : '.' + d);
+}
+
 function setCookie(res, value, maxAge) {
   res.append('Set-Cookie',
-    COOKIE + '=' + value + '; Path=/; Max-Age=' + maxAge + '; SameSite=Lax; HttpOnly');
+    COOKIE + '=' + value + '; Path=/; Max-Age=' + maxAge + cookieDomain() + '; SameSite=Lax; HttpOnly');
 }
 
 /* ---------- 口令 ---------- */

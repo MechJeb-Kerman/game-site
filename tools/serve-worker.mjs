@@ -78,7 +78,8 @@ export async function createWorkerServer(opts) {
     ADMIN_PASS: o.adminPass,
     SITE_ORIGIN: o.origin,
     // 本机验证用：开放 dev 演示登录（Workers 里没有 NODE_ENV，只能靠这个开关）
-    OAUTH_DEV: o.oauthDev === undefined ? '1' : String(o.oauthDev)
+    OAUTH_DEV: o.oauthDev === undefined ? '1' : String(o.oauthDev),
+    COOKIE_DOMAIN: o.cookieDomain === undefined ? process.env.COOKIE_DOMAIN : o.cookieDomain
   };
   // 允许调用方塞任意 env（端到端测试要灌假的邮件服务 / OAuth 端点地址）
   Object.assign(env, o.env || {});
@@ -95,7 +96,8 @@ export async function createWorkerServer(opts) {
         for await (const c of req) chunks.push(c);
         if (chunks.length) body = Buffer.concat(chunks);
       }
-      const url = 'http://127.0.0.1:' + server.address().port + req.url;
+      // 用请求里的 Host 拼 URL：Workers 的 url.host 就是公开域名，本地这样才测得到 forum.fishport.cn 根路径挂载
+      const url = 'http://' + (req.headers.host || ('127.0.0.1:' + server.address().port)) + req.url;
       const request = new Request(url, { method: req.method, headers: headers, body: body });
       const r = await worker.fetch(request, env);
 

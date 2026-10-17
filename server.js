@@ -10,6 +10,8 @@ import * as mail from './src/mail.js';
 import * as oauth from './src/oauth.js';
 import { randomBytes } from 'node:crypto';
 import { formFromMultipart } from './src/multipart.js';
+import * as forum from './src/data-forum.js';
+import * as fguard from './src/forum-guard.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -73,6 +75,20 @@ const UGC_HTML_CSP = [
   "connect-src 'none'",
   "frame-ancestors 'self'"
 ].join('; ');
+
+/* ---------- 论坛挂载 ----------
+   论坛有两种访问形态：游戏站上的 /forum/*，以及 forum.fishport.cn 的根路径。
+   后者的请求在这里被内部重写成 /forum/*，页面里的链接基址用 req.forumBase（'' 或 '/forum'），
+   同一套路由与模板在两种形态下都能用；/forum/* 与全站公共前缀不受影响。 */
+const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|favicon\.ico|robots\.txt|sitemap\.xml)(\/|$)/;
+
+app.use((req, res, next) => {
+  const host = String(req.get('host') || '').split(':')[0].toLowerCase();
+  const onForum = /^forum\./.test(host);
+  req.forumBase = onForum ? '' : '/forum';
+  if (onForum && !FORUM_SHARED.test(req.path)) req.url = '/forum' + (req.url === '/' ? '' : req.url);
+  next();
+});
 
 const originOf = (req) => process.env.SITE_ORIGIN || req.protocol + '://' + req.get('host');
 
@@ -374,6 +390,7 @@ app.get('/robots.txt', (req, res) => {
       'Disallow: /reset',
       'Disallow: /auth',
       'Disallow: /comments/',
+  'Disallow: /forum/admin',
       '',
       'Sitemap: ' + origin + '/sitemap.xml',
       ''
@@ -383,7 +400,7 @@ app.get('/robots.txt', (req, res) => {
 
 app.get('/sitemap.xml', (req, res) => {
   const origin = originOf(req);
-  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' },
+  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }, { loc: '/forum', pri: '0.5' },
     { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' },
     { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
   for (const p of data.listPosts({ status: 1, limit: 50 })) {
@@ -1060,6 +1077,287 @@ app.post('/comments/:id/report', loginPageGuard('/'), (req, res) => {
   const r = data.reportComment(req.params.id, req.user.id, b.reason);
   const key = r.error ? r.error : (r.already ? 'already' : 'ok');
   res.redirect(withQuery(safeNext(b.next), 'report=' + encodeURIComponent(key)));
+});
+
+
+/* ==================== 论坛 ==================== */
+/* 只需要一套 /forum/* 路由：forum.fishport.cn 的请求已被上面的中间件重写成 /forum/*。
+   模板里的链接基址用 req.forumBase（'' 或 '/forum'），论坛后台固定在 /forum/admin。 */
+
+const FORUM_MSG = {
+  published: '发布成功，已经出现在论坛里了',
+  pending: '提交成功，站长审核通过后就会公开',
+  replied: '回复成功，已经贴到楼下了',
+  edited: '保存成功，普通账号的编辑会重新进入待审队列',
+  reported: '举报已收到，站长会尽快处理',
+  done: '操作已完成'
+};
+
+const FORUM_ERR = {
+  too_fast: '发得太快了，歇一会儿再发',
+  daily: '今天发得够多了，明天再来吧',
+  hourly: '举报交得有点多，过一会儿再试',
+  muted: '你正在被禁言，暂时不能发言',
+  banned: '账号已被封禁，不能发帖',
+  email: '要先在「账号」页验证邮箱才能发帖',
+  blocked: '内容里包含被禁止的表述，发不出去',
+  stale: '表单已过期，请重新打开页面再提交',
+  bot: '这次提交没有通过校验，请重新打开页面再试',
+  locked: '这个主题已经被锁定，不能再回复',
+  empty: '内容不能是空的',
+  no_forum: '没有这个板块',
+  not_found: '要操作的内容不存在了',
+  forbidden: '只能改自己的内容',
+  bad_regex: '正则写错了，检查一下括号和转义',
+  default: '这次操作没成功，稍后再试'
+};
+
+function forumOkOf(req) {
+  return FORUM_MSG[String((req.query && req.query.ok) || '')] || '';
+}
+
+function forumErrOf(req) {
+  return FORUM_ERR[String((req.query && req.query.err) || '')] || '';
+}
+
+/** 错误码归一：只回显自己认识的码，避免把任意文本反照到页面上 */
+function forumCode(e) {
+  const k = String(e || '');
+  return FORUM_ERR[k] ? k : 'default';
+}
+
+/** 论坛类表单的统一回跳：成功带 ok=，失败带 err=（只带码，页面上再翻成人话） */
+function forumTo(res, path, ok, err) {
+  if (ok) return res.redirect(withQuery(path, 'ok=' + encodeURIComponent(ok)));
+  if (err) return res.redirect(withQuery(path, 'err=' + encodeURIComponent(forumCode(err))));
+  res.redirect(path);
+}
+
+function forumToken(req, kind) {
+  return { token: forum.issueNonce(req.user.id, kind), honeypot: fguard.HONEYPOT_FIELD };
+}
+
+/** 发帖类 POST 的前置检查：蜜罐字段 + 一次性表单令牌（脚本重放与 CSRF 都在这挡） */
+function forumPrefilter(req, kind) {
+  const b = req.body || {};
+  if (String(b[fguard.HONEYPOT_FIELD] || '').trim()) return { err: 'bot' };
+  const n = forum.consumeNonce(String(b.form_token || ''), req.user.id, kind);
+  if (!n.ok) return { err: 'stale' };
+  return { fastSubmit: Number(n.dwellMs) < fguard.MIN_DWELL_MS };
+}
+
+function forumNotFound(req, res) {
+  res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+}
+
+function forumViewer(req) {
+  return req.user ? req.user.id : null;
+}
+
+app.get(['/forum', '/forum/'], (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const q = String(req.query.q || '').slice(0, 60);
+  const list = forum.listThreads({ q, page, viewerId: forumViewer(req) });
+  res.send(ui.forumHomePage({
+    origin: originOf(req), user: req.user, forums: forum.listForums(),
+    threads: list.items, total: list.total, page: list.page, pages: list.pages, q,
+    base: req.forumBase, stats: forum.forumStats(), notice: forumOkOf(req)
+  }));
+});
+
+app.get('/forum/new', (req, res) => {
+  res.send(ui.forumNewPage({
+    origin: originOf(req), user: req.user, forums: forum.listForums(),
+    forumSlug: String(req.query.forum || ''), base: req.forumBase,
+    gate: req.user ? forum.forumGate(req.user) : null,
+    form: req.user ? forumToken(req, 'thread') : null,
+    error: forumErrOf(req)
+  }));
+});
+
+app.post('/forum/new', loginPageGuard('/forum/new'), (req, res) => {
+  const b = req.body || {};
+  const back = req.forumBase + '/new';
+  const rerender = (msg) => res.status(400).send(ui.forumNewPage({
+    origin: originOf(req), user: req.user, forums: forum.listForums(),
+    forumSlug: String(b.forum || ''), error: msg, values: { title: b.title, body: b.body },
+    base: req.forumBase, gate: forum.forumGate(req.user), form: forumToken(req, 'thread')
+  }));
+  const pre = forumPrefilter(req, 'thread');
+  if (pre.err) return forumTo(res, back, null, pre.err);
+  const tv = fguard.validateTitle(b.title);
+  if (!tv.ok) return rerender(tv.error);
+  const bv = fguard.validateBody(b.body);
+  if (!bv.ok) return rerender(bv.error);
+  const f = forum.getForum(String(b.forum || ''));
+  if (!f) return forumTo(res, back, null, 'no_forum');
+  const r = forum.createThread({ forumId: f.id, user: req.user, title: tv.value, body: bv.value, fastSubmit: pre.fastSubmit });
+  if (r.error) return forumTo(res, back, null, r.error);
+  data.logAudit(req.user, 'forum.thread.create', String(r.id),
+    (Number(r.status) === 1 ? '直接发布' : '转待审' + (r.reason ? '（' + r.reason + '）' : '')) + '：' + String(tv.value).slice(0, 40));
+  forumTo(res, req.forumBase + '/t/' + r.id, Number(r.status) === 1 ? 'published' : 'pending');
+});
+
+app.get('/forum/f/:slug', (req, res) => {
+  const f = forum.getForum(String(req.params.slug));
+  if (!f) return forumNotFound(req, res);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const q = String(req.query.q || '').slice(0, 60);
+  const list = forum.listThreads({ forum: f.slug, q, page, viewerId: forumViewer(req) });
+  res.send(ui.forumBoardPage({
+    origin: originOf(req), user: req.user, forum: f,
+    threads: list.items, total: list.total, page: list.page, pages: list.pages, q, base: req.forumBase
+  }));
+});
+
+app.get('/forum/t/:id', (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const t = forum.getThread(id, req.user);
+  if (!t || !t.canView) return forumNotFound(req, res);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const list = forum.listPosts(id, { page, viewer: req.user });
+  forum.bumpThreadView(id);
+  const rid = Number(req.query.reply) || 0;
+  const rp = rid ? forum.getPost(rid, req.user) : null;
+  const replyTo = rp && Number(rp.thread_id) === id ? { id: rp.id, floor: 0, name: rp.name || rp.username } : null;
+  res.send(ui.forumThreadPage({
+    origin: originOf(req), user: req.user, thread: t.thread,
+    forum: { slug: t.thread.forum_slug, name: t.thread.forum_name, icon: t.thread.forum_icon },
+    posts: list.items, total: list.total, page: list.page, pages: list.pages,
+    base: req.forumBase, replyTo,
+    gate: req.user ? forum.forumGate(req.user) : null,
+    form: req.user ? forumToken(req, 'post') : null,
+    notice: forumOkOf(req), error: forumErrOf(req)
+  }));
+});
+
+app.post('/forum/t/:id/reply', loginPageGuard('/forum'), (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const back = req.forumBase + '/t/' + id;
+  const pre = forumPrefilter(req, 'post');
+  if (pre.err) return forumTo(res, back, null, pre.err);
+  const bv = fguard.validateBody((req.body || {}).body);
+  if (!bv.ok) return forumTo(res, back, null, 'empty');
+  const parentId = Number((req.body || {}).parent_id) || null;
+  const r = forum.createReply({ threadId: id, user: req.user, body: bv.value, parentId, fastSubmit: pre.fastSubmit });
+  if (r.error) return forumTo(res, back, null, r.error);
+  data.logAudit(req.user, 'forum.post.create', String(r.id), '回复主题 #' + id + (Number(r.status) === 1 ? '' : '（转待审）'));
+  forumTo(res, back + '#p' + r.id, Number(r.status) === 1 ? 'replied' : 'pending');
+});
+
+app.get('/forum/post/:id/edit', (req, res) => {
+  const post = forum.getPost(Number(req.params.id) || 0, req.user);
+  if (!post) return forumNotFound(req, res);
+  if (Number(post.user_id) !== Number(req.user.id) && req.user.role !== 'admin') return forumNotFound(req, res);
+  res.send(ui.forumEditPage({
+    origin: originOf(req), user: req.user, post,
+    thread: { id: post.thread_id, title: '主题 #' + post.thread_id },
+    base: req.forumBase, form: forumToken(req, 'post'), error: forumErrOf(req)
+  }));
+});
+
+app.post('/forum/post/:id/edit', loginPageGuard('/forum'), (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const post = forum.getPost(id, req.user);
+  if (!post) return forumNotFound(req, res);
+  const back = req.forumBase + '/t/' + post.thread_id;
+  const bv = fguard.validateBody((req.body || {}).body);
+  const pre = forumPrefilter(req, 'post');
+  if (pre.err) return forumTo(res, back, null, pre.err);
+  if (!bv.ok) return forumTo(res, req.forumBase + '/post/' + id + '/edit', null, 'empty');
+  const r = forum.editPost({ postId: id, user: req.user, body: bv.value, fastSubmit: pre.fastSubmit });
+  if (r.error) return forumTo(res, back, null, r.error);
+  data.logAudit(req.user, 'forum.post.edit', String(id), '主题 #' + post.thread_id + '：' + String(bv.value).slice(0, 40));
+  forumTo(res, back + '#p' + id, r.unchanged ? 'done' : (Number(r.status) === 1 ? 'edited' : 'pending'));
+});
+
+app.post('/forum/report', loginPageGuard('/forum'), (req, res) => {
+  const b = req.body || {};
+  const tp = String(b.target_type || '');
+  const tid = Number(b.target_id) || 0;
+  const r = forum.reportTarget({ targetType: tp, targetId: tid, user: req.user, reason: String(b.reason || ''), detail: String(b.detail || '') });
+  const back = r.threadId ? req.forumBase + '/t/' + r.threadId : req.forumBase + '/';
+  if (r.error) return forumTo(res, back, null, r.error);
+  data.logAudit(req.user, 'forum.report', tp + ':' + tid, '理由 ' + String(b.reason || '') + (r.already ? '（重复举报）' : ''));
+  forumTo(res, back, 'reported');
+});
+
+/* ---------- 论坛后台 ---------- */
+
+app.get('/forum/admin', requireAdmin, (req, res) => {
+  res.send(ui.forumAdminPage({
+    origin: originOf(req), user: req.user, stats: forum.forumStats(),
+    pendingThreads: forum.listPendingThreads(50), pendingPosts: forum.listPendingPosts(50),
+    reports: forum.listReports(0, 50), blacklist: forum.listBlacklist(), muted: forum.listMuted(20),
+    notice: forumOkOf(req)
+  }));
+});
+
+app.post('/forum/admin/threads/:id/status', requireAdmin, (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const r = forum.setThreadStatus(id, (req.body || {}).status);
+  data.logAudit(req.user, 'forum.thread.status', String(id), Number(r.status) === 1 ? '通过' : Number(r.status) === 2 ? '下架' : '转待审');
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/threads/:id/flags', requireAdmin, (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const b = req.body || {};
+  const flags = {};
+  if (b.pinned !== undefined) flags.pinned = Number(b.pinned) ? 1 : 0;
+  if (b.locked !== undefined) flags.locked = Number(b.locked) ? 1 : 0;
+  forum.setThreadFlags(id, flags);
+  data.logAudit(req.user, 'forum.thread.flags', String(id),
+    (flags.pinned !== undefined ? (flags.pinned ? '置顶' : '取消置顶') : '') + (flags.locked !== undefined ? (flags.locked ? ' 锁定' : ' 解锁') : ''));
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/posts/:id/status', requireAdmin, (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const r = forum.setPostStatus(id, (req.body || {}).status);
+  data.logAudit(req.user, 'forum.post.status', String(id), Number(r.status) === 2 ? '隐藏' : '通过');
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/reports/:id/status', requireAdmin, (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const r = forum.setReportStatus(id, (req.body || {}).status);
+  data.logAudit(req.user, 'forum.report.status', String(id), Number(r.status) === 2 ? '忽略' : '已处理');
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/blacklist', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const r = forum.addBlacklist({ pattern: b.pattern, kind: b.kind, action: b.action, note: b.note });
+  if (r.error) return forumTo(res, '/forum/admin', null, r.error);
+  data.logAudit(req.user, 'forum.blacklist.add', String(r.id || ''), String(b.kind || 'word') + ' / ' + String(b.pattern || '').slice(0, 60));
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/blacklist/:id/delete', requireAdmin, (req, res) => {
+  const id = Number(req.params.id) || 0;
+  forum.deleteBlacklist(id);
+  data.logAudit(req.user, 'forum.blacklist.del', String(id), '');
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/users/mute', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const uname = String(b.username || '').trim().toLowerCase();
+  const found = (data.listUsers({ q: uname, limit: 20 }) || []).find((u) => String(u.username).toLowerCase() === uname);
+  if (!found) return forumTo(res, '/forum/admin', null, 'not_found');
+  const r = forum.setUserMuted(found.id, Number(b.minutes) || 0, String(b.reason || ''));
+  data.logAudit(req.user, r.muted ? 'forum.user.mute' : 'forum.user.unmute', String(found.id),
+    (found.display_name || found.username) + (r.muted ? ' 禁言 ' + r.minutes + ' 分钟：' + String(b.reason || '') : ' 解除禁言'));
+  forumTo(res, '/forum/admin', 'done');
+});
+
+app.post('/forum/admin/users/:id/mute', requireAdmin, (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const b = req.body || {};
+  const r = forum.setUserMuted(id, Number(b.minutes) || 0, String(b.reason || ''));
+  data.logAudit(req.user, r.muted ? 'forum.user.mute' : 'forum.user.unmute', String(id), r.muted ? '禁言 ' + r.minutes + ' 分钟' : '解除禁言');
+  forumTo(res, '/forum/admin', 'done');
 });
 
 // ---------- 错误处理 ----------
