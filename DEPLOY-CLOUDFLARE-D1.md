@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 149 项功能验收 + 42 项邮件与第三方登录端到端 + 21 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 216 项功能验收 + 42 项邮件与第三方登录端到端 + 23 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -41,7 +41,7 @@ wrangler deploy --config wrangler.d1.toml
 
 部署成功会打印 `https://game-site-d1.<账号>.workers.dev`。**第一次打开这个地址时**，Worker 会自动：
 
-1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql`、`migrations/0002_game_files.sql`、`migrations/0003_posts.sql` 一致，就算忘了 apply 迁移也能跑）；
+1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql`、`migrations/0002_game_files.sql`、`migrations/0003_posts.sql`、`migrations/0004_forum.sql` 一致，就算忘了 apply 迁移也能跑）；
 2. 灌种子数据：4 个分类 + 6 款游戏（2048 / 贪吃蛇 / 记忆翻牌 / 打地鼠 / 井字棋 / 俄罗斯方块）；
 3. 创建站长账号 `admin` / `admin123`（可被环境变量覆盖）。
 
@@ -96,6 +96,7 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 | Deploy command | `npx wrangler deploy --config wrangler.d1.toml` |
 | 环境变量 | `NODE_VERSION=22` |
 | 环境变量（可选） | `SITE_ORIGIN=https://你的域名`（想固定 canonical / og / JSON-LD 的域名时用；也可以靠 build 的 `--origin`） |
+| 环境变量（可选） | `COOKIE_DOMAIN=.fishport.cn`（把 `forum.fishport.cn` 指到同一个 Worker、让两个子域共用登录态时才需要；**本机开发别设**，127.0.0.1 带 Domain 的 cookie 浏览器会丢弃） |
 
 绑了自定义域名之后，把 Build command 里的 `--origin` 换成真实域名（或干脆删掉 `--origin`、改用 `SITE_ORIGIN`），再 push 一次即可。
 
@@ -123,6 +124,18 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 2. 立刻改站长口令：面板里加 `ADMIN_USER` / `ADMIN_PASS` 环境变量（或 `npx wrangler secret put ADMIN_PASS`），然后**删掉默认站长让新口令生效**——执行一句 SQL `DELETE FROM users WHERE username='admin'`（命令写法见路线 A），再访问一次站点；
 3. 非生产分支（比如 PR）默认也会触发构建并给一个预览 URL；不需要就在面板里关掉，或只保留生产分支。
 
+### 6.5 论坛与 `forum.fishport.cn`（可选）
+
+论坛和主站是**同一个 Worker**，不需要第二个部署：
+
+1. 论坛本来就能从 `https://你的域名/forum` 打开，先确认 `/forum` 200、`/forum/admin` 用站长身份 200；
+2. 想单独用 `forum.fishport.cn`：Cloudflare → 该 Worker → Settings → **Domains & Routes** → Add → Custom Domain → `forum.fishport.cn`（DNS 记录它会自动建）；
+3. 想让两个子域**共用登录态**：在 `wrangler.d1.toml` 的 `[vars]` 里设 `COOKIE_DOMAIN = ".fishport.cn"`（本仓库默认已经写上了），或面板的「变量」里加同名的普通变量，然后重新部署；
+4. 验证：在 `game-site.fishport.cn` 登录后打开 `forum.fishport.cn`，页面右上角应该仍是登录态；`curl -sI https://game-site.fishport.cn/api/auth/register` 之类看不出 cookie，直接看浏览器 DevTools 的 `sid` cookie 有没有 `Domain=.fishport.cn` 最直观。
+
+> 论坛主机上的请求会在 Worker 内部重写成 `/forum/*`（`/static`、`/login`、`/admin`、`/api` 这些公共前缀不受影响），所以两种访问形态共用同一套路由与模板，链接基址会自动切换。
+> 论坛的 7 张表随首次请求自建；已经跑过 `0001`~`0003` 的老库也不需要手工 ALTER——`worker/schema.js` 会幂等补 `users.muted_until` / `mute_reason` 两列。
+
 ### 7. 这条路线我没法在本机验证的部分
 
 面板里的确切字段名与步骤会随 Cloudflare 改版变化；`npx wrangler deploy --config` 在 Workers Builds 的构建环境里是否被允许（它等价于默认的 `npx wrangler deploy` 多一个 `--config`，我倾向于可以），以及构建环境里跑 D1 迁移的权限，都需要你第一次部署时看构建日志确认（面板里该 Worker 的 Builds 页）。
@@ -147,7 +160,7 @@ wrangler d1 execute game-site-db --remote --command "SELECT slug, plays, rating,
 wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELETE FROM ratings; DELETE FROM favorites; DELETE FROM play_logs; DELETE FROM games;"
 ```
 
-表结构见 `migrations/0001_init.sql`（第一批）、`migrations/0002_game_files.sql`（投稿上传的单文件 HTML）与 `migrations/0003_posts.sql`（公告 posts 表 + comments.target 列）。0001 是早期从 `worker/schema.js` 的 DDL 生成的快照，之后新增的表都单开一个迁移文件；两边都以 `worker/schema.js` 的 `CREATE TABLE IF NOT EXISTS` 兜底。
+表结构见 `migrations/0001_init.sql`（第一批）、`migrations/0002_game_files.sql`（投稿上传的单文件 HTML）、`migrations/0003_posts.sql`（公告 posts 表 + comments.target 列）与 `migrations/0004_forum.sql`（论坛 7 张表：forums / forum_threads / forum_posts / forum_post_edits / forum_reports / forum_blacklist / form_nonces）。0001 是早期从 `worker/schema.js` 的 DDL 生成的快照，之后新增的表都单开一个迁移文件；两边都以 `worker/schema.js` 的 `CREATE TABLE IF NOT EXISTS` 兜底。
 
 ### 老库升级：新表与新列不用手工处理
 
@@ -183,7 +196,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
 node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
-node tools/worker-feature-test.mjs         # 149 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除、公告与更新说明、隐私政策/用户协议与注册同意）
+node tools/worker-feature-test.mjs         # 216 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除、公告与更新说明、隐私政策/用户协议与注册同意，以及论坛的 67 项审核与安全断言）
 node tools/worker-mail-oauth-test.mjs      # 42 项邮件与第三方登录端到端（自起假邮件服务端 + 假 OAuth Provider，不连外网）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
@@ -191,9 +204,9 @@ node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **149 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404，以及公告与更新说明：发布 / 置顶 / 评论 / 楼中楼 / 举报 / 改内容 / 撤回 / 再发布，`/changelog` 由 git 历史生成），
+  **216 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404，以及公告与更新说明：发布 / 置顶 / 评论 / 楼中楼 / 举报 / 改内容 / 撤回 / 再发布，`/changelog` 由 git 历史生成），
   **42 项邮件与第三方登录断言全过**（`tools/mail-oauth-test.mjs` 的场景换成 D1 数据层：绑定邮箱收到验证信、点链接变已验证、找回密码改密、GitHub / Google 授权回调建号与复用账号、`state` 校验失败 400、后台集成自检面板），
-  **21 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想、公告列表与详情、更新说明页、首页公告横幅关闭），无 console 报错、无资源 404。
+  **23 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想、公告列表与详情、更新说明页、首页公告横幅关闭、论坛首页与主题页），无 console 报错、无资源 404。
   静态产物那边 `node tools/worker-test.mjs` 另有 **24 项断言**（页面 200、10 个页面 61 条站内链接全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
   首页 / 列表 / 详情 / 分类 / 标签 / 搜索 / 注册 / 登录 / 404 / sitemap / robots 全部 200，`/favorites`、`/admin` 未登录正确 302 到 `/login?next=…`，
@@ -244,7 +257,7 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 | 登录后一刷新又变游客 | Cookie 没写进去 | 必须用 https 域名访问，不要用 IP；确认浏览器没屏蔽第三方 Cookie 扩展 |
 | 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两个 `?v=` 的版本号 +1（现为 `?v=4`），重新构建 + 部署 |
 | 游玩次数不变、打不了星、发不出评论，页面却看着一切正常 | `dist-cf/static/js/app.js` 被静态版前端顶掉了：Workers/D1 把 `dist-cf/` 当 ASSETS 目录，动态页面加载到的是没有 `/api/...` 逻辑的 `app-static.js` | 重新 `pnpm build:pages`（构建自检会直接拦住）；规则是 `static/js/app.js` = 动态版（来自 `public/js/app.js`）、`app-static.js` = 静态版，静态页面只引后者 |
-| `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql`、`0002_game_files.sql`、`0003_posts.sql` 都在里面 |
+| `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql`、`0002_game_files.sql`、`0003_posts.sql`、`0004_forum.sql` 都在里面 |
 | 控制台明明加了变量，线上却读不到：`/admin` 的「集成自检」里邮件通道退回开发发件箱、GitHub/Google 的 client_id 与 secret 全是 ❌，`/auth/github` 还 404 | 加到了**「构建」分区的「变量和机密」**（邻居是构建监视路径 / API 令牌 / 部署挂钩），那是构建期变量，Worker 运行时的 `env` 里没有 | 把那几张卡片删掉，改加到**「运行时」分区的「变量和机密」**（类型选「密钥」=Secret）；非机密值（client_id、`MAIL_FROM`）也可以写进 `wrangler.d1.toml` 的 `[vars]` 随代码部署；改完重新部署，刷新 `/admin` 看自检变 ✅ |
 | `wrangler deploy` 报 assets 目录不存在 | 没构建 | 先跑第二步的 `build-pages` |
 | 打开就「重定向次数过多」/ `ERR_TOO_MANY_REDIRECTS` | `html_handling` 不是 `none`，资源层把 `.html` 路径 308 回去了 | 把 `wrangler*.toml` 改回 `html_handling = "none"` 再部署；`node tools/worker-test.mjs` 会拦住这个改错 |
@@ -258,5 +271,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 149 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
-浏览器里的页面渲染与交互（21 项冒烟，含公告与更新说明）、静态资源与安全响应头（24 项断言，见 `tools/worker-test.mjs`）。
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 216 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
+浏览器里的页面渲染与交互（23 项冒烟，含公告与更新说明与论坛）、静态资源与安全响应头（24 项断言，见 `tools/worker-test.mjs`）。

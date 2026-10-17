@@ -1,7 +1,39 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-17 10:55";
-export const CHANGELOG_TOTAL = 22;
+export const CHANGELOG_GENERATED = "2026-10-17 15:36";
+export const CHANGELOG_TOTAL = 26;
 export const CHANGELOG = [
+  {
+    "hash": "d05ebd4",
+    "date": "2026-10-17 23:35",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "论坛的 67 项断言（两条线同一份用例）+ 23 项浏览器冒烟"
+  },
+  {
+    "hash": "1d09dcf",
+    "date": "2026-10-17 23:35",
+    "day": "2026-10-17",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "论坛（/forum，可挂 forum.fishport.cn）与九项审核安全措施"
+  },
+  {
+    "hash": "5ccfce8",
+    "date": "2026-10-17 19:37",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "同步静态部署文档的产物与冒烟项数"
+  },
+  {
+    "hash": "5a71f31",
+    "date": "2026-10-17 18:56",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与部署文档同步公告与更新说明"
+  },
   {
     "hash": "4e4de17",
     "date": "2026-10-17 18:54",

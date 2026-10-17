@@ -2,7 +2,7 @@
 
 一个**开箱即跑**的在线小游戏聚合站最小原型：纯 HTML + Express 服务端渲染 + `node:sqlite` 存元数据。
 零前端框架、零构建步骤、零图片文件（封面是运行时生成的 SVG），`pnpm install` 后一条命令即可访问。
-自带完整的账号体系（注册登录、邮箱验证、找回密码、第三方登录、收藏、评论与楼中楼、举报）与站长后台（投稿审核、批量上下架、举报处理、封禁、彻底删除、操作日志与集成自检），外加 SQLite 排行榜与拼音搜索、站内公告与更新说明（`/notice`、`/changelog`）、隐私政策与用户协议（`/privacy`、`/terms`）；投稿可以直接上传**自包含的单文件 HTML**（存库、按 `/ugc/<slug>.html` 托管、用 CSP sandbox 隔离），全部落在本地 SQLite，不依赖任何外部服务。
+自带完整的账号体系（注册登录、邮箱验证、找回密码、第三方登录、收藏、评论与楼中楼、举报）与站长后台（投稿审核、批量上下架、举报处理、封禁、彻底删除、操作日志与集成自检），外加 SQLite 排行榜与拼音搜索、站内公告与更新说明（`/notice`、`/changelog`）、隐私政策与用户协议（`/privacy`、`/terms`）；投稿可以直接上传**自包含的单文件 HTML**（存库、按 `/ugc/<slug>.html` 托管、用 CSP sandbox 隔离），全部落在本地 SQLite，不依赖任何外部服务；另外带一个**有审核与安全措施的论坛**（`/forum`，也可以单独挂到 `forum.fishport.cn`，与游戏站共用同一套账号与后台）。
 
 ![首页](docs/screens/home.png)
 
@@ -24,6 +24,9 @@
 | 法律页面 | `/privacy` 隐私政策、`/terms` 用户协议，纯静态文本、登录与否都能看，页脚每页都有链接、`/sitemap.xml` 收录；注册页必须勾选「我已阅读并同意《用户协议》与《隐私政策》」才能提交（表单里是必填 checkbox，服务端还会兜一次，不勾就 400 回表单），勾选框旁边就是两份文档的链接 |
 | 公告 | `/notice` 列表 + `/notice/:slug` 详情，站长在后台随时发布 / 修改 / **软撤回**（前台立刻消失、评论保留，重新发布即恢复）；公告自己也能被评论与举报（与游戏评论同一套分页 / 楼中楼 / 举报），首页顶部再挂一条最新公告的可关闭横幅（关掉写 `localStorage`，不再打扰） |
 | 更新说明 | `/changelog`，**不手写**：`pnpm gen:changelog` 读 `git log` 生成 `src/changelog-data.js`（feat / fix / docs… 映射成中文标签），页脚有入口、`/sitemap.xml` 收录 |
+| 论坛 | `/forum`：默认 4 个板块、主题列表与搜索、两级楼中楼回复、编辑留痕；发帖要登录 + **邮箱已验证** + 未被封禁 / 禁言；新人（发帖不足 3 条）的主题与回复自动进待审队列，站长在 `/forum/admin` 通过 / 拒绝 / 置顶 / 锁定 |
+| 论坛的审核与安全 | 9 项措施：举报 + 后台审核队列 + 违规内容软下架、关键词 / 正则黑名单（命中「直接拒绝」或「转人工待审」）、发帖限流与每日配额（主题 60 秒 1 条 / 每天 10 条，回复 20 秒 / 每天 50 条，举报每小时 5 条）、禁言（到点自动解除）与封禁、操作日志（`audit_logs`）、新人限制、邮箱验证门槛、不依赖外部服务的人机校验（一次性表单令牌 + 蜜罐字段 + 最短填写耗时）、编辑留痕（`forum_post_edits` 存改前改后，普通用户一改就重新待审） |
+| 论坛域名 | 同一套路由既能走 `/forum`，也能把 `forum.fishport.cn` 指到同一个 Worker：论坛主机上的请求在内部重写成 `/forum/*`、页面里的链接基址自动切换，账号 / 后台 / 审计日志完全共用（跨子域登录态靠 `COOKIE_DOMAIN=.fishport.cn`） |
 | 收藏 | 详情页一键「♡ 收藏」，`/favorites` 我的收藏夹 |
 | 评论 | 详情页发评论（≤500 字，同一用户同一游戏 10 秒限流），**分页**（每页 10 条顶层评论，回复默认折叠成「查看全部 N 条回复」）、**楼中楼两级回复**（回复别人时自动挂到同一顶层并 @昵称）、**举报**（spam / abuse / spoiler / other，同一人同一评论只算一次），站长可隐藏 / 恢复 / 处理举报 |
 | 投稿与后台 | `/submit` 登录后投稿进待审队列；`/admin` 站长审核上架、上下架游戏、管理评论，另有**批量上下架**、**投稿预览**（`/admin/preview/:slug`，按详情页的形状看内容）、**处理举报**、**封禁/解封用户**（可带理由）、**手动标记邮箱已验证**、**操作日志**（`audit_logs`，谁什么时候对什么做了什么）与开发发件箱；**投稿上传单文件 HTML**（≤ 512 KB，存库、按 `/ugc/<slug>.html` 托管）；**彻底删除**（上架中的会先拒绝，确认页把要删掉的评论 / 举报 / 评分 / 收藏 / 游玩记录 / 上传文件逐项列出来） |
@@ -72,6 +75,8 @@ pnpm start                                               # 或 pnpm dev（--watc
 
 想真的发信（验证邮箱 / 找回密码）：`RESEND_API_KEY=...` 走 Resend，或用 `MAIL_API_URL` + `MAIL_API_KEY` 指向任何一个接受 `{from,to,subject,text,html}` 的 HTTP 接口，发件人用 `MAIL_FROM` 覆盖；都不配就落「开发发件箱」（控制台打印、后台可见），功能照常能测。
 
+论坛与主站共用登录态（比如把 `forum.fishport.cn` 指到同一个 Worker）：设 `COOKIE_DOMAIN=.fishport.cn`，cookie 会带上这个 Domain，两个子域登录状态一致；**本机开发不要设**（127.0.0.1 带 Domain 的 cookie 浏览器会丢弃，登录会永远失败）。
+
 第三方登录：配 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`、`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` 就会在登录页出现对应按钮（回调地址固定是 `<站点>/auth/<provider>/callback`）；`OAUTH_DEV=1` 可以在生产环境里开「演示登录」。
 
 ## 目录结构
@@ -92,6 +97,8 @@ game-site/
 │   ├── pinyin.js        拼音搜索：标题转全拼 + 首字母，匹配与相关度
 │   ├── pinyin-data.js   拼音表（由 tools/gen-pinyin.mjs 生成，勿手改）
 │   ├── changelog-data.js 更新说明数据（由 tools/gen-changelog.mjs 读 git log 生成，勿手改）
+│   ├── data-forum.js    论坛查询：板块 / 主题 / 楼层 / 举报 / 黑名单 / 待审队列 / 禁言 / 一次性令牌
+│   ├── forum-guard.js   两线共用的论坛规则：长度与空白清洗、黑名单匹配、新人待审判定、限流参数
 │   └── cover.js         动态生成封面 SVG 与 OG 图 SVG
 ├── public/
 │   ├── css/style.css    全站样式（暗色玻璃拟态，响应式，含播放器与后台表格样式）
@@ -101,7 +108,7 @@ game-site/
 ├── tools/
 │   ├── browser-smoke.mjs  无头 Chrome 真实交互冒烟测试（零依赖，pnpm smoke）
 │   ├── account-test.mjs   账号系统 58 项断言测试（pnpm test:account，可反复跑）
-│   ├── feature-test.mjs   功能 149 项断言：评论分页 / 楼中楼 / 举报、排行榜、拼音搜索、账号增强、后台增强、投稿上传单文件 HTML、游戏彻底删除、公告与更新说明、隐私政策与用户协议与注册勾选同意（pnpm test:features）
+│   ├── feature-test.mjs   功能 216 项断言：评论分页 / 楼中楼 / 举报、排行榜、拼音搜索、账号增强、后台增强、投稿上传单文件 HTML、游戏彻底删除、公告与更新说明、隐私政策与用户协议与注册勾选同意、论坛（游客门槛 / 邮箱验证 / 黑名单 / 蜜罐 / 一次性令牌 / 限流 / 待审 / 编辑留痕 / 举报 / 后台审核与禁言 / 审计日志）（pnpm test:features）
 │   ├── mail-oauth-test.mjs 邮件与第三方登录端到端 42 项：自起假邮件服务端 + 假 OAuth Provider（pnpm test:mail）
 │   ├── worker-mail-oauth-test.mjs 同一套场景换成 D1 数据层（pnpm test:worker-mail）
 │   ├── build-pages.mjs    静态导出：GitHub Pages / Cloudflare Pages + 构建自检（pnpm build:pages）
@@ -119,6 +126,7 @@ game-site/
 ├── worker/index.js      Cloudflare Workers 静态版入口：安全头 / 缓存 / 干净地址 / 404
 ├── worker/app.js        Workers + D1 完整版入口：路由 / 安全头 / 会话（复用 src/views.js）
 ├── worker/data.js       D1 版全部查询（异步版 src/data.js）
+├── worker/data-forum.js D1 版论坛查询（异步版 src/data-forum.js，SQL 与它一一对应）
 ├── worker/auth.js       D1 版账号：PBKDF2 口令、会话表、默认站长
 ├── worker/schema.js     建表 + 灌种子 + 站长自举（首次请求时跑，幂等）
 ├── worker/seed-data.js  4 个分类 / 6 款游戏的种子（由 src/seed.js 生成）
@@ -129,6 +137,7 @@ game-site/
 ├── migrations/0001_init.sql  D1 建表脚本（由 worker/schema.js 的 DDL 生成）
 ├── migrations/0002_game_files.sql  投稿上传用的 game_files 表（0001 已在线上 apply 过，所以单开一个）
 ├── migrations/0003_posts.sql       公告 posts 表 + comments.target 列
+├── migrations/0004_forum.sql       论坛 7 张表（不含 users.muted_until / mute_reason 的 ALTER，两条线会幂等补列）
 ├── dist/                静态版产物：GitHub Pages 用（--base=/仓库名/）
 ├── dist-cf/             静态版产物：Cloudflare Pages 用（--base=/，多一个 _headers）
 ├── cloudflare-pages.zip dist-cf 的 zip 包（pnpm zip:cf），Cloudflare 控制台可直接拖拽上传
@@ -181,8 +190,21 @@ game-site/
 | POST | `/admin/users/:id/verify` | 手动把某个用户标记成邮箱已验证（需 admin） |
 | GET/POST | `/admin/posts/new` · `/admin/posts/:slug/edit` | 后台写 / 改公告（需 admin） |
 | POST | `/admin/posts/:slug/status` | 发布 / 撤回一条公告（需 admin） |
+| GET | `/forum` | 论坛首页：板块导航 + 最新主题 + 搜索（`?q= &page=`，游客只见已发布） |
+| GET | `/forum/f/:slug` | 板块页（`general` 综合讨论 / `guide` 攻略心得 / `help` 求助答疑 / `meta` 站务反馈） |
+| GET | `/forum/t/:id` | 主题详情：楼层列表 + 回复框（`?page=`，`?reply=<楼层 id>` 会带上引用提示）；锁定 / 待审 / 待验证邮箱时回复框换成一行说明 |
+| GET/POST | `/forum/new` | 发新帖：GET 是表单（未登录只显示登录提示、不签发令牌），POST 过蜜罐 + 一次性令牌 + 标题正文校验后进队列（站长直接公开） |
+| POST | `/forum/t/:id/reply` | 回复（可带 `parent_id` 做楼中楼；锁定主题只有站长能回） |
+| GET/POST | `/forum/post/:id/edit` | 编辑楼层：只有作者本人与站长能进；普通用户改完**重新待审**并留一条 `forum_post_edits` |
+| POST | `/forum/report` | 举报主题或回复（`target_type=thread\|post`，同一人同一目标只算一次） |
+| GET | `/forum/admin` | 论坛后台：待审主题 / 待审回复 / 待处理举报 / 关键词黑名单 / 被禁言用户（需 admin） |
+| POST | `/forum/admin/threads/:id/status` · `/posts/:id/status` | 通过 / 拒绝主题、通过 / 隐藏楼层（下架主题会连首楼一起下架）（需 admin） |
+| POST | `/forum/admin/threads/:id/flags` | 置顶 / 取消置顶、锁定 / 解锁（需 admin） |
+| POST | `/forum/admin/reports/:id/status` | 处理 / 忽略一条论坛举报（需 admin） |
+| POST | `/forum/admin/blacklist` · `/blacklist/:id/delete` | 增删关键词 / 正则黑名单规则（`kind=word\|regex`、`action=reject\|review`）（需 admin） |
+| POST | `/forum/admin/users/mute` · `/users/:id/mute` | 按用户名或 id 禁言 / 解禁（`minutes=0` 即解除，最长 365 天）（需 admin） |
 | GET | `/cover/:slug.svg` | 动态封面图 |
-| GET | `/sitemap.xml` / `/robots.txt` / `/favicon.ico` | SEO 与图标（robots 屏蔽了 `/admin` `/login` `/register` `/favorites` `/submit` `/account` `/forgot` `/reset` `/auth` `/comments/`） |
+| GET | `/sitemap.xml` / `/robots.txt` / `/favicon.ico` | SEO 与图标（robots 屏蔽了 `/admin` `/forum/admin` `/login` `/register` `/favorites` `/submit` `/account` `/forgot` `/reset` `/auth` `/comments/`） |
 
 **API**
 
@@ -282,7 +304,8 @@ ratings(id, game_id, visitor, stars, created_at, updated_at)
       -- UNIQUE(game_id, visitor)：一人一票，可改票；visitor 存登录用户 id 的字符串
       -- CHECK(stars BETWEEN 1 AND 5)；game_id 外键 ON DELETE CASCADE
 users(id, username UNIQUE, display_name, pass_hash, pass_salt, role, created_at,
-      email, email_verified, banned, banned_reason, verify_token, verify_expires)
+      email, email_verified, banned, banned_reason, verify_token, verify_expires,
+      muted_until, mute_reason /* 论坛禁言：到点自动失效，封禁仍走 banned */)
       -- role: user | admin；pass_hash 是 scrypt(password, salt) 的 64 字节 hex
 sessions(id, token UNIQUE, user_id, created_at, expires_at)
       -- token 是 randomBytes(32) 的 hex，user_id 外键 ON DELETE CASCADE
@@ -308,9 +331,27 @@ game_files(slug PRIMARY KEY, filename, size, html, created_at)
       -- slug 与 games.slug 一致，对应的 game_url 记成 /ugc/<slug>.html
 posts(id, slug UNIQUE, title, body, pinned, status, author_id, created_at, updated_at, published_at)
       -- 公告；status 1 已发布 / 0 已撤回（软撤回，评论留着）；updated_at 只在改内容时写，发布 / 撤回不算改动
+-- 第四批：论坛（表名带 forum_ 前缀，避开公告的 posts）
+forums(id, slug UNIQUE, name, description, icon, sort, status, created_at)
+      -- 默认 4 个板块，第一次访问时幂等插入（ensureForums）
+forum_threads(id, forum_id, user_id, title, status, pinned, locked,
+      reply_count, view_count, last_reply_at, created_at)
+      -- status 0 待审 / 1 已发布 / 2 已下架（软删）；pinned / locked 站长在页内切换
+forum_posts(id, thread_id, user_id, body, status, is_op, parent_id,
+      edited_at, edit_count, created_at)
+      -- 主题正文也是这里的一行（is_op=1）；status 0 待审 / 1 已发布 / 2 已隐藏
+      -- parent_id 为 NULL 是直接回复，非 NULL 是楼中楼（只做两级）
+forum_post_edits(id, post_id, editor_id, before_body, after_body, created_at)
+      -- 编辑留痕：每次编辑写一条改前 / 改后
+forum_reports(id, target_type, target_id, user_id, reason, detail, status, created_at)
+      -- UNIQUE(target_type, target_id, user_id)：一人对同一主题 / 楼层只算一次
+forum_blacklist(id, pattern, kind, action, note, created_at)
+      -- kind word | regex，action reject（直接拒绝）| review（转人工待审）
+form_nonces(token PRIMARY KEY, user_id, kind, used_at, created_at)
+      -- 人机校验用的一次性表单令牌：一人一用、30 分钟过期、用过写 used_at
 ```
 
-已建索引：`idx_games_cat`、`idx_games_plays`、`idx_logs_game`、`idx_logs_day`、`idx_ratings_game`、`idx_sessions_user`、`idx_fav_user`、`idx_comments_game`，以及第二批加的 `idx_games_status`、`idx_comments_parent`、`idx_reports_status`、`idx_audit_recent`、`idx_oauth_user`、`idx_reset_user`、`idx_posts_status`。
+已建索引：`idx_games_cat`、`idx_games_plays`、`idx_logs_game`、`idx_logs_day`、`idx_ratings_game`、`idx_sessions_user`、`idx_fav_user`、`idx_comments_game`，以及第二批加的 `idx_games_status`、`idx_comments_parent`、`idx_reports_status`、`idx_audit_recent`、`idx_oauth_user`、`idx_reset_user`、`idx_posts_status`，以及第四批论坛的 `idx_threads_forum`、`idx_threads_recent`、`idx_threads_user`、`idx_fposts_thread`、`idx_fposts_user`、`idx_fedits_post`、`idx_freports_status`、`idx_nonces_created`。
 数据库开启了 WAL 与 `foreign_keys=ON`。
 
 **评分是怎么算的**：写票用 SQLite 的 UPSERT
@@ -338,6 +379,14 @@ posts(id, slug UNIQUE, title, body, pinned, status, author_id, created_at, updat
 公告评论与游戏评论**共用 `comments` 表**（靠 `target` 区分 `'game'` / `'post'`），也共用分页 / 楼中楼 / 举报与 10 秒限流，只是限流键按公告单独算（`post:<用户>:<公告 id>`），所以同一秒里评游戏与评公告互不影响。
 更新说明**不手写**：`pnpm gen:changelog` 跑 `git log --no-merges`（最多 300 条）生成 `src/changelog-data.js`，`feat` / `fix` / `test` / `docs` / `chore` / `refactor` / `perf` / `style` 前缀映射成中文标签，发版前跑一次就能把最近的提交带上去。
 
+**论坛**：公告与论坛是两套数据（`posts` vs `forum_threads`/`forum_posts`），论坛靠 `forum_id` 分板块，
+主题正文就是 `forum_posts` 里 `is_op=1` 的那一行，所以「编辑主题」与「编辑回复」是同一条路径。
+游客只能看到 `status=1` 的主题与楼层，**作者本人能看到自己的待审内容**（页面会标「待审核」），站长看全部。
+发帖门槛 = 登录 + 邮箱已验证 + 未封禁 + 未禁言（`muted_until > now`），四道都在 `forumGate()` 里；
+新人与命中「转人工」黑名单的内容一律 `status=0` 进待审队列，站长在 `/forum/admin` 里通过才公开。
+普通用户编辑自己的帖子会**重新进待审**（先发干净再改成广告这条路被堵住），每次编辑都往 `forum_post_edits` 写一条留痕。
+**首楼被改回待审时整个主题也跟着回待审**，所以后台「待审主题」里一定能看到那条改动。
+
 ## 安全设计
 
 - **游戏全部在 iframe 沙箱里跑**：`sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-orientation-lock allow-popups"`，刻意**不给** `allow-top-navigation`，恶意/第三方游戏无法把整站跳走。
@@ -356,6 +405,12 @@ posts(id, slug UNIQUE, title, body, pinned, status, author_id, created_at, updat
 - 后台每个写操作都写 `audit_logs`（操作人、动作、目标、明细），后台页直接显示最近 50 条；举报有 `UNIQUE(comment_id, user_id)`，同一人同一条只能算一次。
 - **彻底删除是「先下架才能删」**：`status=1` 时直接 400 拒绝，避免一次误点让线上游戏消失；删除走一个事务（先清 `comment_reports` → `comments` → `ratings` → `favorites` → `play_logs` → `game_files` → `games`），删完 `game.delete` 连同数据量一起写进 `audit_logs`，那张投稿的上传文件也一起没了。
 - **集成自检只回答「配没配」**：后台那块面板显示邮件走的哪种 transport（Resend / 自建 HTTP / 开发发件箱）、发件人、以及每个第三方登录的 client_id / secret 是否已配置与回调地址，**不回显 secret 明文**，也不发起任何外部请求。
+
+- **论坛的九项审核与安全措施**：①举报 + 后台审核队列 + 违规内容软下架（`status=2`，随时可恢复，不物理删除）；②关键词 / 正则黑名单（命中 `reject` 直接不发，`review` 转人工待审，规则改了立刻失效缓存）；③发帖限流与每日配额（主题 60 秒 / 每天 10 条，回复 20 秒 / 每天 50 条，举报每小时 5 条，按「这个用户最近发了什么」的滚动窗口算，跨 Worker 实例也准）；④禁言（`muted_until` 到点自动解除）与封禁（复用 `banned`，封禁即时清会话）；⑤操作日志（`forum.*` 全部写 `audit_logs`）；⑥新人限制；⑦邮箱验证门槛；⑧人机校验；⑨编辑留痕。
+- **人机校验不依赖任何外部服务**：每个表单页面签发一个一次性令牌（`randomBytes(16)` → 32 位 hex，一人一用、30 分钟过期、用过写 `used_at`，提交即核销），外加一个对用户隐藏的蜜罐字段（填了就是机器人）与「打开页面到提交的最短耗时」判断；脚本批量灌水与重放都被这三层挡住，代价是用户无感（没有验证码要认）。
+- **论坛的 CSRF 靠同源 + SameSite cookie**：会话 cookie 是 `HttpOnly; SameSite=Lax`，跨站表单带不上；所有论坛 POST 只认表单、且一次性令牌与用户绑定（换个账号的令牌无效），所以即使 Cookie 被带上也无法被第三方站点代发。
+- **`forum.fishport.cn` 与主站共用一个登录态**：设了 `COOKIE_DOMAIN=.fishport.cn` 后 cookie 的 Domain 跟着走，两个子域登录状态一致；没设时是普通的主机级 cookie（本机 127.0.0.1 与 `*.workers.dev` 必须这样，写了 Domain 浏览器会丢弃整条 cookie）。
+- 论坛的表名统一 `forum_` 前缀，与公告的 `posts` 表区分开；帖子正文写库前统一走 `cleanText()`（CRLF 归一、去控制字符、折叠 3 个以上空行、限长 3000），模板输出一律 `esc()`。
 
 > **上线前必做**：把游戏资源挪到**独立域名**（例如 `games.example.com`），详情页 iframe 指向该域名，并把 `allow-same-origin` 去掉——这样才能真正隔离第三方游戏，防止它读到主站 cookie。
 > 另外记得改掉默认管理员口令，并在前面挂 HTTPS。
@@ -380,7 +435,7 @@ node tools/pages-smoke.mjs --base=/仓库名/              # 无头 Chrome 冒�
 ```
 
 静态版保留：首页、分类、标签、搜索（前端过滤）、列表排序（前端排序）、详情页、iframe 播放器（全屏 / 重开）、6 款游戏本体，以及公告列表 / 公告详情 / 更新说明（都是纯文本页，公告的评论区在静态版不渲染）。
-静态版隐藏：登录注册、评分、评论（含公告评论）、收藏、投稿（含上传单文件 HTML）、站长后台、游玩次数（详情页换成一句"静态演示版"说明）。隐私政策与用户协议是纯静态文本，静态版照样导出（页脚可达）。
+静态版隐藏：登录注册、评分、评论（含公告评论）、收藏、投稿（含上传单文件 HTML）、站长后台、游玩次数（详情页换成一句"静态演示版"说明）；**论坛整块不导出**（论坛是纯动态功能：待审队列、禁言、黑名单都要服务端），静态版导航里因此不出现论坛入口。隐私政策与用户协议是纯静态文本，静态版照样导出（页脚可达）。
 
 参数含义、发布步骤、`.nojekyll` 与中文文件名等坑，见 **[DEPLOY-GITHUB-PAGES.md](DEPLOY-GITHUB-PAGES.md)**。
 
@@ -435,6 +490,8 @@ node tools/worker-app-test.mjs         # 一条命令跑 58 项账号验收（pn
 node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:4400
 ```
 
+论坛与主站是同一个 Worker：把 `forum.fishport.cn` 作为**自定义域**加到这个 Worker 上，论坛主机的根路径（`/`、`/f/:slug`、`/t/:id`、`/new`…）会在 Worker 内部重写成 `/forum/*`，`/static` `/login` `/admin` 这些公共前缀照旧。跨子域登录态靠 `wrangler.d1.toml` 的 `COOKIE_DOMAIN = ".fishport.cn"`（**本机开发不要设**，127.0.0.1 带 Domain 的 cookie 浏览器会丢掉）。论坛的表由 `worker/schema.js` 在首次请求时自建，也可以先跑 `wrangler d1 migrations apply`（含 `migrations/0004_forum.sql`）。
+
 完整步骤（建库、绑自定义域名、改默认站长密码、备份与重置、排错），以及**我没能在本机验证的部分**（需要账号的 `wrangler login` / `wrangler deploy`、真实 Workers 上 PBKDF2 的 CPU 时间、D1 限额）都写在 **[DEPLOY-CLOUDFLARE-D1.md](DEPLOY-CLOUDFLARE-D1.md)**；`wrangler dev`（真 workerd）后来已经在本机跑通，命令见 **[DEPLOY-CLOUDFLARE-WORKERS.md](DEPLOY-CLOUDFLARE-WORKERS.md)** 文末。
 
 ## 已验证
@@ -462,20 +519,24 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   截图：`docs/screens/pages-home.png`、`pages-list.png`、`pages-search.png`、`pages-tag.png`、`pages-detail.png`、`pages-play.png`、`pages-game-tetris.png`、`pages-404.png`、`pages-mobile.png`、`pages-rank.png`、`pages-rank-week.png`、`pages-search-pinyin.png`、`pages-suggest.png`、`pages-privacy.png`、`pages-terms.png`、`pages-changelog.png`、`pages-notice.png`、`pages-notice-detail.png`。
 - Cloudflare 版产物 `pnpm smoke:pages` 同样 **18 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟。
 - Workers 版 `pnpm test:worker` **24 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄、「静态路径不产生任何跳转」（防 `html_handling` 配错导致重定向死循环）、外加 10 个页面（含 `/notice`、`/changelog`）**61 条站内链接全部 200**（多了页脚的两份条款、公告与更新说明）；另有一条断言把 `dist-cf/_headers` 里的 CSP 与代码常量逐字段比对（Pages 静态线的放行策略不会悄悄跟代码走偏）。
-- Workers + D1 完整版 `pnpm test:worker-app` **58 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **21 项全过**（含 6 款游戏真操作、后台、收藏、投稿），无 console 报错、无资源 404；出厂态复核：首页 12 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
+- Workers + D1 完整版 `pnpm test:worker-app` **58 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **23 项全过**（含 6 款游戏真操作、后台、收藏、投稿、论坛首页与主题页），无 console 报错、无资源 404；出厂态复核：首页 12 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
 - 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **58 项断言全过**。
   这一步捞出并修掉了两个只有真运行时才暴露的问题：`html_handling` 配成 `auto-trailing-slash` 会让站点陷入 `ERR_TOO_MANY_REDIRECTS`；真实 D1 的 `exec()` 按换行切语句，导致多行建表 SQL 直接 500。细节见两份 Cloudflare 部署文档。
 - 后台与账号相关的页面在无头 Chrome 里截图确认过：`docs/screens/login.png`、`register.png`、`submit.png`、`admin.png`、`favorites.png`、`rating.png`。
   手柄自测也会留下 `docs/screens/gamepad-2048.png`、`gamepad-tictactoe.png`、`gamepad-memory.png`、`gamepad-whack.png`、`gamepad-detail-iframe.png`（能直接看到虚拟光标和底部的「🎮 手柄已连接」提示）。
 - 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**7 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 详情页 iframe 自动聚焦并接收手柄输入）；静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
-  - **第二批功能 + 投稿上传 + 彻底删除 + 公告与更新说明（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强、投稿上传单文件 HTML、游戏彻底删除、公告发布/编辑/撤回与公告评论）`pnpm test:features` 共 149 项断言全部通过**，同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **149 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）；其中 1 项专门盯着 `frame-src`（详情页 CSP 必须放行 `http(s)`，否则投稿的外站游戏打不开）；另有 12 项是隐私政策 / 用户协议与注册同意：两页都 200 且写了 Cookie 名、第三方登录与邮件，页脚与 `sitemap.xml` 都收录，注册页带必填的 `name="agree"` 与两份文档的链接，不勾同意 400 且不会偷偷建号，勾了就能注册并直接登录；另有 18 项是投稿上传：文件框 + multipart 表单、上传后进待审、待审对游客 404 而站长能取、响应是 `text/html` + sandbox CSP（不含 `allow-same-origin`）、后台预览与详情页 iframe 都是严格沙箱、超 512 KB / 扩展名不对 / 非文本一律 400、只填地址的老投稿仍可用、站长上架后游客能取到并能直接玩、退回待审后又 404；最后 15 项是「彻底删除」：造一条带文件的投稿并写上评分 / 收藏 / 评论 / 游玩记录，上架中删不掉（400），下架后确认页把 6 项数据量逐一对上，POST 删除 302 回后台、详情页与 `/ugc/` 随即 404、操作日志里留下 `game.delete`；还有 30 项是「公告与更新说明」：后台发一条置顶公告、列表与首页横幅都能看到、详情页游客看到登录引导、两个账号（分开发评论与回复，避开 10 秒限流）把分页与楼中楼跑一遍、举报成功且重复举报只算一次、改公告后前台看到新段落与「最后修改」、撤回后详情 404 而重新发布后评论与回复都还在、操作日志留下 `post.create` / `post.update` / `post.retract`，以及 `/changelog` 与 `sitemap.xml` 的收录。
+  - **第二批功能 + 投稿上传 + 彻底删除 + 公告与更新说明（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强、投稿上传单文件 HTML、游戏彻底删除、公告发布/编辑/撤回与公告评论）`pnpm test:features` 共 216 项断言全部通过**（其中论坛一节 67 项），同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **216 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）；其中 1 项专门盯着 `frame-src`（详情页 CSP 必须放行 `http(s)`，否则投稿的外站游戏打不开）；另有 12 项是隐私政策 / 用户协议与注册同意：两页都 200 且写了 Cookie 名、第三方登录与邮件，页脚与 `sitemap.xml` 都收录，注册页带必填的 `name="agree"` 与两份文档的链接，不勾同意 400 且不会偷偷建号，勾了就能注册并直接登录；另有 18 项是投稿上传：文件框 + multipart 表单、上传后进待审、待审对游客 404 而站长能取、响应是 `text/html` + sandbox CSP（不含 `allow-same-origin`）、后台预览与详情页 iframe 都是严格沙箱、超 512 KB / 扩展名不对 / 非文本一律 400、只填地址的老投稿仍可用、站长上架后游客能取到并能直接玩、退回待审后又 404；最后 15 项是「彻底删除」：造一条带文件的投稿并写上评分 / 收藏 / 评论 / 游玩记录，上架中删不掉（400），下架后确认页把 6 项数据量逐一对上，POST 删除 302 回后台、详情页与 `/ugc/` 随即 404、操作日志里留下 `game.delete`；还有 30 项是「公告与更新说明」：后台发一条置顶公告、列表与首页横幅都能看到、详情页游客看到登录引导、两个账号（分开发评论与回复，避开 10 秒限流）把分页与楼中楼跑一遍、举报成功且重复举报只算一次、改公告后前台看到新段落与「最后修改」、撤回后详情 404 而重新发布后评论与回复都还在、操作日志留下 `post.create` / `post.update` / `post.retract`，以及 `/changelog` 与 `sitemap.xml` 的收录。
 - **邮件与第三方登录端到端 `pnpm test:mail` 共 42 项断言全部通过**（脚本自己起一个假邮件服务端与一个假 OAuth Provider，随机端口、不连外网）：绑定邮箱 → 收到验证信（`Authorization: Bearer` 的令牌、收件人、`MAIL_FROM` 发件人逐项核对）→ 点链接变成已验证；`/forgot` → 重置信 → `/reset` 改密 → 新密码能登、旧密码登不上、账号不存在时也是同一套说辞；GitHub 走完授权 → 回调 → 建号 → 换个浏览器再登还是同一个账号（不重复建号）→ 解绑；Google 同样走通，且资料里的邮箱被存下来并当成已验证；`state` 对不上 400、没开启的 provider 404；后台「集成自检」认出邮件走的是自建 HTTP 服务、GitHub / Google 的 client_id 与 secret 都是 ✅、回调地址与站点一致。同一套场景换成 D1 数据层再跑 `pnpm test:worker-mail` 同样 **42 项全过**。
-- `pnpm smoke`（Express）**21 项全部通过**，含新增的排行榜页（7 个榜单 tab、名次与「新上榜」标记）、搜索联想（首字母 / 全拼 / 中文三条路径）、更新说明页、公告列表与详情、首页公告横幅（点关闭后真的消失且写了 `localStorage`）与 `frame-src` 探针（测试进程自己起一个别的 origin 的小页面塞进 iframe，靠它 `postMessage` 回来证明没被 CSP 拦住——把 CSP 锁回 `'self'` 时这一项确实会红）；`pnpm smoke`（Workers + D1）同样 **21 项全部通过**。
+- `pnpm smoke`（Express）**23 项全部通过**，含新增的排行榜页（7 个榜单 tab、名次与「新上榜」标记）、搜索联想（首字母 / 全拼 / 中文三条路径）、更新说明页、公告列表与详情、首页公告横幅（点关闭后真的消失且写了 `localStorage`）与 `frame-src` 探针（测试进程自己起一个别的 origin 的小页面塞进 iframe，靠它 `postMessage` 回来证明没被 CSP 拦住——把 CSP 锁回 `'self'` 时这一项确实会红）；`pnpm smoke`（Workers + D1）同样 **21 项全部通过**。
 > `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
   > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿；`pnpm test:features` 会再留下两条测试投稿（其中一条是上传的单文件 HTML，跑完会退回待审）、一条已发布公告（带评论 / 回复 / 举报）与几个测试账号，并且**真删掉它自己造的那条投稿**（日志里因此多一条 `game.delete`）。
   > `pnpm test:mail` / `pnpm test:worker-mail` 会自己起假邮件服务端与假 OAuth Provider（随机端口、不走外网），只往库里写测试账号，跑完不删数据。
   > 两份脚本都按「增量」写断言——评分只看自己那一票、收藏只看总数的变化——所以先跑谁、重复跑几轮结果都一样（同一个库上连跑两遍 account-test 仍是 58/58），前提只是 2048 这个 slug 还在；
+  > 论坛那一节还会留下两个论坛测试账号（甲 / 乙）、一条站长主题与若干待审帖，并临时加一条黑名单规则（跑完自己删掉）、禁言再解禁一次；这些都不影响重复运行。
   > 跑完想干净就按上面「彻底回到出厂状态」删库重启。
+
+- **论坛（带审核与安全措施）**：`pnpm test:features` 里 67 项断言一次跑完两条线——游客只能看已发布内容、未登录发帖跳登录、未验证邮箱不给表单、黑名单命中直接拒绝、蜜罐字段命中判机器人、伪造 / 过期令牌被拒、新人主题与回复进待审（游客看不到、作者自己看得到、列表页没有）、连发主题 60 秒 / 连发回复 20 秒被限流、举报与重复举报、站长在 `/forum/admin` 通过 / 置顶 / 锁定、编辑后重新待审（首楼一改整个主题退回待审）、禁言后拿着有效令牌也发不出、`minutes=0` 解除禁言、黑名单增删，以及 `forum.*` 全部写进审计日志。
+- **论坛的两种访问形态都实测过**：本机用 `curl -H 'Host: forum.fishport.cn'`（`tools/serve-worker.mjs` 按 Host 拼 URL，等价于真域名）验证论坛主机的 `/` 会走成论坛首页、`/f/general` 200、`/static` 照样出静态资源、主站访问不受影响；设了 `COOKIE_DOMAIN` 时注册响应里确实带 `Domain=.fishport.cn`。
 
 ## 后续可做
 
@@ -484,4 +545,6 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 - 微信登录需要企业主体与审核，代码里留的是 GitHub / Google 两条线；再加 Provider 只需往 `src/oauth.js` 的 `META` 里填一组地址即可。
 - 邮件现在支持 Resend 或自建 HTTP 发信接口（`MAIL_API_URL` + `MAIL_API_KEY`）；正式发信还该配好 SPF/DKIM、退信与重试。
 - 第三方登录的授权 / 令牌 / 用户资料端点已经能用 `OAUTH_<PROVIDER>_*_URL` 覆盖，要接自建 OAuth 网关（比如把 GitHub 藏在公司出口后面）不用改代码。
+- 论坛现在用的是「滚动窗口计数」限流（按库里最近的行数算，多实例也准）；要是量再大，可以换成 Cloudflare 的 Rate Limiting 或 Redis 计数器。
+- 论坛还缺 @提醒与站内通知、主题标签与精华、附件 / 图片上传（要配套对象存储与审核），以及黑名单正则缓存的跨实例共享（现在是每个实例各缓存 10 秒）。
 - 图片/视频素材、真实 OG 截图。
