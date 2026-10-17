@@ -50,7 +50,7 @@ migrations_dir = "migrations"
 MAIL_FROM = "趣玩小游戏 <noreply@fishport.cn>"
 
 # 第三方登录：配了才会在登录页出现按钮，回调地址固定是 <站点域名>/auth/<provider>/callback。
-GITHUB_CLIENT_ID = "Ov23liMTtgBKQzeyEsY4"
+GITHUB_CLIENT_ID = "Ov23liMT1gBKGZeyEsY4"   # 留意长得像的字符：这里原来把 t 写成了 1、把 Q 写成了 G，GitHub 会当成「不存在的应用」直接回 404
 # GITHUB_CLIENT_SECRET = "..."  # secret：别写进仓库，用 Cloudflare 控制台或 npx wrangler secret put
 GOOGLE_CLIENT_ID = "572690505711-cdnfel89qrll44tu048k4fnmiceuv70.apps.googleusercontent.com"
 # GOOGLE_CLIENT_SECRET = "..."  # secret：同上
