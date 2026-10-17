@@ -131,7 +131,17 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 1. 论坛本来就能从 `https://你的域名/forum` 打开，先确认 `/forum` 200、`/forum/admin` 用站长身份 200；
 2. 想单独用 `forum.fishport.cn`：Cloudflare → 该 Worker → Settings → **Domains & Routes** → Add → Custom Domain → `forum.fishport.cn`（DNS 记录它会自动建）；
 3. 想让两个子域**共用登录态**：在 `wrangler.d1.toml` 的 `[vars]` 里设 `COOKIE_DOMAIN = ".fishport.cn"`（本仓库默认已经写上了），或面板的「变量」里加同名的普通变量，然后重新部署；
-4. 验证：在 `game-site.fishport.cn` 登录后打开 `forum.fishport.cn`，页面右上角应该仍是登录态；`curl -sI https://game-site.fishport.cn/api/auth/register` 之类看不出 cookie，直接看浏览器 DevTools 的 `sid` cookie 有没有 `Domain=.fishport.cn` 最直观。
+4. 验证（一条命令，只读）：
+
+```bash
+pnpm check:forum                                                    # 主站 /forum 与论坛主机各查一遍
+FORUM_USER=admin FORUM_PASS=你的口令 pnpm check:forum               # 再加一项：两个子域共用登录态（会真登录一次）
+```
+
+它会检查：主站的 `/forum` 板块与发帖入口、游客不发令牌、板块页、后台 302 到登录、robots 与 sitemap；论坛主机的根路径是不是论坛首页、页面里的链接是不是相对根路径（`/f/…` 而不是 `/forum/f/…`）、`/forum` 与 `/static` 是否照旧、以及（给了账号时）`sid` cookie 是否带 `Domain=`、拿论坛主机的 cookie 访问主站 `/api/me` 是不是同一账号。
+自定义域还没加时，论坛主机那一段会标 `skip` 并提示去哪加，不算失败。
+
+> 也可以手工看：在 `game-site.fishport.cn` 登录后打开 `forum.fishport.cn`，右上角应该仍是登录态；DevTools 里 `sid` cookie 的 Domain 应该是 `.fishport.cn`。
 
 > 论坛主机上的请求会在 Worker 内部重写成 `/forum/*`（`/static`、`/login`、`/admin`、`/api` 这些公共前缀不受影响），所以两种访问形态共用同一套路由与模板，链接基址会自动切换。
 > 论坛的 7 张表随首次请求自建；已经跑过 `0001`~`0003` 的老库也不需要手工 ALTER——`worker/schema.js` 会幂等补 `users.muted_until` / `mute_reason` 两列。

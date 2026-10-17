@@ -26,7 +26,7 @@
 | 更新说明 | `/changelog`，**不手写**：`pnpm gen:changelog` 读 `git log` 生成 `src/changelog-data.js`（feat / fix / docs… 映射成中文标签），页脚有入口、`/sitemap.xml` 收录 |
 | 论坛 | `/forum`：默认 4 个板块、主题列表与搜索、两级楼中楼回复、编辑留痕；发帖要登录 + **邮箱已验证** + 未被封禁 / 禁言；新人（发帖不足 3 条）的主题与回复自动进待审队列，站长在 `/forum/admin` 通过 / 拒绝 / 置顶 / 锁定 |
 | 论坛的审核与安全 | 9 项措施：举报 + 后台审核队列 + 违规内容软下架、关键词 / 正则黑名单（命中「直接拒绝」或「转人工待审」）、发帖限流与每日配额（主题 60 秒 1 条 / 每天 10 条，回复 20 秒 / 每天 50 条，举报每小时 5 条）、禁言（到点自动解除）与封禁、操作日志（`audit_logs`）、新人限制、邮箱验证门槛、不依赖外部服务的人机校验（一次性表单令牌 + 蜜罐字段 + 最短填写耗时）、编辑留痕（`forum_post_edits` 存改前改后，普通用户一改就重新待审） |
-| 论坛域名 | 同一套路由既能走 `/forum`，也能把 `forum.fishport.cn` 指到同一个 Worker：论坛主机上的请求在内部重写成 `/forum/*`、页面里的链接基址自动切换，账号 / 后台 / 审计日志完全共用（跨子域登录态靠 `COOKIE_DOMAIN=.fishport.cn`） |
+| 论坛域名 | 同一套路由既能走 `/forum`，也能把 `forum.fishport.cn` 指到同一个 Worker：论坛主机上的请求在内部重写成 `/forum/*`、页面里的链接基址自动切换，账号 / 后台 / 审计日志完全共用（跨子域登录态靠 `COOKIE_DOMAIN=.fishport.cn`；`pnpm check:forum` 一条命令就能查主站与论坛主机两侧是否都正常） |
 | 收藏 | 详情页一键「♡ 收藏」，`/favorites` 我的收藏夹 |
 | 评论 | 详情页发评论（≤500 字，同一用户同一游戏 10 秒限流），**分页**（每页 10 条顶层评论，回复默认折叠成「查看全部 N 条回复」）、**楼中楼两级回复**（回复别人时自动挂到同一顶层并 @昵称）、**举报**（spam / abuse / spoiler / other，同一人同一评论只算一次），站长可隐藏 / 恢复 / 处理举报 |
 | 投稿与后台 | `/submit` 登录后投稿进待审队列；`/admin` 站长审核上架、上下架游戏、管理评论，另有**批量上下架**、**投稿预览**（`/admin/preview/:slug`，按详情页的形状看内容）、**处理举报**、**封禁/解封用户**（可带理由）、**手动标记邮箱已验证**、**操作日志**（`audit_logs`，谁什么时候对什么做了什么）与开发发件箱；**投稿上传单文件 HTML**（≤ 512 KB，存库、按 `/ugc/<slug>.html` 托管）；**彻底删除**（上架中的会先拒绝，确认页把要删掉的评论 / 举报 / 评分 / 收藏 / 游玩记录 / 上传文件逐项列出来） |
@@ -122,6 +122,7 @@ game-site/
 │   ├── worker-feature-test.mjs 同一份功能用例换成 D1 数据层（pnpm test:worker-features）
 │   ├── gen-pinyin.mjs     重新生成 src/pinyin-data.js 的拼音表（--download 取数据源）
 │   ├── gen-changelog.mjs  读 git log 重新生成 src/changelog-data.js（pnpm gen:changelog）
+│   ├── check-forum-host.mjs 论坛上线检查：主站 /forum 与 forum.fishport.cn 自定义域是否生效（pnpm check:forum，只读）
 │   └── gamepad-test.mjs   手柄自测：注入假手柄跑 7 个用例（pnpm test:gamepad）
 ├── worker/index.js      Cloudflare Workers 静态版入口：安全头 / 缓存 / 干净地址 / 404
 ├── worker/app.js        Workers + D1 完整版入口：路由 / 安全头 / 会话（复用 src/views.js）
@@ -536,6 +537,7 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   > 跑完想干净就按上面「彻底回到出厂状态」删库重启。
 
 - **论坛（带审核与安全措施）**：`pnpm test:features` 里 67 项断言一次跑完两条线——游客只能看已发布内容、未登录发帖跳登录、未验证邮箱不给表单、黑名单命中直接拒绝、蜜罐字段命中判机器人、伪造 / 过期令牌被拒、新人主题与回复进待审（游客看不到、作者自己看得到、列表页没有）、连发主题 60 秒 / 连发回复 20 秒被限流、举报与重复举报、站长在 `/forum/admin` 通过 / 置顶 / 锁定、编辑后重新待审（首楼一改整个主题退回待审）、禁言后拿着有效令牌也发不出、`minutes=0` 解除禁言、黑名单增删，以及 `forum.*` 全部写进审计日志。
+- **论坛上线检查脚本 `pnpm check:forum`**（只读）：主站侧查 9 项（板块与发帖入口、游客不发令牌、板块页、404、后台 302、robots、sitemap），论坛主机侧查根路径重写、链接基址、`/forum` 与 `/static`、登录页与后台 302；自定义域没加时那一侧标 `skip` 并提示去哪加；带 `FORUM_USER` / `FORUM_PASS` 时再加两项——`sid` 是否带 `Domain=`、拿论坛主机的 cookie 访问主站 `/api/me` 是不是同一账号。
 - **论坛的两种访问形态都实测过**：本机用 `curl -H 'Host: forum.fishport.cn'`（`tools/serve-worker.mjs` 按 Host 拼 URL，等价于真域名）验证论坛主机的 `/` 会走成论坛首页、`/f/general` 200、`/static` 照样出静态资源、主站访问不受影响；设了 `COOKIE_DOMAIN` 时注册响应里确实带 `Domain=.fishport.cn`。
 
 ## 后续可做
