@@ -141,6 +141,18 @@ FORUM_USER=admin FORUM_PASS=你的口令 pnpm check:forum               # 再加
 它会检查：主站的 `/forum` 板块与发帖入口、游客不发令牌、板块页、后台 302 到登录、robots 与 sitemap；论坛主机的根路径是不是论坛首页、页面里的链接是不是相对根路径（`/f/…` 而不是 `/forum/f/…`）、`/forum` 与 `/static` 是否照旧、以及（给了账号时）`sid` cookie 是否带 `Domain=`、拿论坛主机的 cookie 访问主站 `/api/me` 是不是同一账号。
 自定义域还没加时，论坛主机那一段会标 `skip` 并提示去哪加，不算失败。
 
+5. **第三方登录要多登记一份回调地址**：回调地址是跟着「当前域名」走的（`<当前域名>/auth/<provider>/callback`），所以 GitHub / Google 后台里除了主站那份，还要把论坛主机那份也加上：
+
+```
+https://game-site.fishport.cn/auth/github/callback   （已有）
+https://forum.fishport.cn/auth/github/callback       （新增）
+https://game-site.fishport.cn/auth/google/callback   （已有）
+https://forum.fishport.cn/auth/google/callback       （新增）
+```
+
+`pnpm check:forum` 会把这几条原样打印出来，照抄即可。只登记了主站那份时，站点本身一切正常，只有在论坛主机上**点**第三方登录按钮才会被 provider 拒（`redirect_uri` 不匹配）。
+> 也可以干脆只在主站用第三方登录：论坛主机的登录页照样有邮箱密码登录，两者共用同一套账号。
+
 > 也可以手工看：在 `game-site.fishport.cn` 登录后打开 `forum.fishport.cn`，右上角应该仍是登录态；DevTools 里 `sid` cookie 的 Domain 应该是 `.fishport.cn`。
 
 > 论坛主机上的请求会在 Worker 内部重写成 `/forum/*`（`/static`、`/login`、`/admin`、`/api` 这些公共前缀不受影响），所以两种访问形态共用同一套路由与模板，链接基址会自动切换。
