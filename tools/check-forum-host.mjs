@@ -11,6 +11,7 @@
 const SITE = (process.env.SITE || 'https://game-site.fishport.cn').replace(/\/$/, '');
 const FORUM = (process.env.FORUM || 'https://forum.fishport.cn').replace(/\/$/, '');
 let pass = 0, fail = 0, skip = 0;
+const callbacks = [];
 function ok(name, cond, extra) {
   if (cond) { pass++; console.log('  ok   ' + name); }
   else { fail++; console.log('  FAIL ' + name + (extra === undefined ? '' : ' :: ' + extra)); }
@@ -49,6 +50,13 @@ async function checkSite() {
   ok('不存在的主题 404', r.ok && r.status === 404, r.ok ? r.status : r.error);
   r = await probe(SITE + '/forum/admin');
   ok('论坛后台未登录时 302 到登录页', r.ok && r.status === 302 && r.location.indexOf('/login?next=') === 0, r.ok ? r.status + ' ' + r.location : r.error);
+  for (const p of ['github', 'google']) {
+    const a = await probe(SITE + '/auth/' + p);
+    if (a.ok && a.status === 302) {
+      const mm = /redirect_uri=([^&]+)/.exec(a.location);
+      if (mm) callbacks.push({ host: SITE, p: p, uri: decodeURIComponent(mm[1]) });
+    }
+  }
   r = await probe(SITE + '/robots.txt');
   ok('robots 屏蔽 /forum/admin', r.ok && r.text.includes('Disallow: /forum/admin'), '');
   r = await probe(SITE + '/sitemap.xml');
@@ -74,6 +82,15 @@ async function checkForumHost() {
   ok('/static 照样出静态资源', css.ok && css.status === 200, css.ok ? css.status : css.error);
   const admin = await probe(FORUM + '/forum/admin');
   ok('论坛后台未登录时 302 到登录页', admin.ok && admin.status === 302 && admin.location.indexOf('/login?next=') === 0, admin.ok ? admin.status + ' ' + admin.location : admin.error);
+  for (const p of ['github', 'google']) {
+    const a = await probe(FORUM + '/auth/' + p);
+    if (!a.ok || a.status !== 302) { skipped(p + ' 登录跳转（这台主机上没配 client_id 或路由不对）', a.ok ? 'status ' + a.status : a.error); continue; }
+    const mm = /redirect_uri=([^&]+)/.exec(a.location);
+    const uri = mm ? decodeURIComponent(mm[1]) : '';
+    callbacks.push({ host: FORUM, p: p, uri: uri });
+    ok(p + ' 登录的回调地址跟着当前域名走（' + uri + '）——这个地址也要在所对应的后台里登记，否则只看不点没事、一点就报 redirect_uri 不匹配',
+      uri.indexOf(FORUM + '/auth/' + p + '/callback') === 0, uri || a.location.slice(0, 100));
+  }
   const login = await probe(FORUM + '/login');
   ok('登录页 200', login.ok && login.status === 200, login.ok ? login.status : login.error);
 
@@ -98,6 +115,17 @@ async function main() {
   await checkSite();
   await checkForumHost();
   console.log('');
+  if (callbacks.length) {
+    console.log('第三方登录后台要登记的授权回调地址：');
+    const seen = {};
+    for (const c of callbacks) {
+      const key = c.p + ' ' + c.uri;
+      if (seen[key]) continue;
+      seen[key] = 1;
+      console.log('  ' + (c.p === 'github' ? 'GitHub' : 'Google') + '  ' + c.uri);
+    }
+    console.log('  （只登记了主站的地址时，在论坛主机上点第三方登录会被 provider 拒绝——两边都登记才处处可用）');
+  }
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项' + (skip ? '，跳过 ' + skip + ' 项' : ''));
   if (fail) process.exitCode = 1;
 }
