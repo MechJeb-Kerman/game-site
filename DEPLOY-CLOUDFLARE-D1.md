@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 216 项功能验收 + 42 项邮件与第三方登录端到端 + 23 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 227 项功能验收 + 42 项邮件与第三方登录端到端 + 24 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -158,6 +158,17 @@ https://forum.fishport.cn/auth/google/callback       （新增）
 > 论坛主机上的请求会在 Worker 内部重写成 `/forum/*`（`/static`、`/login`、`/admin`、`/api` 这些公共前缀不受影响），所以两种访问形态共用同一套路由与模板，链接基址会自动切换。
 > 论坛的 7 张表随首次请求自建；已经跑过 `0001`~`0003` 的老库也不需要手工 ALTER——`worker/schema.js` 会幂等补 `users.muted_until` / `mute_reason` 两列。
 
+### 6.6 导航页与 `fishport.cn` / `www.fishport.cn`（可选）
+
+仓库里已经带了一页给这个域名准备的导航页 **`/nav`**：一页列出 `fishport.cn` 下所有能打开的站点（清单只有一份，在 `src/sites.js`）。把它挂到门户主机上只要一步：
+
+1. Cloudflare → 该 Worker → Settings → **Domains & Routes** → Add → Custom Domain → 依次加 `fishport.cn` 与 `www.fishport.cn`（DNS 记录它会自动建，apex 也照样能加；这两条记录只影响网页解析，mail 用的 TXT / 发信域不受影响）；
+2. 加完之后 `https://fishport.cn/` 与 `https://www.fishport.cn/` **根路径直接就是导航页**——判定只有三个主机名：`fishport.cn`、`www.fishport.cn`、`nav.fishport.cn`（`src/sites.js` 的 `PORTAL_HOSTS`）。其它主机不受影响：`/nav` 随处都能打开，但根路径仍是各自首页（论坛主机的 `/` 还是论坛首页，游戏站主机的 `/` 还是游戏首页）。门户主机的其它路径也照常走站点本身的路由；
+3. 想加/换一个子域：改 `src/sites.js` 的 `SITES` 数组，push 一次即可（Express / Workers+D1 / 静态导出三条线共用这一份清单）；
+4. `send` / `rsend`（邮件）、`mc`（Minecraft，含 `_minecraft._tcp` 的 SRV）与 `resend._domainkey` 的 TXT 按需求不进导航页，页面上也不会出现它们的链接。
+
+验证：`pnpm test:features`（或 `pnpm test:worker-features`）里有一节 11 项断言，其中 5 项就是拿自定义 `Host` 头真发请求查门户主机的判定；线上则是加完自定义域后直接开 `https://fishport.cn/` 看。
+
 ### 7. 这条路线我没法在本机验证的部分
 
 面板里的确切字段名与步骤会随 Cloudflare 改版变化；`npx wrangler deploy --config` 在 Workers Builds 的构建环境里是否被允许（它等价于默认的 `npx wrangler deploy` 多一个 `--config`，我倾向于可以），以及构建环境里跑 D1 迁移的权限，都需要你第一次部署时看构建日志确认（面板里该 Worker 的 Builds 页）。
@@ -218,7 +229,7 @@ wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELET
 ```bash
 node tools/serve-worker.mjs --reset        # http://127.0.0.1:4400，node:sqlite 冒充 D1
 node tools/worker-app-test.mjs             # 一条命令跑 58 项账号验收（自动挑端口、自动建库）
-node tools/worker-feature-test.mjs         # 216 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除、公告与更新说明、隐私政策/用户协议与注册同意，以及论坛的 67 项审核与安全断言）
+node tools/worker-feature-test.mjs         # 227 项功能验收（同一份用例换成 D1 数据层，含投稿上传单文件 HTML、彻底删除、公告与更新说明、隐私政策/用户协议与注册同意，以及论坛的 67 项审核与安全断言）
 node tools/worker-mail-oauth-test.mjs      # 42 项邮件与第三方登录端到端（自起假邮件服务端 + 假 OAuth Provider，不连外网）
 node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.1:4400
 ```
@@ -226,10 +237,10 @@ node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.
 - `tools/d1-local.mjs`：用 Node 22 的 `node:sqlite` 实现 D1 的 `prepare/bind/first/all/run/batch/exec`，
   `tools/serve-worker.mjs`：Node http 当壳、把请求交给真正的 `worker/app.js`。
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
-  **216 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404，以及公告与更新说明：发布 / 置顶 / 评论 / 楼中楼 / 举报 / 改内容 / 撤回 / 再发布，`/changelog` 由 git 历史生成），
+  **227 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404，以及公告与更新说明：发布 / 置顶 / 评论 / 楼中楼 / 举报 / 改内容 / 撤回 / 再发布，`/changelog` 由 git 历史生成），
   **42 项邮件与第三方登录断言全过**（`tools/mail-oauth-test.mjs` 的场景换成 D1 数据层：绑定邮箱收到验证信、点链接变已验证、找回密码改密、GitHub / Google 授权回调建号与复用账号、`state` 校验失败 400、后台集成自检面板），
-  **23 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想、公告列表与详情、更新说明页、首页公告横幅关闭、论坛首页与主题页），无 console 报错、无资源 404。
-  静态产物那边 `node tools/worker-test.mjs` 另有 **24 项断言**（页面 200、10 个页面 61 条站内链接全通）。
+  **24 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想、公告列表与详情、更新说明页、首页公告横幅关闭、论坛首页与主题页），无 console 报错、无资源 404。
+  静态产物那边 `node tools/worker-test.mjs` 另有 **26 项断言**（页面 200、10 个页面 75 条站内链接全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
   首页 / 列表 / 详情 / 分类 / 标签 / 搜索 / 注册 / 登录 / 404 / sitemap / robots 全部 200，`/favorites`、`/admin` 未登录正确 302 到 `/login?next=…`，
   `BASE=http://127.0.0.1:8790 node tools/account-test.mjs` **58 项断言全过**。这一步捞出两个只在真运行时才暴露的 bug，见第九节。
@@ -293,5 +304,5 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - 真实 Workers 运行时里 PBKDF2 的 CPU 时间、线上响应头与缓存的实际表现；
 - D1 的免费额度与限额数字。
 
-已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 216 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
-浏览器里的页面渲染与交互（23 项冒烟，含公告与更新说明与论坛）、静态资源与安全响应头（24 项断言，见 `tools/worker-test.mjs`）。
+已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 227 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
+浏览器里的页面渲染与交互（24 项冒烟，含公告与更新说明、论坛与导航页）、静态资源与安全响应头（26 项断言，见 `tools/worker-test.mjs`）。
