@@ -1,7 +1,15 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-18 14:28";
-export const CHANGELOG_TOTAL = 39;
+export const CHANGELOG_GENERATED = "2026-10-18 14:56";
+export const CHANGELOG_TOTAL = 40;
 export const CHANGELOG = [
+  {
+    "hash": "4203f5d",
+    "date": "2026-10-18 22:29",
+    "day": "2026-10-18",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "三款棋类游戏（五子棋/中国象棋/国际象棋）+ 联机中继与 AI 对战"
+  },
   {
     "hash": "78132a3",
     "date": "2026-10-18 21:09",

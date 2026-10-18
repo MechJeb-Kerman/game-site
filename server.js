@@ -38,6 +38,8 @@ app.use(express.urlencoded({ extended: false, limit: '64kb' }));
  * 安全响应头（游戏为本站自研，故允许 inline/eval）。
  * frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把那个地址 iframe 进来，
  * 只写 'self' 会把外站游戏整块拦成「该内容被屏蔽了」（不同子域也不算 'self'）。
+ * script-src / connect-src 另外放行 Cloudflare 的 RUM beacon：边缘会自动往 HTML 里插
+ * beacon.min.js，不放行就是每页控制台一条 CSP 拦截报错，统计也收不到数。
  */
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -48,12 +50,12 @@ app.use((req, res, next) => {
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://static.cloudflareinsights.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "media-src 'self' data: blob:",
       "font-src 'self' data:",
-      "connect-src 'self'",
+      "connect-src 'self' https://cloudflareinsights.com",
       "frame-src 'self' https: http:",
       "frame-ancestors 'self'",
       "base-uri 'self'",

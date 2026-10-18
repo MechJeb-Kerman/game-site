@@ -115,7 +115,7 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ```
 node tools/build-pages.mjs --cf --base=/ --origin=https://game-site.pages.dev --out=dist-cf
-  → 游戏 10 款 / 分类 4 个 / 标签 19 个 / 排行榜 7 个 / 更新说明 1 页；83 个文件，876.3 KB（全新库还没有公告；每建一条公告 +1 个文件）
+  → 游戏 10 款 / 分类 4 个 / 标签 19 个 / 排行榜 7 个 / 更新说明 1 页；83 个文件，877.0 KB（全新库还没有公告；每建一条公告 +1 个文件）
 
 node tools/pages-smoke.mjs --base=/ --out=dist-cf
   → pages-home / pages-list / pages-search / pages-tag / pages-detail /

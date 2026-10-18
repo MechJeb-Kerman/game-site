@@ -23,15 +23,16 @@ export const SECURITY_HEADERS = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Frame-Options': 'SAMEORIGIN',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-  /* frame-src 放行 http(s)：投稿允许填任意外站地址，外站游戏靠 iframe 载入 */
+  /* frame-src 放行 http(s)：投稿允许填任意外站地址，外站游戏靠 iframe 载入；
+     script-src/connect-src 放行 Cloudflare 边缘自动注入的 RUM beacon */
   'Content-Security-Policy': [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    "connect-src 'self' https://cloudflareinsights.com",
     "frame-src 'self' https: http:",
     "frame-ancestors 'self'",
     "base-uri 'self'",

@@ -20,6 +20,7 @@ import * as play from './play-store.js';
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
  * 那个地址 iframe 进来，只写 'self' 会拦成「该内容被屏蔽了」（不同子域也不算 'self'）。
+ * script-src / connect-src 另外放行 Cloudflare 的 RUM beacon（边缘自动注入 beacon.min.js）。
  */
 export const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -28,12 +29,12 @@ export const SECURITY_HEADERS = {
   'permissions-policy': 'geolocation=(), microphone=(), camera=()',
   'content-security-policy': [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    "connect-src 'self' https://cloudflareinsights.com",
     "frame-src 'self' https: http:",
     "frame-ancestors 'self'",
     "base-uri 'self'",

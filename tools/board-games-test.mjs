@@ -15,6 +15,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.BASE || 'http://127.0.0.1:3000';
 const OUT = process.env.SHOTS_DIR || path.join(HERE, '..', 'docs', 'screens');
 const PORT = Number(process.env.CDP_PORT || 9231);
+/* 线上（远程 BASE）比本机慢：页面多等一会儿再读状态，联机面板与接口也多给几轮 */
+const REMOTE = !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE);
+const SETTLE = REMOTE ? 1500 : 700;
 const CANDIDATES = [
   process.env.CHROME,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -118,11 +121,11 @@ async function load(c, url) {
     const iv = setInterval(function () {
       if (c.events.some(function (e) { return e.method === 'Page.loadEventFired'; })) { clearInterval(iv); res(); }
     }, 50);
-    setTimeout(function () { clearInterval(iv); res(); }, 10000);
+    setTimeout(function () { clearInterval(iv); res(); }, REMOTE ? 25000 : 10000);
   });
   await c.send('Page.navigate', { url: url });
   await done;
-  await sleep(700);
+  await sleep(SETTLE);
 }
 
 function problems(c) {
@@ -135,7 +138,12 @@ function problems(c) {
     if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') {
       out.push('console.error ' + e.params.args.map(function (a) { return a.value != null ? a.value : (a.description || ''); }).join(' '));
     }
-    if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error') out.push('LOG ' + e.params.entry.text);
+    if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error') {
+      /* 线上每页都会多出 Cloudflare 边缘注入的 RUM beacon 那条日志（CSP 已放行）；
+         它不属于页面自身报错，跳过，否则线上跑必然假失败 */
+      if (String(e.params.entry.text).indexOf('cloudflareinsights.com') >= 0) continue;
+      out.push('LOG ' + e.params.entry.text);
+    }
   }
   return out;
 }
@@ -152,6 +160,17 @@ async function shot(c, name) {
   const file = path.join(OUT, name + '.png');
   fs.writeFileSync(file, Buffer.from(r.data, 'base64'));
   return file;
+}
+
+/** 等 window.BOARD 出现（线上首次加载慢，脚本可能还没执行到尾） */
+async function waitBoard(c, ms) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const st = await boardState(c);
+    if (st && !st.__err) return st;
+    await sleep(250);
+  }
+  return boardState(c);
 }
 
 async function boardState(c) {
@@ -202,8 +221,8 @@ async function waitMove(c, baseline, ms) {
 /** 通过联机面板开一间房，返回房间码（建房有 1 秒限速，撞上就重试） */
 async function createRoom(c) {
   await evalOn(c, "(function(){ var p = document.querySelector('.np-pill'); if (p) p.click(); })()");
-  await sleep(250);
-  for (let i = 0; i < 5; i++) {
+  await sleep(REMOTE ? 900 : 250);
+  for (let i = 0; i < (REMOTE ? 8 : 5); i++) {
     await evalOn(c, "(function(){ var b = document.querySelector('.np-panel [data-act=create]'); if (b) b.click(); })()");
     await sleep(700);
     const code = await evalOn(c, "(function(){ var e = document.querySelector('.np-panel .np-code'); return e ? e.textContent.trim() : ''; })()");
@@ -226,14 +245,15 @@ async function onlineCheck(game) {
     ok(game.label + ' 联机：开房间拿到 6 位房间码', !!code, code);
     if (!code) return;
     await load(b, BASE + '/games/' + game.slug + '/index.html?room=' + code);
-    await sleep(2500);
+    await sleep(REMOTE ? 5000 : 2500);
+    await waitBoard(b, REMOTE ? 12000 : 3000);
     const sb = await boardState(b);
     const bcode = await evalOn(b, "(function(){ var e = document.querySelector('.np-code'); return e ? e.textContent.trim() : ''; })()");
     ok(game.label + ' 联机：第二位玩家用 ?room= 自动加入并进入对局', !!sb && !sb.__err && sb.mode === 'online' && bcode === code, { state: sb, guestCode: bcode, code: code });
     const before = (await boardState(b)).moves;
     const move = await playOneMove(a, 30);
     ok(game.label + ' 联机：房主在棋盘上落子成功', move.ok, move);
-    const got = await waitMove(b, before, 8000);
+    const got = await waitMove(b, before, REMOTE ? 14000 : 8000);
     ok(game.label + ' 联机：对手的棋盘同步到这一手', !!got, { before: before, after: got && got.moves });
     await shot(a, 'board-' + game.slug + '-online-host');
     await shot(b, 'board-' + game.slug + '-online-guest');
@@ -248,7 +268,7 @@ async function aiCheck(game) {
     await load(c, BASE + '/games/' + game.slug + '/index.html');
     const errs = problems(c);
     ok(game.label + ' 页面加载无 JS 报错', errs.length === 0, errs.slice(0, 3));
-    const st0 = await boardState(c);
+    const st0 = await waitBoard(c, REMOTE ? 12000 : 3000);
     ok(game.label + ' 暴露了 window.BOARD 调试句柄', !!st0 && !st0.__err, st0);
     if (!st0 || st0.__err) return;
     await evalOn(c, "(function(){ window.BOARD.setMode('ai'); })()");
