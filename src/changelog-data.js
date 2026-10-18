@@ -1,7 +1,71 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-17 15:36";
-export const CHANGELOG_TOTAL = 26;
+export const CHANGELOG_GENERATED = "2026-10-18 09:27";
+export const CHANGELOG_TOTAL = 34;
 export const CHANGELOG = [
+  {
+    "hash": "89ef5b3",
+    "date": "2026-10-18 17:27",
+    "day": "2026-10-18",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与两份 Cloudflare 部署文档补导航页"
+  },
+  {
+    "hash": "d37ebbb",
+    "date": "2026-10-18 17:27",
+    "day": "2026-10-18",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "导航页断言与门户主机判定（Express / Workers+D1 / 静态线）"
+  },
+  {
+    "hash": "862e87b",
+    "date": "2026-10-18 17:27",
+    "day": "2026-10-18",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "导航页（/nav，fishport.cn 门户）"
+  },
+  {
+    "hash": "ae28e4a",
+    "date": "2026-10-18 00:19",
+    "day": "2026-10-18",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "论坛上线实测结果与第三方登录的回调地址要求"
+  },
+  {
+    "hash": "22413df",
+    "date": "2026-10-18 00:18",
+    "day": "2026-10-18",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "check:forum 增加第三方登录回调地址检查"
+  },
+  {
+    "hash": "9c7c3ad",
+    "date": "2026-10-17 23:59",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "把「绑定 forum.fishport.cn」的验证写成一条命令"
+  },
+  {
+    "hash": "f3740d3",
+    "date": "2026-10-17 23:59",
+    "day": "2026-10-17",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "论坛上线检查脚本（pnpm check:forum，只读）"
+  },
+  {
+    "hash": "bef1ac0",
+    "date": "2026-10-17 23:36",
+    "day": "2026-10-17",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "README 与四份部署文档补论坛；更新说明重跑"
+  },
   {
     "hash": "d05ebd4",
     "date": "2026-10-17 23:35",
