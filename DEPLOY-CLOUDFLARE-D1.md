@@ -42,7 +42,7 @@ wrangler deploy --config wrangler.d1.toml
 部署成功会打印 `https://game-site-d1.<账号>.workers.dev`。**第一次打开这个地址时**，Worker 会自动：
 
 1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql`、`migrations/0002_game_files.sql`、`migrations/0003_posts.sql`、`migrations/0004_forum.sql` 一致，就算忘了 apply 迁移也能跑）；
-2. 灌种子数据：4 个分类 + 6 款游戏（2048 / 贪吃蛇 / 记忆翻牌 / 打地鼠 / 井字棋 / 俄罗斯方块）；
+2. 灌种子数据：4 个分类 + 7 款游戏（2048 / 贪吃蛇 / 记忆翻牌 / 打地鼠 / 井字棋 / 俄罗斯方块 / 黑洞吞噬）；种子按 slug 幂等补齐——线上已有的库第一次请求就会自动补上新增的那款；
 3. 创建站长账号 `admin` / `admin123`（可被环境变量覆盖）。
 
 ### 先改掉默认密码（重要）
@@ -120,7 +120,7 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 
 ### 6. 首次部署之后
 
-1. 打开 `https://game-site-d1.<账号>.workers.dev`：首页 6 款游戏、游玩次数 0 就对了；
+1. 打开 `https://game-site-d1.<账号>.workers.dev`：首页 7 款游戏、游玩次数 0 就对了（老库会在这次请求里自动补齐第 7 款）；
 2. 立刻改站长口令：面板里加 `ADMIN_USER` / `ADMIN_PASS` 环境变量（或 `npx wrangler secret put ADMIN_PASS`），然后**删掉默认站长让新口令生效**——执行一句 SQL `DELETE FROM users WHERE username='admin'`（命令写法见路线 A），再访问一次站点；
 3. 非生产分支（比如 PR）默认也会触发构建并给一个预览 URL；不需要就在面板里关掉，或只保留生产分支。
 
@@ -278,7 +278,7 @@ curl -s  https://你的域名/robots.txt           # Worker 动态生成，Cloud
 curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 ```
 
-浏览器里依次确认：首页 6 款游戏、游玩次数为 0（种子不灌假数字）、能注册、能评分（一人一票、可改）、
+浏览器里依次确认：首页 7 款游戏、游玩次数为 0（种子不灌假数字）、能注册、能评分（一人一票、可改）、
 能评论、能收藏、`/submit` 投稿后出现在 `/admin` 的待审核里；`/submit` 上传一份单文件 HTML：待审时 `/ugc/<slug>.html` 对游客 404、站长能取到，站长上架后谁都能取到并能直接玩，退回待审后又 404。站长能上架/下架。
 
 ## 十、排错

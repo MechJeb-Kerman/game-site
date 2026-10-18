@@ -139,14 +139,14 @@ const TARGETS = [
   {
     n: "pages-home", w: 1280, h: 1050, u: BASE,
     js: `(function(){ var acct = document.querySelector(".acct"); return { cards: document.querySelectorAll(".card").length, h1: (document.querySelector("h1")||{}).textContent || "", sections: document.querySelectorAll(".sec").length, submit: has = /投稿/.test(document.body.innerHTML), acct: acct ? acct.textContent.trim() : null, iframe: !!document.querySelector("iframe") }; })()`,
-    want: function (s) { var e = []; if (s.cards !== 12) e.push("首页卡片应为 12 张，实际 " + s.cards); if (s.sections < 2) e.push("首页区块太少：" + s.sections); if (s.submit) e.push("静态版不应有投稿入口"); if (s.acct) e.push("静态版不应有账号区：" + s.acct); if (s.iframe) e.push("首页不应有 iframe"); return e; }
+    want: function (s) { var e = []; if (s.cards !== 14) e.push("首页卡片应为 14 张（7 款 × 热门/最新），实际 " + s.cards); if (s.sections < 2) e.push("首页区块太少：" + s.sections); if (s.submit) e.push("静态版不应有投稿入口"); if (s.acct) e.push("静态版不应有账号区：" + s.acct); if (s.iframe) e.push("首页不应有 iframe"); return e; }
   },
   {
     n: "pages-list", w: 1280, h: 1000, u: BASE + "games.html?sort=title",
     js: `(function(){ var cards = [].slice.call(document.querySelectorAll(".grid .card")); return { n: cards.length, on: (document.querySelector(".tab.on")||{}).textContent || "", onCount: document.querySelectorAll(".tab.on").length, order: cards.map(function(c){ return c.getAttribute("data-title"); }) }; })()`,
     want: function (s) {
       var e = [];
-      if (s.n !== 6) e.push("列表页卡片应为 6 张，实际 " + s.n);
+      if (s.n !== 7) e.push("列表页卡片应为 7 张，实际 " + s.n);
       if (s.onCount !== 1 || s.on !== "名称") e.push("排序标签高亮不对：" + s.onCount + " / " + s.on);
       var sorted = s.order.slice().sort(function (a, b) { return a.localeCompare(b, "zh-Hans-CN"); });
       if (s.order.join("|") !== sorted.join("|")) e.push("按名称排序没生效：" + s.order.join(" > "));
@@ -265,6 +265,11 @@ const TARGETS = [
     n: "pages-game-tetris", w: 560, h: 760, u: BASE + "games/tetris/index.html",
     js: `(async function(){ document.getElementById("start").click(); await new Promise(function(r){ setTimeout(r, 320); }); var keys = ["ArrowLeft","ArrowUp","ArrowLeft"," "]; for (var i = 0; i < keys.length; i++) { document.dispatchEvent(new KeyboardEvent("keydown", { key: keys[i], bubbles: true })); await new Promise(function(r){ setTimeout(r, 160); }); } await new Promise(function(r){ setTimeout(r, 500); }); return { score: document.getElementById("score").textContent, level: document.getElementById("level").textContent }; })()`,
     want: function (s) { var e = []; if (!s.score) e.push("俄罗斯方块没出分数"); return e; }
+  },
+  {
+    n: "pages-game-blackhole", w: 1120, h: 760, u: BASE + "games/blackhole/index.html",
+    js: `(async function(){ var before = G.time; document.dispatchEvent(new KeyboardEvent("keydown", { key: "x", bubbles: true })); await new Promise(function(r){ setTimeout(r, 320); }); var x0 = G.hole.x; for (var i = 0; i < 4; i++) { document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); await new Promise(function(r){ setTimeout(r, 160); }); } document.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true })); await new Promise(function(r){ setTimeout(r, 400); }); return { ran: G.time - before, moved: Math.abs(G.hole.x - x0), tutorial: G.tutorial_open }; })()`,
+    want: function (s) { var e = []; if (s.tutorial) e.push("静态版黑洞：按任意键没关掉教学遮罩"); if (!(s.ran > 0.4)) e.push("静态版黑洞：主循环没跑（G.time 没涨）" + s.ran); if (!(s.moved > 8)) e.push("静态版黑洞：方向键没能移动黑洞 " + s.moved); return e; }
   },
   {
     n: "pages-404", w: 1280, h: 800, u: BASE + "nope.html", allow404: true,

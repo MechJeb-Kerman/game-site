@@ -1,6 +1,6 @@
 -- Cloudflare D1 建表脚本（与 worker/schema.js 里的 DDL 完全一致，由它生成，别手改）
 -- 应用：npx wrangler d1 migrations apply game-site-db --remote   （本地预览用 --local）
--- 种子数据（4 个分类 / 6 款游戏）不在这里，由 Worker 第一次请求时自动灌入，见 worker/schema.js 的 seedIfEmpty()。
+-- 种子数据（4 个分类 / 7 款游戏）不在这里，由 Worker 第一次请求时按 slug 幂等补齐，见 worker/schema.js 的 seedMissing()。
 CREATE TABLE IF NOT EXISTS categories (
   id     INTEGER PRIMARY KEY AUTOINCREMENT,
   slug   TEXT UNIQUE NOT NULL,

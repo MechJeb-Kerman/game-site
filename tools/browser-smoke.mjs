@@ -333,6 +333,26 @@ const TARGETS = [
         " return { score: document.getElementById('score').textContent, hits: hits }; })()"
   },
   {
+    n: 'game-blackhole', w: 1120, h: 760, u: BASE + '/games/blackhole/index.html',
+    /* 黑洞是第 7 款、自带手柄轮询，这里只验「主循环真的在跑」：按任意键关教学 → 方向键移动 →
+       G.time 必须增长（暂停时它不涨），G.hole 坐标必须真的变。 */
+    js: '(async function(){' +
+        ' var before = G.time;' +
+        " document.dispatchEvent(new KeyboardEvent('keydown',{key:'x',bubbles:true}));" +
+        ' await new Promise(function(r){setTimeout(r,320)});' +
+        ' var tutorial = G.tutorial_open;' +
+        ' var x0 = G.hole.x, y0 = G.hole.y;' +
+        press(['ArrowRight', 'ArrowDown', 'ArrowRight', 'ArrowDown']) +
+        " document.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowRight',bubbles:true}));" +
+        " document.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowDown',bubbles:true}));" +
+        ' await new Promise(function(r){setTimeout(r,400)});' +
+        ' var res = { ran: +(G.time - before).toFixed(2), tutorial: tutorial, moved: Math.round(Math.abs(G.hole.x - x0) + Math.abs(G.hole.y - y0)), mass: +G.hole.mass.toFixed(1), state: G.state };' +
+        " if (res.tutorial) throw new Error('按任意键没关掉教学遮罩 ' + JSON.stringify(res));" +
+        " if (!(res.ran > 0.4)) throw new Error('主循环没跑（G.time 没涨）' + JSON.stringify(res));" +
+        " if (!(res.moved > 8)) throw new Error('方向键没能移动黑洞 ' + JSON.stringify(res));" +
+        ' return res; })()'
+  },
+  {
     /* 导航页：门户主机（fishport.cn / www）的根路径直接渲染它，这里走同一条渲染路径（/nav）。
        卡片必须全是外站 https 直链，mc / send / rsend 不出现在链接里。 */
     n: 'nav', w: 1180, h: 1000, u: BASE + '/nav',

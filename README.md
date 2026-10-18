@@ -16,8 +16,8 @@
 | 排行榜 | `/rank` 今日 / 本周 / 本月 / 总榜 + 评分榜 / 收藏榜 / 新游榜，数据源是本地 SQLite 的 `play_logs`（**没有引入 Redis**），首页与详情页都有入口 |
 | 详情页 | 玩家信息 + 相关推荐 + 操作提示 + 游玩次数 + 5 星评分 + 收藏 + 玩家评论 |
 | 播放器 | iframe `sandbox` 隔离 + 全屏 + 真·重开 + 新窗口打开 |
-| 手柄 | 6 款游戏全部支持游戏手柄（十字键 / 摇杆 / A / B / Start），零依赖共享 shim，见「手柄支持」 |
-| 6 款自研游戏 | 2048、贪吃蛇、记忆翻牌、打地鼠、井字棋（minimax AI）、俄罗斯方块 |
+| 手柄 | 7 款游戏全部支持游戏手柄（十字键 / 摇杆 / A / B / X / Y / Start）；前 6 款共用一个零依赖 shim，黑洞吞噬自带手柄轮询，见「手柄支持」 |
+| 7 款自研游戏 | 2048、贪吃蛇、记忆翻牌、打地鼠、井字棋（minimax AI）、俄罗斯方块、黑洞吞噬 |
 | 账号 | 注册 / 登录 / 退出；`scrypt` 加盐哈希存口令，`HttpOnly` 会话 cookie，30 天有效 |
 | 账号增强 | 邮箱验证（`/verify-email`，24 小时有效）、找回密码（`/forgot` → `/reset`，token 30 分钟一次性）、改密码 / 改昵称 / 解绑第三方账号都在 `/account`；**邮件可走 Resend 或自建 HTTP 发信接口**（`MAIL_API_URL` + `MAIL_API_KEY`），没配就落「开发发件箱」，后台的「集成自检」面板会把当前邮件与登录配置摊开给你看 |
 | 第三方登录 | GitHub / Google / 演示登录（`/auth/:provider`），OAuth 2.0 授权码模式，原生 `fetch` 实现、零依赖；同一个第三方账号只绑一个站内用户，已绑过就直接登录；授权 / 令牌 / 用户资料端点都可用 `OAUTH_<PROVIDER>_*_URL` 覆盖（接自建网关或测试环境时用）；**回调地址跟着当前域名走**——用了第二个域名（比如 `forum.fishport.cn`）就要在 GitHub / Google 后台把它那两份回调地址也登记上，只登记主站的话在那台主机上点登录会报 `redirect_uri` 不匹配 |
@@ -57,7 +57,7 @@ pnpm install --registry=https://registry.npmmirror.com   # 国内网络走镜像
 pnpm start                                               # 或 pnpm dev（--watch 热重启）
 ```
 
-打开 <http://localhost:3000>。首次启动会自动建表、灌入 4 个分类 + 6 款游戏，并创建默认站长账号。
+打开 <http://localhost:3000>。首次启动会自动建表、灌入 4 个分类 + 7 款游戏，并创建默认站长账号。
 
 > **默认管理员**：`admin` / `admin123`（用户名显示为「站长」）。
 > 上线前务必用环境变量改掉：`ADMIN_USER=you ADMIN_PASS=一串强口令 pnpm start`。
@@ -106,7 +106,7 @@ game-site/
 │   ├── css/style.css    全站样式（暗色玻璃拟态，响应式，含播放器与后台表格样式）
 │   ├── js/app.js        搜索回填与联想、游玩上报、评分、收藏、评论（分页 / 楼中楼 / 举报）、全屏 / 重开（Express 版）
 │   ├── js/app-static.js 静态版前端：列表排序、前端搜索（拼音 / 首字母 / 相关度）、播放器全屏 / 重开
-│   └── js/gamepad.js    手柄 shim：keys 模式合成键盘事件、pointer 模式虚拟光标，6 款游戏共用
+│   └── js/gamepad.js    手柄 shim：keys 模式合成键盘事件、pointer 模式虚拟光标，前 6 款游戏共用（黑洞吞噬自己轮询）
 ├── tools/
 │   ├── browser-smoke.mjs  无头 Chrome 真实交互冒烟测试（零依赖，pnpm smoke）
 │   ├── account-test.mjs   账号系统 58 项断言测试（pnpm test:account，可反复跑）
@@ -132,7 +132,7 @@ game-site/
 ├── worker/data-forum.js D1 版论坛查询（异步版 src/data-forum.js，SQL 与它一一对应）
 ├── worker/auth.js       D1 版账号：PBKDF2 口令、会话表、默认站长
 ├── worker/schema.js     建表 + 灌种子 + 站长自举（首次请求时跑，幂等）
-├── worker/seed-data.js  4 个分类 / 6 款游戏的种子（由 src/seed.js 生成）
+├── worker/seed-data.js  4 个分类 / 7 款游戏的种子（由 src/seed.js 生成）
 ├── worker/mail.js       D1 版发信：配置从 env 读（RESEND_API_KEY / MAIL_API_URL / MAIL_FROM）
 ├── worker/oauth.js      D1 版第三方登录：密钥从 env 读（GITHUB_/GOOGLE_CLIENT_*、OAUTH_DEV，端点可用 OAUTH_<PROVIDER>_*_URL 覆盖）
 ├── wrangler.toml        Workers 静态版配置：[assets] 指向 dist-cf，绑定名 ASSETS
@@ -252,14 +252,14 @@ game-site/
 }
 ```
 
-3. `pnpm reset` 重新灌种子（或删掉 `data/games.db` 后重启），刷新页面即可看到。
+3. 重启服务就会按 slug 自动补齐缺的游戏（种子是幂等的，线上同理，push 后第一次请求就补上）；要全量重灌用 `pnpm reset`，或删掉 `data/games.db` 后重启。刷新页面即可看到。
 
 > 列表页的排序、搜索、标签聚合、sitemap、封面图全部由数据驱动，不需要改模板。
 > 也可以直接注册一个账号走 `/submit` 投稿：填完进待审队列，站长在 `/admin` 点「✅ 通过上架」就公开了。
 
 ## 手柄支持
 
-6 款自研游戏全部支持游戏手柄（Gamepad API），共用一个零依赖 shim：`public/js/gamepad.js`。
+7 款自研游戏全部支持游戏手柄（Gamepad API）。前 6 款共用一个零依赖 shim：`public/js/gamepad.js`；黑洞吞噬在页面内自己轮询手柄（摇杆 / 十字键移动、A 冲刺、B 无敌、X 引力爆发、Y 炸弹、Start 暂停）。
 
 游戏页在引入 shim 之前先声明自己的映射：
 
@@ -283,12 +283,13 @@ game-site/
 pnpm test:gamepad        # 等价于 node tools/gamepad-test.mjs
 ```
 
-`tools/gamepad-test.mjs` 用无头 Chrome + CDP 注入一台假手柄（覆盖 `navigator.getGamepads()`，状态挂在 `window.top.__pad` 上，所以父页面调 `window.__pad.set(...)` 就等于在按 iframe 里那台手柄），跑 7 个用例：
+`tools/gamepad-test.mjs` 用无头 Chrome + CDP 注入一台假手柄（覆盖 `navigator.getGamepads()`，状态挂在 `window.top.__pad` 上，所以父页面调 `window.__pad.set(...)` 就等于在按 iframe 里那台手柄），跑 8 个用例：
 
 - `gamepad-2048` 十字键让棋盘变化
 - `gamepad-snake` A 开始 → A 暂停 → A 继续
 - `gamepad-tetris` A 开始 → Start 暂停 → Start 继续
 - `gamepad-tictactoe` / `gamepad-memory` / `gamepad-whack` 摇杆把光标开到目标上，A 键落子 / 翻牌 / 敲地鼠
+- `gamepad-blackhole` 摇杆开动黑洞（它自带手柄轮询，不吃 shim）
 - `gamepad-detail-iframe` 详情页：手柄一连上就自动把焦点交给 iframe，在父页面驱动手柄能在 iframe 里生效
 
 环境变量：`BASE`（默认 `http://127.0.0.1:3000`）、`CHROME`、`SHOTS_DIR`、`CDP_PORT`（默认 9225）、`PROFILE`、`ONLY`（按用例名过滤，例如 `ONLY=snake`）。
@@ -438,7 +439,7 @@ node tools/serve-dist.mjs --base=/仓库名/ --port=4173   # 本地预览（模�
 node tools/pages-smoke.mjs --base=/仓库名/              # 无头 Chrome 冒烟 + 截图
 ```
 
-静态版保留：首页、分类、标签、搜索（前端过滤）、列表排序（前端排序）、详情页、iframe 播放器（全屏 / 重开）、6 款游戏本体，以及公告列表 / 公告详情 / 更新说明（都是纯文本页，公告的评论区在静态版不渲染）。
+静态版保留：首页、分类、标签、搜索（前端过滤）、列表排序（前端排序）、详情页、iframe 播放器（全屏 / 重开）、7 款游戏本体，以及公告列表 / 公告详情 / 更新说明（都是纯文本页，公告的评论区在静态版不渲染）。
 静态版隐藏：登录注册、评分、评论（含公告评论）、收藏、投稿（含上传单文件 HTML）、站长后台、游玩次数（详情页换成一句"静态演示版"说明）；**论坛整块不导出**（论坛是纯动态功能：待审队列、禁言、黑名单都要服务端），静态版导航里因此不出现论坛入口。隐私政策与用户协议是纯静态文本，静态版照样导出（页脚可达）。
 
 参数含义、发布步骤、`.nojekyll` 与中文文件名等坑，见 **[DEPLOY-GITHUB-PAGES.md](DEPLOY-GITHUB-PAGES.md)**。
@@ -501,7 +502,7 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 ## 已验证
 
 - 全部页面 / API 路由返回 200，不存在的游戏与路径正确返回 404。
-- 6 款游戏均在无头 Chrome 中**真实交互**通过：2048 合出分数、贪吃蛇可转向移动、俄罗斯方块开始后消行计分、记忆翻牌连配 2 对、打地鼠命中计分、井字棋人机交替落子。
+- 7 款游戏均在无头 Chrome 中**真实交互**通过：2048 合出分数、贪吃蛇可转向移动、俄罗斯方块开始后消行计分、记忆翻牌连配 2 对、打地鼠命中计分、井字棋人机交替落子、黑洞吞噬吃掉天体后质量变大且方向键能开动它。
 - 页面无 console 报错、无 404 资源。
 - 线上四连（无法评论 / 贪吃蛇玩不了 / 无法打星 / 游玩次数不变）的回归断言已固化：
   `pnpm smoke` 的 `game-snake` 会断言「开局有可见的开始按钮 → 点完遮罩消失 → 运行中按空格标题变`已暂停` → 恢复后继续跑」；
@@ -516,22 +517,22 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   投稿成功返回编号、非法游戏地址被拒、待审不出现在列表、普通用户改状态 403、
   站长审核上架后出现在列表与详情页、下架后从列表消失、隐藏评论后游客看不到、
   退出后 `/api/me` 归 null、开放重定向被改写成 `/`。
-- 静态版 `pnpm smoke:pages` 共 **18 个页面全部通过**（无 console 报错、无资源 404）：
+- 静态版 `pnpm smoke:pages` 共 **19 个页面全部通过**（无 console 报错、无资源 404）：
   首页 12 张卡片且无投稿入口、列表页按名称排序真的重排、搜索 `?q=2048` 过滤成 1 张卡、标签页、
   详情页确认收藏按钮 / 评论区 / 可点星级 / 游玩次数都不渲染且 iframe 地址带前缀、
-  **在详情页 iframe 里按键真的把 2048 从 0 玩到 16 分**、俄罗斯方块本体可玩、404 页、390x844 手机端无横向溢出，另有新增的排行榜页（今日 / 本周切换）、拼音首字母搜索页（`?q=tcs` 命中的是「贪吃蛇」）与搜索联想下拉、以及新增的隐私政策页与用户协议页（章节数、联系方式 `mailto:` 链接都在），还有公告列表页（条目链到 `/notice/<slug>.html`，空态也有兜底）、有公告时的公告详情页（正文非空、静态版不出评论表单）与更新说明页（20 条提交、类型标签与短哈希、计数与条数一致）。
-  截图：`docs/screens/pages-home.png`、`pages-list.png`、`pages-search.png`、`pages-tag.png`、`pages-detail.png`、`pages-play.png`、`pages-game-tetris.png`、`pages-404.png`、`pages-mobile.png`、`pages-rank.png`、`pages-rank-week.png`、`pages-search-pinyin.png`、`pages-suggest.png`、`pages-privacy.png`、`pages-terms.png`、`pages-changelog.png`、`pages-notice.png`、`pages-notice-detail.png`。
-- Cloudflare 版产物 `pnpm smoke:pages` 同样 **18 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟。
+  **在详情页 iframe 里按键真的把 2048 从 0 玩到 16 分**、俄罗斯方块本体可玩、黑洞吞噬本体可玩（关掉教学后方向键真把它开动了）、404 页、390x844 手机端无横向溢出，另有新增的排行榜页（今日 / 本周切换）、拼音首字母搜索页（`?q=tcs` 命中的是「贪吃蛇」）与搜索联想下拉、以及新增的隐私政策页与用户协议页（章节数、联系方式 `mailto:` 链接都在），还有公告列表页（条目链到 `/notice/<slug>.html`，空态也有兜底）、有公告时的公告详情页（正文非空、静态版不出评论表单）与更新说明页（20 条提交、类型标签与短哈希、计数与条数一致）。
+  截图：`docs/screens/pages-home.png`、`pages-list.png`、`pages-search.png`、`pages-tag.png`、`pages-detail.png`、`pages-play.png`、`pages-game-tetris.png`、`pages-game-blackhole.png`、`pages-404.png`、`pages-mobile.png`、`pages-rank.png`、`pages-rank-week.png`、`pages-search-pinyin.png`、`pages-suggest.png`、`pages-privacy.png`、`pages-terms.png`、`pages-changelog.png`、`pages-notice.png`、`pages-notice-detail.png`。
+- Cloudflare 版产物 `pnpm smoke:pages` 同样 **19 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟。
 - Workers 版 `pnpm test:worker` **26 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄、「静态路径不产生任何跳转」（防 `html_handling` 配错导致重定向死循环）、外加 10 个页面（含 `/notice`、`/changelog`）**75 条站内链接全部 200**（多了页脚的两份条款、公告与更新说明）；另有一条断言把 `dist-cf/_headers` 里的 CSP 与代码常量逐字段比对（Pages 静态线的放行策略不会悄悄跟代码走偏）。
 - Workers + D1 完整版 `pnpm test:worker-app` **58 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **24 项全过**（含 6 款游戏真操作、后台、收藏、投稿、论坛首页与主题页），无 console 报错、无资源 404；出厂态复核：首页 12 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
 - 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **58 项断言全过**。
   这一步捞出并修掉了两个只有真运行时才暴露的问题：`html_handling` 配成 `auto-trailing-slash` 会让站点陷入 `ERR_TOO_MANY_REDIRECTS`；真实 D1 的 `exec()` 按换行切语句，导致多行建表 SQL 直接 500。细节见两份 Cloudflare 部署文档。
 - 后台与账号相关的页面在无头 Chrome 里截图确认过：`docs/screens/login.png`、`register.png`、`submit.png`、`admin.png`、`favorites.png`、`rating.png`。
-  手柄自测也会留下 `docs/screens/gamepad-2048.png`、`gamepad-tictactoe.png`、`gamepad-memory.png`、`gamepad-whack.png`、`gamepad-detail-iframe.png`（能直接看到虚拟光标和底部的「🎮 手柄已连接」提示）。
-- 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**7 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 详情页 iframe 自动聚焦并接收手柄输入）；静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
+  手柄自测也会留下 `docs/screens/gamepad-2048.png`、`gamepad-blackhole.png`、`gamepad-tictactoe.png`、`gamepad-memory.png`、`gamepad-whack.png`、`gamepad-detail-iframe.png`（能直接看到虚拟光标和底部的「🎮 手柄已连接」提示）。
+- 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**8 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 黑洞吞噬 / 详情页 iframe 自动聚焦并接收手柄输入）；静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
   - **第二批功能 + 投稿上传 + 彻底删除 + 公告与更新说明（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强、投稿上传单文件 HTML、游戏彻底删除、公告发布/编辑/撤回与公告评论）`pnpm test:features` 共 227 项断言全部通过**（其中论坛一节 67 项），同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **227 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）；其中 1 项专门盯着 `frame-src`（详情页 CSP 必须放行 `http(s)`，否则投稿的外站游戏打不开）；另有 12 项是隐私政策 / 用户协议与注册同意：两页都 200 且写了 Cookie 名、第三方登录与邮件，页脚与 `sitemap.xml` 都收录，注册页带必填的 `name="agree"` 与两份文档的链接，不勾同意 400 且不会偷偷建号，勾了就能注册并直接登录；另有 18 项是投稿上传：文件框 + multipart 表单、上传后进待审、待审对游客 404 而站长能取、响应是 `text/html` + sandbox CSP（不含 `allow-same-origin`）、后台预览与详情页 iframe 都是严格沙箱、超 512 KB / 扩展名不对 / 非文本一律 400、只填地址的老投稿仍可用、站长上架后游客能取到并能直接玩、退回待审后又 404；最后 15 项是「彻底删除」：造一条带文件的投稿并写上评分 / 收藏 / 评论 / 游玩记录，上架中删不掉（400），下架后确认页把 6 项数据量逐一对上，POST 删除 302 回后台、详情页与 `/ugc/` 随即 404、操作日志里留下 `game.delete`；还有 30 项是「公告与更新说明」：后台发一条置顶公告、列表与首页横幅都能看到、详情页游客看到登录引导、两个账号（分开发评论与回复，避开 10 秒限流）把分页与楼中楼跑一遍、举报成功且重复举报只算一次、改公告后前台看到新段落与「最后修改」、撤回后详情 404 而重新发布后评论与回复都还在、操作日志留下 `post.create` / `post.update` / `post.retract`，以及 `/changelog` 与 `sitemap.xml` 的收录。
 - **邮件与第三方登录端到端 `pnpm test:mail` 共 42 项断言全部通过**（脚本自己起一个假邮件服务端与一个假 OAuth Provider，随机端口、不连外网）：绑定邮箱 → 收到验证信（`Authorization: Bearer` 的令牌、收件人、`MAIL_FROM` 发件人逐项核对）→ 点链接变成已验证；`/forgot` → 重置信 → `/reset` 改密 → 新密码能登、旧密码登不上、账号不存在时也是同一套说辞；GitHub 走完授权 → 回调 → 建号 → 换个浏览器再登还是同一个账号（不重复建号）→ 解绑；Google 同样走通，且资料里的邮箱被存下来并当成已验证；`state` 对不上 400、没开启的 provider 404；后台「集成自检」认出邮件走的是自建 HTTP 服务、GitHub / Google 的 client_id 与 secret 都是 ✅、回调地址与站点一致。同一套场景换成 D1 数据层再跑 `pnpm test:worker-mail` 同样 **42 项全过**。
-- `pnpm smoke`（Express）**24 项全部通过**，含新增的导航页（9 张卡片、分组齐全、都是带 `noopener` 的新窗口外链；线上截图 `docs/screens/nav.png`）与排行榜页（7 个榜单 tab、名次与「新上榜」标记）、搜索联想（首字母 / 全拼 / 中文三条路径）、更新说明页、公告列表与详情、首页公告横幅（点关闭后真的消失且写了 `localStorage`）与 `frame-src` 探针（测试进程自己起一个别的 origin 的小页面塞进 iframe，靠它 `postMessage` 回来证明没被 CSP 拦住——把 CSP 锁回 `'self'` 时这一项确实会红）；`pnpm smoke`（Workers + D1）同样 **24 项全部通过**。
+- `pnpm smoke`（Express）**25 项全部通过**，含新增的黑洞吞噬（方向键真的把它开动了）、导航页（9 张卡片、分组齐全、都是带 `noopener` 的新窗口外链；线上截图 `docs/screens/nav.png`）与排行榜页（7 个榜单 tab、名次与「新上榜」标记）、搜索联想（首字母 / 全拼 / 中文三条路径）、更新说明页、公告列表与详情、首页公告横幅（点关闭后真的消失且写了 `localStorage`）与 `frame-src` 探针（测试进程自己起一个别的 origin 的小页面塞进 iframe，靠它 `postMessage` 回来证明没被 CSP 拦住——把 CSP 锁回 `'self'` 时这一项确实会红）；`pnpm smoke`（Workers + D1）用同一套用例、同样全过（上一次在 `127.0.0.1:4400` 跑的还是加黑洞之前的 24 项）。
 > `pnpm smoke` 会用默认管理员真登录一次，并给 2048 留一条评分与一条收藏记录；
   > `pnpm test:account` 会留下 tester1 / tester2 两个账号和一条待审投稿；`pnpm test:features` 会再留下两条测试投稿（其中一条是上传的单文件 HTML，跑完会退回待审）、一条已发布公告（带评论 / 回复 / 举报）与几个测试账号，并且**真删掉它自己造的那条投稿**（日志里因此多一条 `game.delete`）。
   > `pnpm test:mail` / `pnpm test:worker-mail` 会自己起假邮件服务端与假 OAuth Provider（随机端口、不走外网），只往库里写测试账号，跑完不删数据。

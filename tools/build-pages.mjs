@@ -356,8 +356,12 @@ if (CF_MODE) {
   if (!gamePages.length) problems.push("没有产出任何游戏本体页");
   gamePages.forEach(function (rel) {
     const html = fs.readFileSync(path.join(OUT, rel), "utf8");
-    if (html.indexOf(gpWant) < 0) problems.push(rel + " 没有引用手柄脚本（应为 " + gpWant + "）");
-    if (base !== "/" && html.indexOf("\"/static/js/gamepad.js\"") >= 0) {
+    /* 页面自带手柄轮询时可以免引共享 shim：在 <head> 里写 <meta name="gamepad" content="self">（黑洞吞噬就是这种） */
+    const selfGp = /<meta\s+name="gamepad"\s+content="self"/i.test(html);
+    if (!selfGp && html.indexOf(gpWant) < 0) {
+      problems.push(rel + " 没有引用手柄脚本（应为 " + gpWant + "；自带手柄轮询的页面请加 <meta name=\"gamepad\" content=\"self\">）");
+    }
+    if (html.indexOf("\"/static/js/gamepad.js\"") >= 0) {
       problems.push(rel + " 手柄脚本用的是根路径 /static/js/gamepad.js，没带 base 前缀 —— 子路径部署会 404");
     }
   });

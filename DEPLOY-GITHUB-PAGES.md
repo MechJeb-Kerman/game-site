@@ -13,7 +13,7 @@ Express 版是有服务端的（登录、评分、评论、后台都靠接口）
 | 搜索 | ✅ 构建时导出全部卡片，输入关键字在前端过滤；**支持拼音全拼与首字母**（`tcs` → 贪吃蛇）并按相关度排序 |
 | 排行榜（今日 / 本周 / 本月 / 总榜 / 评分榜 / 收藏榜 / 新游榜） | ✅ 构建时预渲染成 `rank/*.html`（导航里的 `/rank` 落到 `rank/today.html`） |
 | iframe 播放器、全屏、重开、新窗口 | ✅ |
-| 6 款游戏本体 | ✅ 原样拷贝 |
+| 7 款游戏本体 | ✅ 原样拷贝 |
 | 隐私政策 `/privacy`、用户协议 `/terms` | ✅ 纯静态文本，照样导出，页脚每页都有链接、`sitemap.xml` 也收录 |
 | 公告 `/notice` 与详情、更新说明 `/changelog` | ✅ 都是纯文本页，照样导出（首页的公告横幅也在，关闭状态写 `localStorage`）；公告的**评论区**不渲染——静态版没有服务端 |
 | 论坛 `/forum` | ❌ 纯动态功能（待审队列、限流、禁言、黑名单都要服务端），静态版不导出、导航里也没有入口；要论坛就部署 Workers + D1 那一版把 `forum.fishport.cn` 指过去 |
@@ -40,8 +40,8 @@ node tools/build-pages.mjs --base=/ --origin=https://用户名.github.io
 构建完成会打印一行汇总，例如：
 
 ```
-游戏 6 款 / 分类 4 个 / 标签 13 个
-文件 64 个，合计 482.2 KB
+游戏 7 款 / 分类 4 个 / 标签 16 个
+文件 67 个，合计 617.4 KB（全新库还没有公告；每建一条公告 +1 个文件）
 写入 dist（base=/仓库名/，origin=https://用户名.github.io/仓库名）
 ```
 
@@ -53,7 +53,7 @@ node tools/pages-smoke.mjs --base=/仓库名/               # 或 pnpm smoke:pag
 ```
 
 - `serve-dist.mjs` 是个小静态服务器，专门模拟 GitHub Pages 的**子路径**行为：路径要带 `--base` 前缀才认，目录自动补 `index.html`，找不到的文件返回 `dist/404.html` 且状态码是 404。浏览器打开 `http://127.0.0.1:4173/仓库名/` 就是线上效果。
-- `pages-smoke.mjs` 用无头 Chrome 真实打开 18 个页面（含隐私政策与用户协议、公告与更新说明）：首页、列表（按名称排序真的重排了）、搜索（真的过滤了卡片）、标签页、详情页、**在详情页的 iframe 里真的按键玩 2048**、直接玩俄罗斯方块、404 页、390x844 手机端（检查横向溢出）。同时检查 console 报错、资源 404、以及"静态版该隐藏的东西（收藏按钮 / 评论区 / 可点星级 / 游玩次数）确实没了"。截图存到 `docs/screens/pages-*.png`，有问题退出码 1。
+- `pages-smoke.mjs` 用无头 Chrome 真实打开 19 个页面（含隐私政策与用户协议、公告与更新说明）：首页、列表（按名称排序真的重排了）、搜索（真的过滤了卡片）、标签页、详情页、**在详情页的 iframe 里真的按键玩 2048**、直接玩俄罗斯方块与黑洞吞噬、404 页、390x844 手机端（检查横向溢出）。同时检查 console 报错、资源 404、以及"静态版该隐藏的东西（收藏按钮 / 评论区 / 可点星级 / 游玩次数）确实没了"。截图存到 `docs/screens/pages-*.png`，有问题退出码 1。
 
 ## 三、发布（三种方式，选一种）
 
@@ -100,7 +100,7 @@ Cloudflare Pages / Netlify / Vercel 直接拖 `dist/` 或连 Git 仓库，构建
 ```
 dist/
 ├── .nojekyll                       关掉 Jekyll（别删）
-├── index.html                      首页（12 张卡片 = 6 款 × 热门/最新）
+├── index.html                      首页（14 张卡片 = 7 款 × 热门/最新）
 ├── games.html                      全部游戏（?sort= 排序、?q= 过滤都在前端做）
 ├── search.html                     搜索页（拼音 / 首字母 / 相关度都在前端算）
 ├── rank/today.html 等 7 个榜单页     排行榜（today / week / month / all / rating / fav / new）
@@ -115,7 +115,7 @@ dist/
 ├── static/js/app.js                内容来自 public/js/app-static.js
 ├── static/img/og.svg               社交分享图
 ├── data/games.json                 全量数据（想自己接前端时用；每款游戏多一个 `py` 字段 = 全拼 + 首字母）
-└── games/<slug>/index.html         6 个游戏本体（与源文件一致，只多一行 favicon）
+└── games/<slug>/index.html         7 个游戏本体（与源文件一致，只多一行 favicon）
 ```
 
 ## 六、和 Express 版的关系

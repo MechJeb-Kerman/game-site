@@ -154,5 +154,26 @@ export const GAMES = [
     "accent": "#ef4444",
     "accent2": "#f59e0b",
     "license": "自研"
+  },
+  {
+    "slug": "blackhole",
+    "title": "黑洞吞噬",
+    "subtitle": "吃掉一切，越长越大",
+    "description": "操控一颗黑洞在宇宙里吞噬周围的天体，质量越大吸力越强、能吞下的东西越大，但更大的黑洞同样能吃掉你。带冲刺 / 无敌 / 引力爆发与进化分支，模式有「经典 · 无尽吞噬」，键盘、鼠标、触屏与手柄都能玩。",
+    "category": "action",
+    "game_url": "/games/blackhole/index.html",
+    "width": 1080,
+    "height": 720,
+    "orientation": "landscape",
+    "tags": [
+      "吞噬",
+      "物理",
+      "成长",
+      "单机"
+    ],
+    "emoji": "🕳️",
+    "accent": "#8b5cf6",
+    "accent2": "#06b6d4",
+    "license": "自研"
   }
 ];

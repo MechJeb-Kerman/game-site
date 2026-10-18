@@ -1,4 +1,4 @@
-/* 手柄支持自测：往 Chrome 里注入一个假手柄（Gamepad API 探针），真实点击/按键跑一遍 6 款游戏。
+/* 手柄支持自测：往 Chrome 里注入一个假手柄（Gamepad API 探针），真实点击/按键跑一遍 7 款游戏。
  *
  * 用法（先起服务器）：
  *   node tools/gamepad-test.mjs
@@ -15,7 +15,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 const BASE = process.env.BASE || "http://127.0.0.1:3000";
-const CHROME = process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const CANDIDATES = [
+  process.env.CHROME,
+  "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+  "C:/Program Files/Microsoft/Edge/Application/msedge.exe"
+].filter(Boolean);
+const CHROME = CANDIDATES.find(function (p) { return fs.existsSync(p); });
+if (!CHROME) { console.error("找不到 Chrome / Edge，可用 CHROME 环境变量指定"); process.exit(1); }
 const SHOTS = process.env.SHOTS_DIR || "D:/CODE/game-site/docs/screens";
 const PORT = Number(process.env.CDP_PORT || 9225);
 const PROFILE = process.env.PROFILE || "D:/CODE/shots/_gpprofile";
@@ -244,6 +251,21 @@ const CASES = [
     want(r && r.started, "打地鼠：按 Start 没有开始挑战");
     want(r.score > 0, "打地鼠：摇杆追着地鼠按 A，12 秒内一次都没敲中（敲了 " + (r && r.tries) + " 次）");
     return "Start 开始挑战 → 光标追上地鼠按 A，得分 " + r.score;
+  }
+},
+{
+  name: "gamepad-blackhole",
+  desc: "A 关教学、左摇杆推动黑洞（自带手柄轮询，不走站内 shim）",
+  run: async () => {
+    await goto(BASE + "/games/blackhole/index.html");
+    await ev(HELPERS);
+    const r = await ev('(async function () { await window.__tap(0); var closed = !G.tutorial_open; var x0 = G.hole.x, y0 = G.hole.y, t0 = G.time; var t = Date.now(); while (Date.now() - t < 1200) { window.__pad.set(1, 0, []); await new Promise(function (x) { setTimeout(x, 40); }); } window.__pad.set(0, 0, []); await new Promise(function (x) { setTimeout(x, 250); }); return { closed: closed, moved: Math.round(G.hole.x - x0), down: Math.round(G.hole.y - y0), ran: +(G.time - t0).toFixed(2), used: !!G.used_gamepad }; })()');
+    await shot("gamepad-blackhole");
+    want(r && r.closed, "黑洞：按手柄 A 没有关掉教学遮罩");
+    want(r && r.ran > 0.4, "黑洞：主循环没跑（G.time 没涨）" + JSON.stringify(r));
+    want(r && r.moved > 10, "黑洞：左摇杆推了 1.2 秒，黑洞没往右走 " + JSON.stringify(r));
+    want(r && r.used, "黑洞：摇杆输入没有被识别（G.used_gamepad 还是假）" + JSON.stringify(r));
+    return "A 关教学 → 左摇杆右推，黑洞 x +" + r.moved + "（G.time +" + r.ran + "）";
   }
 },
 {

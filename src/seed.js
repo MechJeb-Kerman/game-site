@@ -62,21 +62,30 @@ export const GAMES = [
     tags: ['经典', '消除', '怀旧', '单机'],
     emoji: '🧱', accent: '#ef4444', accent2: '#f59e0b',
     license: '自研'
+  },
+  {
+    slug: 'blackhole', title: '黑洞吞噬', subtitle: '吃掉一切，越长越大',
+    description: '操控一颗黑洞在宇宙里吞噬周围的天体，质量越大吸力越强、能吞下的东西越大，但更大的黑洞同样能吃掉你。带冲刺 / 无敌 / 引力爆发与进化分支，模式有「经典 · 无尽吞噬」，键盘、鼠标、触屏与手柄都能玩。',
+    category: 'action', game_url: '/games/blackhole/index.html',
+    width: 1080, height: 720, orientation: 'landscape',
+    tags: ['吞噬', '物理', '成长', '单机'],
+    emoji: '🕳️', accent: '#8b5cf6', accent2: '#06b6d4',
+    license: '自研'
   }
 ];
 
+/** 种子数据：分类与游戏都按 slug 幂等补齐（只插缺的，不动已有数据）；--force 时先清空再全量重灌 */
 export function seed(force = false) {
   migrate();
-  const { n } = db.prepare('SELECT COUNT(*) AS n FROM games').get();
-  if (n > 0 && !force) return false;
 
   if (force) {
     db.exec('DELETE FROM ratings; DELETE FROM play_logs; DELETE FROM games; DELETE FROM categories;');
     try { db.exec('DELETE FROM sqlite_sequence;'); } catch { /* 表可能不存在 */ }
   }
 
+  // 分类：只补缺的（老库升级 / 以后新增分类都走这里），不删已有的
   const insertCat = db.prepare(
-    'INSERT INTO categories (slug, name, icon, sort) VALUES (?, ?, ?, ?)'
+    'INSERT OR IGNORE INTO categories (slug, name, icon, sort) VALUES (?, ?, ?, ?)'
   );
   for (const c of CATEGORIES) insertCat.run(c.slug, c.name, c.icon, c.sort);
 
@@ -91,21 +100,28 @@ export function seed(force = false) {
     VALUES (?, ?, ?, ?, ?, 'html5', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const hasGame = db.prepare('SELECT 1 FROM games WHERE slug = ?');
+
+  // 游戏：按 slug 幂等补齐 —— 只插库里没有的，已有游戏的游玩次数 / 评分 / 评论原样不动
+  const added = [];
   for (const g of GAMES) {
+    if (hasGame.get(g.slug)) continue;
     insertGame.run(
       g.slug, g.title, g.subtitle, g.description, catId.get(g.category), g.game_url,
       g.width, g.height, g.orientation, JSON.stringify(g.tags),
       // 新站从 0 开始：play_logs / ratings 会真实累加，不灌假数据
       g.emoji, g.accent, g.accent2, 0, 0, g.license
     );
+    added.push(g.slug);
   }
-  return true;
+  return { changed: added.length > 0, added };
 }
 
 // 直接执行： node src/seed.js --force
 if (process.argv[1] && process.argv[1].endsWith('seed.js')) {
-  const changed = seed(process.argv.includes('--force'));
+  const { changed, added } = seed(process.argv.includes('--force'));
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM games').get();
-  console.log(changed ? '✅ 种子数据已写入' : 'ℹ️ 数据库已有数据，跳过（用 --force 重建）');
+  console.log(changed ? '✅ 种子数据已补齐：' + added.join(' / ') : 'ℹ️ 种子数据已是最新，没有缺失');
+  if (process.argv.includes('--force')) console.log('   （--force：已清空 games / play_logs / ratings 后全量重灌）');
   console.log('   游戏总数:', n);
 }

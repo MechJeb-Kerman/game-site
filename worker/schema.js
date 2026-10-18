@@ -1,6 +1,7 @@
 /**
  * D1 建表 + 种子 + 管理员自举。
- * 对应 Express 版：server.js 启动时调用的 seed(false) + auth.ensureAdmin()。
+ * 对应 Express 版：server.js 启动时调用的 seed(false) + auth.ensureAdmin()；
+ * 种子按 slug 幂等补齐，所以后续新增游戏只要 push，线上第一次请求就会自动补上。
  * Worker 没有"启动"概念，所以放在第一次请求前跑，并用模块级 Promise 只跑一次。
  */
 import { CATEGORIES, GAMES } from './seed-data.js';
@@ -303,22 +304,22 @@ export async function ensureColumns(db) {
   }
 }
 
-/** 空库才灌种子数据，语义与 seed(false) 相同 */
-export async function seedIfEmpty(db) {
-  const row = await db.prepare('SELECT COUNT(*) AS n FROM games').first();
-  if (row && row.n > 0) return { seeded: false };
-
-  const stmts = [];
-  for (const c of CATEGORIES) {
-    stmts.push(db.prepare('INSERT INTO categories (slug, name, icon, sort) VALUES (?, ?, ?, ?)')
-      .bind(c.slug, c.name, c.icon, c.sort));
-  }
-  await db.batch(stmts);
+/** 种子数据：分类与游戏都按 slug 幂等补齐（只插缺的，不动已有游戏的游玩次数 / 评分 / 评论） */
+export async function seedMissing(db) {
+  const catStmts = CATEGORIES.map((c) => db.prepare(
+    'INSERT OR IGNORE INTO categories (slug, name, icon, sort) VALUES (?, ?, ?, ?)'
+  ).bind(c.slug, c.name, c.icon, c.sort));
+  if (catStmts.length) await db.batch(catStmts);
 
   const catRows = await db.prepare('SELECT id, slug FROM categories').all();
   const catId = new Map(catRows.results.map((r) => [r.slug, r.id]));
 
-  const gameStmts = GAMES.map((g) => db.prepare(
+  const haveRows = await db.prepare('SELECT slug FROM games').all();
+  const have = new Set(haveRows.results.map((r) => r.slug));
+  const missing = GAMES.filter((g) => !have.has(g.slug));
+  if (!missing.length) return { seeded: false, added: [] };
+
+  await db.batch(missing.map((g) => db.prepare(
     'INSERT INTO games (slug, title, subtitle, description, category_id, engine, game_url,' +
     ' width, height, orientation, tags, emoji, accent, accent2, plays, rating, license)' +
     " VALUES (?, ?, ?, ?, ?, 'html5', ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)"
@@ -326,22 +327,21 @@ export async function seedIfEmpty(db) {
     g.slug, g.title, g.subtitle, g.description, catId.get(g.category), g.game_url,
     g.width, g.height, g.orientation, JSON.stringify(g.tags),
     g.emoji, g.accent, g.accent2, g.license
-  ));
-  await db.batch(gameStmts);
-  return { seeded: true, games: gameStmts.length };
+  )));
+  return { seeded: true, added: missing.map((g) => g.slug) };
 }
 
 let readyPromise = null;
 
 /**
- * 幂等自举：建表 → 空库灌种子 → 保证有管理员。
+ * 幂等自举：建表 → 按 slug 补齐缺失的种子 → 保证有管理员。
  * 一次 isolate 生命周期只跑一次；失败则重置，让下次请求重试。
  */
 export function ensureReady(env) {
   if (!readyPromise) {
     readyPromise = (async () => {
       await migrate(env.DB);
-      await seedIfEmpty(env.DB);
+      await seedMissing(env.DB);
       await ensureAdmin(env.DB, env);
       await reindexSearchIndex(env.DB);
       return true;

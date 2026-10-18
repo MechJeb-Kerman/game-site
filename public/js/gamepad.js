@@ -1,4 +1,4 @@
-/* 手柄支持（Gamepad API）—— 6 款小游戏共用，零依赖。
+/* 手柄支持（Gamepad API）—— 前 6 款小游戏共用（黑洞吞噬自制轮询），零依赖。
  *
  * 游戏页在引入本文件之前设置 window.GAMEPAD：
  *   window.GAMEPAD = { mode: 'keys', a: ' ', b: 'r', start: 'p' };  // 键盘型游戏
