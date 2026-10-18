@@ -1,7 +1,31 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-18 09:27";
-export const CHANGELOG_TOTAL = 34;
+export const CHANGELOG_GENERATED = "2026-10-18 13:04";
+export const CHANGELOG_TOTAL = 37;
 export const CHANGELOG = [
+  {
+    "hash": "fbac184",
+    "date": "2026-10-18 21:04",
+    "day": "2026-10-18",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "第 7 款游戏「黑洞吞噬」（种子改为按 slug 幂等补齐）\\n\\n- games/blackhole/index.html：由 BLACK HOLE v0.5.2 接入（自包含单文件），自带手柄轮询（<meta name=\"gamepad\" content=\"self\">）\\n- 种子：src/seed.js 与 worker/schema.js 改成按 slug 幂等补齐（分类 INSERT OR IGNORE、只插缺的游戏），push 后线上 D1 第一次请求自动补上，不动已有 plays / rating / 评论\\n- worker/seed-data.js 同步；src/views.js 补玩法提示；build-pages 自检放行自带手柄的游戏页\\n- 测试：browser-smoke / pages-smoke / gamepad-test 各加黑洞用例；README 与三份部署文档的计数同步\\n- 验收：feature 227 项、浏览器冒烟 25 项、手柄 8 项、静态版 19 项全部通过"
+  },
+  {
+    "hash": "56dd5bd",
+    "date": "2026-10-18 17:34",
+    "day": "2026-10-18",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "导航页线上截图（docs/screens/nav.png）"
+  },
+  {
+    "hash": "ea778f7",
+    "date": "2026-10-18 17:27",
+    "day": "2026-10-18",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "更新说明重跑（导航页三连提交）"
+  },
   {
     "hash": "89ef5b3",
     "date": "2026-10-18 17:27",
