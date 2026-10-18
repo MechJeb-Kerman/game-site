@@ -13,6 +13,8 @@ import * as oauth from './oauth.js';
 import { ensureReady } from './schema.js';
 import * as forum from './data-forum.js';
 import * as fguard from '../src/forum-guard.js';
+// 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
+import { PORTAL_HOSTS } from '../src/sites.js';
 
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
@@ -326,6 +328,11 @@ async function pageNoticeDetail(ctx, params) {
 /** 更新说明：读 src/changelog-data.js（tools/gen-changelog.mjs 从 git log 生成） */
 async function pageChangelog(ctx) {
   return okHtml(ctx, ui.changelogPage({ origin: ctx.origin, user: ctx.user }));
+}
+
+/** 导航页：fishport.cn 下所有能打开的站点（清单在 src/sites.js） */
+async function pagePortal(ctx) {
+  return okHtml(ctx, ui.portalPage({ origin: ctx.origin, user: ctx.user }));
 }
 
 /** 排行榜：热玩榜按天聚合的纯 SQLite 查询，7 个榜单切着看 */
@@ -1336,6 +1343,7 @@ const ROUTES = [
   { m: 'GET', p: '/notice', fn: pageNotice },
   { m: 'GET', p: '/notice/:slug', fn: pageNoticeDetail },
   { m: 'GET', p: '/changelog', fn: pageChangelog },
+  { m: 'GET', p: '/nav', fn: pagePortal },
   { m: 'GET', p: '/rank', fn: pageRank },
   { m: 'GET', p: '/login', fn: pageLogin },
   { m: 'POST', p: '/login', fn: doLogin },
@@ -1425,7 +1433,7 @@ async function sitemapXml(ctx) {
   const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' },
     { loc: '/forum', pri: '0.5' },
     { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' },
-    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' }];
+    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' }, { loc: '/nav', pri: '0.5' }];
   for (const c of await data.listCategories(ctx.db)) {
     if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
   }
@@ -1491,9 +1499,16 @@ export async function appFetch(request, env) {
   // 论坛主机（forum.fishport.cn）根路径挂载：非公共前缀的请求内部改写成 /forum/*
   const reqHost = String(request.headers.get('host') || url.host || '').split(':')[0].toLowerCase();
   const onForumHost = /^forum\./.test(reqHost);
-  const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|favicon\.ico|robots\.txt|sitemap\.xml)(\/|$)/;
+  const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|nav|favicon\.ico|robots\.txt|sitemap\.xml)(\/|$)/;
   if (onForumHost && !FORUM_SHARED.test(pathname)) {
     pathname = '/forum' + (pathname === '/' ? '' : pathname);
+    url.pathname = pathname;
+  }
+
+  // 导航页主机（fishport.cn / www.fishport.cn / nav.fishport.cn）：根路径直接给导航页，其余路径照常走站点
+  const onPortalHost = PORTAL_HOSTS.test(reqHost);
+  if (onPortalHost && pathname === '/') {
+    pathname = '/nav';
     url.pathname = pathname;
   }
 

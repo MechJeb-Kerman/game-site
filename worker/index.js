@@ -16,6 +16,7 @@
  *
  * 部署：npx wrangler deploy            本地自测：node tools/worker-test.mjs
  */
+import { PORTAL_HOSTS } from '../src/sites.js';
 
 export const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -118,7 +119,11 @@ export default {
     }
 
     const pathname = normalizePath(incoming.pathname);
-    const tries = candidates(pathname);
+    /* 门户主机（fishport.cn / www / nav）的根路径给导航页：静态线也要有，
+       否则把 apex 加到静态版 Worker 上会看到游戏首页而不是门户 */
+    const reqHost = String(incoming.host || '').split(':')[0].toLowerCase();
+    const portalRoot = PORTAL_HOSTS.test(reqHost) && pathname === '/';
+    const tries = candidates(portalRoot ? '/nav' : pathname);
     // 跳转也算未命中：资源层不该发跳转（html_handling = "none"），
     // 万一配置被改回去，宁可给 404，也不要把浏览器拖进重定向死循环。
     const isMiss = (r) => r.status === 404 || (r.status >= 300 && r.status < 400);

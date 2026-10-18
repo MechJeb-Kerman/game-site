@@ -12,6 +12,8 @@ import { randomBytes } from 'node:crypto';
 import { formFromMultipart } from './src/multipart.js';
 import * as forum from './src/data-forum.js';
 import * as fguard from './src/forum-guard.js';
+// 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
+import { PORTAL_HOSTS } from './src/sites.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -80,13 +82,15 @@ const UGC_HTML_CSP = [
    论坛有两种访问形态：游戏站上的 /forum/*，以及 forum.fishport.cn 的根路径。
    后者的请求在这里被内部重写成 /forum/*，页面里的链接基址用 req.forumBase（'' 或 '/forum'），
    同一套路由与模板在两种形态下都能用；/forum/* 与全站公共前缀不受影响。 */
-const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|favicon\.ico|robots\.txt|sitemap\.xml)(\/|$)/;
+const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|nav|favicon\.ico|robots\.txt|sitemap\.xml)(\/|$)/;
 
 app.use((req, res, next) => {
   const host = String(req.get('host') || '').split(':')[0].toLowerCase();
   const onForum = /^forum\./.test(host);
   req.forumBase = onForum ? '' : '/forum';
   if (onForum && !FORUM_SHARED.test(req.path)) req.url = '/forum' + (req.url === '/' ? '' : req.url);
+  /* 导航页：门户主机的根路径直接渲染它（子域清单见 src/sites.js），其余主机走 /nav */
+  if (PORTAL_HOSTS.test(host) && req.path === '/') req.url = '/nav';
   next();
 });
 
@@ -349,6 +353,11 @@ app.get('/changelog', (req, res) => {
   res.send(ui.changelogPage({ origin: originOf(req), user: req.user }));
 });
 
+/* 导航页：fishport.cn 下所有能打开的站点一页直达（清单在 src/sites.js） */
+app.get('/nav', (req, res) => {
+  res.send(ui.portalPage({ origin: originOf(req), user: req.user }));
+});
+
 // ---------- 封面 / SEO 资源 ----------
 app.get('/cover/:slug.svg', (req, res) => {
   const game = data.getGame(String(req.params.slug));
@@ -401,7 +410,7 @@ app.get('/robots.txt', (req, res) => {
 app.get('/sitemap.xml', (req, res) => {
   const origin = originOf(req);
   const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }, { loc: '/forum', pri: '0.5' },
-    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' },
+    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' }, { loc: '/nav', pri: '0.5' },
     { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
   for (const p of data.listPosts({ status: 1, limit: 50 })) {
     urls.push({ loc: '/notice/' + encodeURIComponent(p.slug), pri: '0.6', lm: String(p.published_at || p.created_at).slice(0, 10) });

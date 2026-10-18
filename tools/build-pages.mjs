@@ -166,6 +166,10 @@ for (const p of notices) {
 /* 更新说明：读 src/changelog-data.js（由 tools/gen-changelog.mjs 从 git log 生成） */
 page("changelog.html", ui.changelogPage({ origin: origin, user: null }));
 
+/* 导航页：fishport.cn 的子域清单（src/sites.js），静态导出里也在；
+   静态版没有服务端，卡片全是外链，所以照样能点 */
+page("nav.html", ui.portalPage({ origin: origin, user: null }));
+
 for (const c of categories) {
   const list = data.listGames({ category: c.slug, sort: "hot", limit: 200 });
   if (!list.length) continue;
@@ -250,6 +254,7 @@ const locs = [origin + mapRel("/")];
 locs.push({ loc: origin + mapRel("/privacy"), pri: "0.3", last: "" });
 locs.push({ loc: origin + mapRel("/terms"), pri: "0.3", last: "" });
 locs.push({ loc: origin + mapRel("/changelog"), pri: "0.4", last: "" });
+locs.push({ loc: origin + mapRel("/nav"), pri: "0.5", last: "" });
 locs.push({ loc: origin + mapRel("/notice"), pri: "0.6", last: "" });
 for (const p of notices) locs.push({ loc: origin + mapRel("/notice/" + encodeURIComponent(p.slug)), pri: "0.6", last: "" });
 for (const t of boardTabs) locs.push({ loc: origin + mapRel("/rank/" + t.kind), pri: "0.7", last: "" });
@@ -381,7 +386,7 @@ console.log("静态站点已生成：" + OUT);
 console.log("  base   = " + base);
 console.log("  origin = " + origin + (PLACEHOLDER ? "   <== 占位域名！发布前请用 --origin 换成真实地址" : ""));
 console.log("  文件 " + written.length + " 个，合计 " + (totalBytes / 1024).toFixed(1) + " KB");
-console.log("  页面：index / games / search / 404 / " + boardTabs.length + " 个排行榜" + (notices.length ? " / " + notices.length + " 条公告" : "") + " / changelog" + (categories.length ? " / " + categories.filter(function (c) { return c.total; }).length + " 个分类" : "") + " / " + tags.length + " 个标签 / " + games.length + " 个游戏详情");
+console.log("  页面：index / games / search / 404 / " + boardTabs.length + " 个排行榜" + (notices.length ? " / " + notices.length + " 条公告" : "") + " / changelog / nav" + (categories.length ? " / " + categories.filter(function (c) { return c.total; }).length + " 个分类" : "") + " / " + tags.length + " 个标签 / " + games.length + " 个游戏详情");
 console.log("");
 console.log("本地预览：node tools/serve-dist.mjs --base=" + base + "   然后打开 http://127.0.0.1:4173" + base);
 console.log(CF_MODE

@@ -2,6 +2,8 @@
 import { isUploadedUrl, UPLOAD_LABEL } from './upload.js';
 // 更新说明页的数据源：由 tools/gen-changelog.mjs 从 git 提交历史生成
 import { CHANGELOG, CHANGELOG_GENERATED, CHANGELOG_TOTAL } from './changelog-data.js';
+// 导航页的数据源：fishport.cn 下能打开的站点清单（三条线共用一份）
+import { groupedSites, siteUrl } from './sites.js';
 
 export const SITE = {
   name: '趣玩小游戏',
@@ -39,8 +41,9 @@ export function fmtNum(n) {
   return String(n);
 }
 
-function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false }) {
-  const full = title ? title + ' - ' + SITE.name : SITE.name;
+function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true }) {
+  const bare = chrome === 'none';
+  const full = title ? (titleSuffix ? title + ' - ' + SITE.name : title) : SITE.name;
   const ld = jsonLd
     ? '<script type="application/ld+json">' + JSON.stringify(jsonLd).replace(/</g, '\\u003c') + '</script>'
     : '';
@@ -67,9 +70,9 @@ ${preload}${ld}
 </head>
 <body>
 <a class="skip" href="#main">跳到主要内容</a>
-${header(user)}
+${bare ? '' : header(user)}
 <main id="main">${content}</main>
-${footer()}
+${bare ? '' : footer()}
 <script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=4" defer></script>
 </body>
 </html>`;
@@ -622,6 +625,76 @@ export function changelogPage({ origin, user = null }) {
   ${blocks}
 </div>`;
   return layout({ origin, user, title: '更新说明', description: '站点更新记录：从 git 提交历史生成', path: '/changelog', content });
+}
+
+/** fishport.cn 的门户：所有子域的一页导航。
+    数据是 src/sites.js 那份清单，三条线（Express / Workers+D1 / 静态导出）共用。
+    走 chrome:'none' 自带页头页脚——这一页挂的是 fishport.cn 的牌子，套游戏站的搜索框与分类导航
+    只会让人以为走错了地方。 */
+export function portalPage({ origin = '', user = null }) {
+  const groups = groupedSites();
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const cards = groups.map((g) => {
+    const items = g.items.map((s) =>
+      '<li class="pf-item" style="--a:' + esc(s.accent || '#6366f1') + ';--b:' + esc(s.accent2 || '#8b5cf6') + '">' +
+        '<a class="pf-link" href="' + esc(siteUrl(s)) + '" target="_blank" rel="noopener">' +
+          '<span class="pf-ico" aria-hidden="true">' + esc(s.emoji || '🌐') + '</span>' +
+          '<span class="pf-body">' +
+            '<span class="pf-name">' + esc(s.name) + '</span>' +
+            '<span class="pf-host">' + esc(s.host) + '</span>' +
+            '<span class="pf-desc">' + esc(s.desc || '') + '</span>' +
+          '</span>' +
+          '<span class="pf-go" aria-hidden="true">↗</span>' +
+        '</a>' +
+      '</li>').join('');
+    return '<section class="pf-group">' +
+      '<div class="sec-head"><h2>' + esc(g.group) + '</h2><span class="dim">' + g.items.length + ' 个</span></div>' +
+      '<ul class="pf-list">' + items + '</ul>' +
+    '</section>';
+  }).join('');
+
+  const content = '<div class="pf">' +
+  '<header class="pf-hdr"><div class="wrap pf-hdr-in">' +
+    '<a class="pf-logo" href="/"><span aria-hidden="true">🐟</span><b>fishport.cn</b></a>' +
+    '<nav class="pf-nav" aria-label="常用入口">' +
+      '<a href="https://game-site.fishport.cn/">趣玩小游戏</a>' +
+      '<a href="https://forum.fishport.cn/">论坛</a>' +
+      '<a href="/nav">导航</a>' +
+    '</nav>' +
+  '</div></header>' +
+  '<div class="wrap pf-hero">' +
+    '<h1>🐟 fishport.cn 导航</h1>' +
+    '<p class="pf-sub">这个域名下能打开的东西都在这里：共 ' + total + ' 个站点，点卡片直接过去。</p>' +
+  '</div>' +
+  '<div class="wrap pf-main">' + cards +
+    '<p class="pf-note">邮件（send / rsend）与 Minecraft（mc）这类只给程序用的解析记录不在这里。<br>' +
+    '要加一个，改仓库 <code>src/sites.js</code> 的清单，三条线一起生效。</p>' +
+  '</div>' +
+  '<footer class="pf-ftr"><div class="wrap">' +
+    '<p class="ftr-note">' + esc(SITE.name) + ' · ' + esc(SITE.tagline) + '</p>' +
+    '<p class="ftr-links"><a href="/privacy">隐私政策</a><span>·</span><a href="/terms">用户协议</a>' +
+      '<span>·</span><a href="/changelog">更新说明</a></p>' +
+  '</div></footer>' +
+  '</div>';
+
+  return layout({
+    origin, user, chrome: 'none', titleSuffix: false,
+    title: 'fishport.cn 导航',
+    description: 'fishport.cn 的站点导航：小游戏、论坛、DSH、政务平台、学习与个人主页一页直达',
+    path: '/nav', content,
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'ItemList',
+      name: 'fishport.cn 导航',
+      url: origin + '/nav',
+      itemListElement: groups.reduce((acc, g) => acc.concat(g.items), []).map((s, i) => ({
+        '@type': 'ListItem',
+        position: i + 1,
+        name: s.name,
+        url: siteUrl(s)
+      }))
+    }
+  });
 }
 
 /** 后台写公告 / 改公告（新建时 post 为 null） */
