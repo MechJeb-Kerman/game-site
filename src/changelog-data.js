@@ -1,7 +1,15 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-18 14:56";
-export const CHANGELOG_TOTAL = 40;
+export const CHANGELOG_GENERATED = "2026-10-18 15:26";
+export const CHANGELOG_TOTAL = 41;
 export const CHANGELOG = [
+  {
+    "hash": "65ef57a",
+    "date": "2026-10-18 22:58",
+    "day": "2026-10-18",
+    "kind": "fix",
+    "kindLabel": "修复",
+    "subject": "CSP 放行 Cloudflare RUM beacon（线上每页 CSP 报错）+ board-games 验收脚本支持远程跑"
+  },
   {
     "hash": "4203f5d",
     "date": "2026-10-18 22:29",

@@ -218,15 +218,22 @@ async function waitMove(c, baseline, ms) {
   return st && st.moves > baseline ? st : null;
 }
 
-/** 通过联机面板开一间房，返回房间码（建房有 1 秒限速，撞上就重试） */
+/** 通过联机面板开一间房，返回房间码（建房有 1 秒限速，撞上 429 时重试） */
 async function createRoom(c) {
   await evalOn(c, "(function(){ var p = document.querySelector('.np-pill'); if (p) p.click(); })()");
   await sleep(REMOTE ? 900 : 250);
-  for (let i = 0; i < (REMOTE ? 8 : 5); i++) {
+  for (let i = 0; i < 3; i++) {
     await evalOn(c, "(function(){ var b = document.querySelector('.np-panel [data-act=create]'); if (b) b.click(); })()");
-    await sleep(700);
-    const code = await evalOn(c, "(function(){ var e = document.querySelector('.np-panel .np-code'); return e ? e.textContent.trim() : ''; })()");
-    if (code && /^[A-Z0-9]{6}$/.test(code)) return code;
+    /* 只点一次，然后长轮询等房码：远程建房响应可能超过 1 秒，过去「读不到就再点」会开出第二间房，
+       房主页面的状态跟着第二间走、访客却加入了第一间，于是房主永远停在「等待对手加入」、落子无效。 */
+    const t0 = Date.now();
+    const budget = REMOTE ? 9000 : 3000;
+    while (Date.now() - t0 < budget) {
+      const code = await evalOn(c, "(function(){ var e = document.querySelector('.np-panel .np-code'); return e ? e.textContent.trim() : ''; })()");
+      if (code && /^[A-Z0-9]{6}$/.test(code)) return code;
+      await sleep(300);
+    }
+    /* 等足时间仍没有房码：多半是撞上建房限速，过掉限速窗再试一次 */
     await sleep(1200);
   }
   return '';
