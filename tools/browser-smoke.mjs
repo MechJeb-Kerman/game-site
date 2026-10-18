@@ -333,6 +333,21 @@ const TARGETS = [
         " return { score: document.getElementById('score').textContent, hits: hits }; })()"
   },
   {
+    /* 导航页：门户主机（fishport.cn / www）的根路径直接渲染它，这里走同一条渲染路径（/nav）。
+       卡片必须全是外站 https 直链，mc / send / rsend 不出现在链接里。 */
+    n: 'nav', w: 1180, h: 1000, u: BASE + '/nav',
+    js: "(function(){" +
+        " var links = [].slice.call(document.querySelectorAll('a.pf-link'));" +
+        " if (links.length < 5) throw new Error('导航卡片太少：' + links.length);" +
+        " var hosts = links.map(function(a){ return a.href.replace(/^https:\\/\\//, '').replace(/\\/$/, ''); });" +
+        " var bad = hosts.filter(function(h){ return /^(mc|send|rsend)\\./.test(h) || !/^https:/.test('https://' + h); });" +
+        " if (bad.length) throw new Error('导航里混进了不该导航的主机：' + JSON.stringify(bad));" +
+        " if (!links.every(function(a){ return a.target === '_blank' && a.rel.indexOf('noopener') >= 0; })) throw new Error('导航卡片不是新窗口外链');" +
+        " var groups = [].slice.call(document.querySelectorAll('.pf-group h2')).map(function(h){ return h.textContent.trim(); });" +
+        " if (!groups.length) throw new Error('导航页没有分组');" +
+        " return { cards: links.length, hosts: hosts, groups: groups }; })()"
+  },
+  {
     /* 守住线上那个 bug：投稿可以填外站地址，父页面 CSP 的 frame-src 必须放行 http(s)，
        否则外站游戏框整块变成「该内容被屏蔽了」。探针 = 另一个 origin（127.0.0.1:随机端口）。 */
     n: 'frame-src', w: 800, h: 520, u: BASE + '/game/2048',

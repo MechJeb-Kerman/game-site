@@ -231,6 +231,21 @@ async function main() {
     eq((await call('/sitemap.xml')).status, 200);
   });
 
+  await t('/sitemap.xml 收录 /nav', async function () {
+    has(await (await call('/sitemap.xml')).text(), '/nav');
+  });
+
+  await t('门户主机（fishport.cn / www / nav）的根路径给导航页，其它子域给首页', async function () {
+    for (const host of ['fishport.cn', 'www.fishport.cn', 'nav.fishport.cn']) {
+      const r = await worker.fetch(new Request('https://' + host + '/'), env);
+      eq(r.status, 200, host + ' 根路径状态码');
+      has(await r.text(), 'fishport.cn 导航', host + ' 根路径应当是导航页');
+    }
+    const home = await worker.fetch(new Request(ORIGIN + '/'), env);
+    has(await home.text(), '趣玩小游戏', '游戏站主机的首页被门户盖掉了');
+    eq((await call('/nav')).status, 200, '/nav 在任何主机都能开');
+  });
+
   await t('不存在的地址返回 404 页面 + noindex', async function () {
     const r = await call('/nope');
     eq(r.status, 404, '状态码');

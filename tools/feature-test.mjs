@@ -10,6 +10,9 @@
  * 想彻底干净：停服 → 删 data/games.db → 重启。
  * 邮件走开发发件箱（没配 RESEND_API_KEY / MAIL_API_URL 时不会真发信）。
  */
+import http from 'node:http';
+import { PORTAL_HOSTS, SITES } from '../src/sites.js';
+
 const BASE = process.env.BASE || 'http://127.0.0.1:3000';
 const STAMP = Date.now().toString(36);
 let pass = 0, fail = 0;
@@ -47,6 +50,20 @@ async function req(path, opt) {
   };
 }
 function json(t) { try { return JSON.parse(t); } catch { return null; } }
+/* 指定 Host 的请求：fetch 不允许改 Host（undici 会忽略），门户主机的判定只能走裸 http */
+function reqHost(path, host) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(BASE + path);
+    const rq = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { host } }, (res) => {
+      let t = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { t += c; });
+      res.on('end', () => resolve({ status: res.statusCode, text: t }));
+    });
+    rq.on('error', reject);
+    rq.end();
+  });
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc8 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -79,6 +96,33 @@ async function main() {
   ok('页脚链到隐私政策 / 用户协议', r.text.includes('href="/privacy"') && r.text.includes('href="/terms"'), '');
   r = await req('/sitemap.xml');
   ok('sitemap 收录 /privacy 与 /terms', r.text.includes('/privacy') && r.text.includes('/terms'), '');
+
+  console.log('--- 导航页（fishport.cn 门户） ---');
+  r = await req('/nav');
+  ok('/nav 200 且是 fishport.cn 导航页', r.status === 200 && r.text.includes('fishport.cn 导航'), r.status);
+  ok('导航页列出清单里全部 ' + SITES.length + ' 个子域（含外链）',
+    SITES.every((s) => r.text.includes('https://' + s.host + '/')), '');
+  ok('导航页每张卡片都有名称与说明', (r.text.match(/class="pf-link"/g) || []).length === SITES.length &&
+    (r.text.match(/class="pf-desc"/g) || []).length === SITES.length, '');
+  ok('导航页不给邮件与 Minecraft 出链接（用户明确排除 mc / send / rsend；正文里提到它们不算）',
+    !/(href="https:\/\/)?(send|rsend|mc)\.fishport\.cn/.test(r.text), '');
+  ok('sitemap 收录 /nav', (await req('/sitemap.xml')).text.includes('/nav'), '');
+  r = await reqHost('/', 'fishport.cn');
+  ok('Host=fishport.cn 的 / 直接是导航页', r.status === 200 && r.text.includes('fishport.cn 导航'), r.status);
+  r = await reqHost('/', 'www.fishport.cn');
+  ok('Host=www.fishport.cn 的 / 也是导航页', r.status === 200 && r.text.includes('fishport.cn 导航'), r.status);
+  r = await reqHost('/', 'nav.fishport.cn');
+  ok('Host=nav.fishport.cn 的 / 也是导航页', r.status === 200 && r.text.includes('fishport.cn 导航'), r.status);
+  r = await reqHost('/', 'game-site.fishport.cn');
+  ok('游戏站主机的 / 还是游戏站首页（没被门户盖掉）',
+    r.status === 200 && r.text.includes('趣玩小游戏') && !r.text.includes('fishport.cn 导航'), r.status);
+  r = await reqHost('/nav', 'forum.fishport.cn');
+  ok('论坛主机的 /nav 也能拿到导航页', r.status === 200 && r.text.includes('fishport.cn 导航'), r.status);
+  ok('门户主机判定：只认 fishport.cn / www / nav，不认其它子域',
+    PORTAL_HOSTS.test('fishport.cn') && PORTAL_HOSTS.test('www.fishport.cn') && PORTAL_HOSTS.test('nav.fishport.cn') &&
+    !PORTAL_HOSTS.test('game-site.fishport.cn') && !PORTAL_HOSTS.test('forum.fishport.cn') &&
+    !PORTAL_HOSTS.test('fishport.cn.evil.example'), '');
+
   r = await req('/register');
   ok('注册页有必填的同意勾选', r.status === 200 && /name="agree"[^>]*required/.test(r.text) && r.text.includes('《隐私政策》'), r.status);
   const noAgree = 'noag' + STAMP;
