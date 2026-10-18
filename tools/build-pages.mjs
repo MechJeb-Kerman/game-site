@@ -225,6 +225,8 @@ put("static/css/style.css", fs.readFileSync(path.join(PUBLIC_DIR, "css", "style.
 put("static/js/app.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app.js"), "utf8"));
 put("static/js/app-static.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app-static.js"), "utf8"));
 put("static/js/gamepad.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "gamepad.js"), "utf8"));
+/* 联机对战小部件：棋类游戏页会引它，静态导出必须一起带上 */
+put("static/js/net-play.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "net-play.js"), "utf8"));
 const FAVICON = "<svg xmlns=" + Q + "http://www.w3.org/2000/svg" + Q + " viewBox=" + Q + "0 0 64 64" + Q + "><rect width=" + Q + "64" + Q + " height=" + Q + "64" + Q + " rx=" + Q + "22" + Q + " fill=" + Q + "#6366f1" + Q + "/><text x=" + Q + "32" + Q + " y=" + Q + "43" + Q + " font-size=" + Q + "34" + Q + " text-anchor=" + Q + "middle" + Q + ">🎮</text></svg>";
 put("favicon.svg", FAVICON);
 
@@ -342,6 +344,7 @@ if (CF_MODE) {
   }
   if (rels.indexOf("static/js/app-static.js") < 0) problems.push("没有产出 static/js/app-static.js");
   if (rels.indexOf("static/js/gamepad.js") < 0) problems.push("没有产出 static/js/gamepad.js（手柄支持）");
+  if (rels.indexOf("static/js/net-play.js") < 0) problems.push("没有产出 static/js/net-play.js（联机对战小部件）");
   /* 排行榜静态页：标题栏的「排行榜」链接必须落到 rank/today.html，tabs 必须是 /rank/<kind> 静态路径 */
   if (rels.indexOf("rank/today.html") < 0) problems.push("没有产出 rank/today.html（排行榜静态页）");
   else {
@@ -361,10 +364,24 @@ if (CF_MODE) {
     if (!selfGp && html.indexOf(gpWant) < 0) {
       problems.push(rel + " 没有引用手柄脚本（应为 " + gpWant + "；自带手柄轮询的页面请加 <meta name=\"gamepad\" content=\"self\">）");
     }
-    if (html.indexOf("\"/static/js/gamepad.js\"") >= 0) {
+    /* base = "/" 时 base 前缀就是根路径本身，不算问题；只有子路径部署才要求已经被补上前缀 */
+    if (base !== "/" && html.indexOf("\"/static/js/gamepad.js\"") >= 0) {
       problems.push(rel + " 手柄脚本用的是根路径 /static/js/gamepad.js，没带 base 前缀 —— 子路径部署会 404");
     }
   });
+  /* 联机小部件同理：游戏页里只能写根路径 /static/js/net-play.js，由 staticize 补 base 前缀 */
+  if (base !== "/") {
+    var npRoot = Q + "/static/js/net-play.js" + Q;
+    var npWant = base + "static/js/net-play.js";
+    gamePages.forEach(function (rel) {
+      var html = fs.readFileSync(path.join(OUT, rel), "utf8");
+      if (html.indexOf(npRoot) >= 0) {
+        problems.push(rel + "的联机小部件用的是根路径 /static/js/net-play.js，没带 base 前缀 —— 子路径部署会 404");
+      } else if (html.indexOf("net-play.js") >= 0 && html.indexOf(npWant) < 0) {
+        problems.push(rel + " 引了 net-play.js 但路径不对（应为 " + npWant + "）");
+      }
+    });
+  }
   rels.forEach(function (rel) {
     if (!/.html$/.test(rel)) return;
     if (rel.indexOf("games/") === 0) return; // 游戏本体是自包含的单文件页，不引主站前端

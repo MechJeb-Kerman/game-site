@@ -13,7 +13,7 @@ Express 版是有服务端的（登录、评分、评论、后台都靠接口）
 | 搜索 | ✅ 构建时导出全部卡片，输入关键字在前端过滤；**支持拼音全拼与首字母**（`tcs` → 贪吃蛇）并按相关度排序 |
 | 排行榜（今日 / 本周 / 本月 / 总榜 / 评分榜 / 收藏榜 / 新游榜） | ✅ 构建时预渲染成 `rank/*.html`（导航里的 `/rank` 落到 `rank/today.html`） |
 | iframe 播放器、全屏、重开、新窗口 | ✅ |
-| 7 款游戏本体 | ✅ 原样拷贝 |
+| 10 款游戏本体 | ✅ 原样拷贝 |
 | 隐私政策 `/privacy`、用户协议 `/terms` | ✅ 纯静态文本，照样导出，页脚每页都有链接、`sitemap.xml` 也收录 |
 | 公告 `/notice` 与详情、更新说明 `/changelog` | ✅ 都是纯文本页，照样导出（首页的公告横幅也在，关闭状态写 `localStorage`）；公告的**评论区**不渲染——静态版没有服务端 |
 | 论坛 `/forum` | ❌ 纯动态功能（待审队列、限流、禁言、黑名单都要服务端），静态版不导出、导航里也没有入口；要论坛就部署 Workers + D1 那一版把 `forum.fishport.cn` 指过去 |
@@ -40,8 +40,8 @@ node tools/build-pages.mjs --base=/ --origin=https://用户名.github.io
 构建完成会打印一行汇总，例如：
 
 ```
-游戏 7 款 / 分类 4 个 / 标签 16 个
-文件 67 个，合计 617.4 KB（全新库还没有公告；每建一条公告 +1 个文件）
+游戏 10 款 / 分类 4 个 / 标签 19 个
+文件 82 个，合计 875.6 KB（全新库还没有公告；每建一条公告 +1 个文件）
 写入 dist（base=/仓库名/，origin=https://用户名.github.io/仓库名）
 ```
 
@@ -100,7 +100,7 @@ Cloudflare Pages / Netlify / Vercel 直接拖 `dist/` 或连 Git 仓库，构建
 ```
 dist/
 ├── .nojekyll                       关掉 Jekyll（别删）
-├── index.html                      首页（14 张卡片 = 7 款 × 热门/最新）
+├── index.html                      首页（16 张卡片 = 热门 / 最新各 8 张上限）
 ├── games.html                      全部游戏（?sort= 排序、?q= 过滤都在前端做）
 ├── search.html                     搜索页（拼音 / 首字母 / 相关度都在前端算）
 ├── rank/today.html 等 7 个榜单页     排行榜（today / week / month / all / rating / fav / new）

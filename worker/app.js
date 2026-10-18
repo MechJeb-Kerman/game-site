@@ -15,6 +15,7 @@ import * as forum from './data-forum.js';
 import * as fguard from '../src/forum-guard.js';
 // 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
 import { PORTAL_HOSTS } from '../src/sites.js';
+import * as play from './play-store.js';
 
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
@@ -1330,6 +1331,80 @@ async function adminForumMuteById(ctx, params) {
   return forumTo(ctx, '/forum/admin', 'done');
 }
 
+/* ================= 联机对战（房间 + 走法中继） ================= */
+//
+// 与 Express 线 server.js 的 /api/play/* 一一对应：服务端只管「轮流」与「转发走法」，
+// 不校验走法合法性、不判胜负（规则在游戏页里）。成功统一 { ok: true, ... }，
+// 失败 { ok: false, error, hint }，错误码映射见 PLAY_STATUS。
+
+const PLAY_STATUS = {
+  not_found: 404, bad_token: 403, full: 409, busy: 503,
+  bad_code: 400, bad_game: 400, bad_move: 400,
+  not_your_turn: 409, not_playing: 409, done: 409, closed: 409, playing: 409, waiting: 409
+};
+const PLAY_HINT = {
+  not_found: '房间不存在或已过期', bad_token: '座位凭证无效（清掉浏览器数据后请重新创建房间）',
+  full: '房间已经满员', busy: '暂时没有可加入的房间，请稍后再试',
+  bad_code: '房间码是 6 位字母数字', bad_game: '游戏标识不合法', bad_move: '走法数据不合法',
+  not_your_turn: '还没轮到你', not_playing: '对局还没开始', done: '对局已经结束',
+  closed: '房间已经关闭', playing: '房间已在对局中', waiting: '还没等到对手'
+};
+
+function playReply(ctx, r, status = 200) {
+  if (r && r.error) {
+    return okJson(ctx, { ok: false, error: r.error, hint: PLAY_HINT[r.error] || '' }, PLAY_STATUS[r.error] || 400);
+  }
+  return okJson(ctx, Object.assign({ ok: true }, r), status);
+}
+
+function playThrottled(ctx, key) {
+  const ip = ctx.request.headers.get('cf-connecting-ip') || 'local';
+  return !dedupe(key + ':' + ip, 1000);
+}
+
+async function apiPlayCreate(ctx) {
+  const b = await readBody(ctx.request);
+  if (playThrottled(ctx, 'play-new')) return okJson(ctx, { ok: false, error: 'busy', hint: '别急，稍等一秒' }, 429);
+  return playReply(ctx, await play.createRoom(ctx.db, b.game, b.name, Date.now()), 201);
+}
+
+async function apiPlayQuick(ctx) {
+  const b = await readBody(ctx.request);
+  if (playThrottled(ctx, 'play-new')) return okJson(ctx, { ok: false, error: 'busy', hint: '别急，稍等一秒' }, 429);
+  const r = await play.quickMatch(ctx.db, b.game, b.name, Date.now());
+  return playReply(ctx, r, r.created ? 201 : 200);
+}
+
+async function apiPlayJoin(ctx) {
+  const b = await readBody(ctx.request);
+  return playReply(ctx, await play.joinRoom(ctx.db, b.code, b.name, Date.now()));
+}
+
+async function apiPlayPoll(ctx) {
+  const b = await readBody(ctx.request);
+  return playReply(ctx, await play.poll(ctx.db, Number(b.id), b.token, Number(b.since) || 0, Date.now()));
+}
+
+async function apiPlayMove(ctx) {
+  const b = await readBody(ctx.request);
+  return playReply(ctx, await play.sendMove(ctx.db, Number(b.id), b.token, b.move, b.result, Date.now()));
+}
+
+async function apiPlayResign(ctx) {
+  const b = await readBody(ctx.request);
+  return playReply(ctx, await play.resign(ctx.db, Number(b.id), b.token, Date.now()));
+}
+
+async function apiPlayRematch(ctx) {
+  const b = await readBody(ctx.request);
+  return playReply(ctx, await play.rematch(ctx.db, Number(b.id), b.token, Date.now()));
+}
+
+async function apiPlayLeave(ctx) {
+  const b = await readBody(ctx.request);
+  return playReply(ctx, await play.leave(ctx.db, Number(b.id), b.token, Date.now()));
+}
+
 /* ================= 路由表 ================= */
 
 const ROUTES = [
@@ -1415,6 +1490,16 @@ const ROUTES = [
   { m: 'POST', p: '/forum/admin/blacklist/:id/delete', fn: adminForumBlacklistDel, need: 'admin' },
   { m: 'POST', p: '/forum/admin/users/mute', fn: adminForumMuteByName, need: 'admin' },
   { m: 'POST', p: '/forum/admin/users/:id/mute', fn: adminForumMuteById, need: 'admin' },
+
+  // 联机对战：房间与走法中继（五子棋 / 中国象棋 / 国际象棋等共用）
+  { m: 'POST', p: '/api/play/create', fn: apiPlayCreate },
+  { m: 'POST', p: '/api/play/quick', fn: apiPlayQuick },
+  { m: 'POST', p: '/api/play/join', fn: apiPlayJoin },
+  { m: 'POST', p: '/api/play/poll', fn: apiPlayPoll },
+  { m: 'POST', p: '/api/play/move', fn: apiPlayMove },
+  { m: 'POST', p: '/api/play/resign', fn: apiPlayResign },
+  { m: 'POST', p: '/api/play/rematch', fn: apiPlayRematch },
+  { m: 'POST', p: '/api/play/leave', fn: apiPlayLeave },
 ];
 
 /* ================= SEO 资源 ================= */

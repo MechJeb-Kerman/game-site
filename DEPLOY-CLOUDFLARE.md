@@ -105,7 +105,7 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ## 部署完的自查清单
 
-- 打开首页：Hero 显示「已累计 0 次游玩 · 共 7 款游戏」，下面是 14 张卡片（7 款 × 热门/最新）。
+- 打开首页：Hero 显示「已累计 0 次游玩 · 共 10 款游戏」，下面是 16 张卡片（热门 / 最新每个区块 8 张上限）。
 - 打开任意详情页：游戏能玩，能全屏、能重开，评分区显示「静态演示版没有服务端，评分与评论已关闭」。
 - 随便输一个不存在的地址（`/nope`）：出现 404 页面。
 - 手机浏览器打开：导航换行、无横向滚动条。
@@ -115,7 +115,7 @@ CI 场景可以直接用 API Token（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUN
 
 ```
 node tools/build-pages.mjs --cf --base=/ --origin=https://game-site.pages.dev --out=dist-cf
-  → 游戏 7 款 / 分类 4 个 / 标签 16 个 / 排行榜 7 个 / 更新说明 1 页；68 个文件，618.2 KB（全新库还没有公告；每建一条公告 +1 个文件）
+  → 游戏 10 款 / 分类 4 个 / 标签 19 个 / 排行榜 7 个 / 更新说明 1 页；83 个文件，876.3 KB（全新库还没有公告；每建一条公告 +1 个文件）
 
 node tools/pages-smoke.mjs --base=/ --out=dist-cf
   → pages-home / pages-list / pages-search / pages-tag / pages-detail /

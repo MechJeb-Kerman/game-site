@@ -14,6 +14,7 @@ import * as forum from './src/data-forum.js';
 import * as fguard from './src/forum-guard.js';
 // 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
 import { PORTAL_HOSTS } from './src/sites.js';
+import * as play from './src/play-store.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -535,6 +536,71 @@ app.post('/api/games/:slug/rate', (req, res) => {
   if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
   if (r.error) return res.status(400).json({ error: r.error });
   res.json(r);
+});
+
+// ---------- 联机对战（房间 + 走法中继） ----------
+//
+// 服务端只做两件事：轮流（谁的回合）与转发走法。走法是否合法、谁赢谁输都由客户端规则判定，
+// result 由客户端声明后照单转发——棋类规则（禁手、将军、将死）放在页面里，服务端不做裁判。
+// 客户端 1.2s 轮询 /api/play/poll 拉增量（since = 已应用的最大 seq），不用 Durable Objects。
+
+/** store 的 { error } → HTTP 状态码；成功统一补 ok:true。绝不外泄 host_token/guest_token。 */
+const PLAY_STATUS = {
+  not_found: 404, bad_token: 403, full: 409, busy: 503,
+  bad_code: 400, bad_game: 400, bad_move: 400,
+  not_your_turn: 409, not_playing: 409, done: 409, closed: 409, playing: 409, waiting: 409
+};
+function playReply(res, r, status = 200) {
+  if (r && r.error) {
+    const code = PLAY_STATUS[r.error] || 400;
+    return res.status(code).json({ ok: false, error: r.error, hint: playHint(r.error) });
+  }
+  res.status(status).json(Object.assign({ ok: true }, r));
+}
+function playHint(code) {
+  return {
+    not_found: '房间不存在或已过期', bad_token: '座位凭证无效（清掉浏览器数据后请重新创建房间）',
+    full: '房间已经满员', busy: '暂时没有可加入的房间，请稍后再试',
+    bad_code: '房间码是 6 位字母数字', bad_game: '游戏标识不合法', bad_move: '走法数据不合法',
+    not_your_turn: '还没轮到你', not_playing: '对局还没开始', done: '对局已经结束',
+    closed: '房间已经关闭', playing: '房间已在对局中', waiting: '还没等到对手'
+  }[code] || '';
+}
+
+// 建房 / 快速匹配给点限速，防止刷房间；轮询与走法不拦（本来就高频）
+app.post('/api/play/create', (req, res) => {
+  if (!dedupe('play-new:' + req.ip, 1000)) return res.status(429).json({ ok: false, error: 'busy', hint: '别急，稍等一秒' });
+  playReply(res, play.createRoom(req.body && req.body.game, req.body && req.body.name, Date.now()), 201);
+});
+
+app.post('/api/play/quick', (req, res) => {
+  if (!dedupe('play-new:' + req.ip, 1000)) return res.status(429).json({ ok: false, error: 'busy', hint: '别急，稍等一秒' });
+  const r = play.quickMatch(req.body && req.body.game, req.body && req.body.name, Date.now());
+  playReply(res, r, r.created ? 201 : 200);
+});
+
+app.post('/api/play/join', (req, res) => {
+  playReply(res, play.joinRoom(req.body && req.body.code, req.body && req.body.name, Date.now()));
+});
+
+app.post('/api/play/poll', (req, res) => {
+  playReply(res, play.poll(Number(req.body && req.body.id), req.body && req.body.token, Number(req.body && req.body.since) || 0, Date.now()));
+});
+
+app.post('/api/play/move', (req, res) => {
+  playReply(res, play.sendMove(Number(req.body && req.body.id), req.body && req.body.token, req.body && req.body.move, req.body && req.body.result, Date.now()));
+});
+
+app.post('/api/play/resign', (req, res) => {
+  playReply(res, play.resign(Number(req.body && req.body.id), req.body && req.body.token, Date.now()));
+});
+
+app.post('/api/play/rematch', (req, res) => {
+  playReply(res, play.rematch(Number(req.body && req.body.id), req.body && req.body.token, Date.now()));
+});
+
+app.post('/api/play/leave', (req, res) => {
+  playReply(res, play.leave(Number(req.body && req.body.id), req.body && req.body.token, Date.now()));
 });
 
 // ---------- 账号 ----------

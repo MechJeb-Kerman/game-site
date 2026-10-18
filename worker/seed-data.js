@@ -27,7 +27,6 @@ export const CATEGORIES = [
   }
 ];
 
-/** 游戏元数据：game_url 指向 games/ 下自包含的 HTML5 游戏 */
 export const GAMES = [
   {
     "slug": "2048",
@@ -174,6 +173,69 @@ export const GAMES = [
     "emoji": "🕳️",
     "accent": "#8b5cf6",
     "accent2": "#06b6d4",
+    "license": "自研"
+  },
+  {
+    "slug": "gomoku",
+    "title": "五子棋",
+    "subtitle": "先连成五子者获胜",
+    "description": "15×15 棋盘，黑白轮流落子，横竖斜任意方向先连成五子即胜。自带三档 AI，也可以开房间和好友联机对战。",
+    "category": "board",
+    "game_url": "/games/gomoku/index.html",
+    "width": 640,
+    "height": 720,
+    "orientation": "portrait",
+    "tags": [
+      "对战",
+      "AI",
+      "联机",
+      "棋类"
+    ],
+    "emoji": "⚫",
+    "accent": "#38bdf8",
+    "accent2": "#6366f1",
+    "license": "自研"
+  },
+  {
+    "slug": "xiangqi",
+    "title": "中国象棋",
+    "subtitle": "楚河汉界，将帅对垒",
+    "description": "标准中国象棋规则：马走日、象飞田、炮打隔子，将帅不能照面。支持三档 AI 与联机对战，带走子记录与吃子提示。",
+    "category": "board",
+    "game_url": "/games/xiangqi/index.html",
+    "width": 780,
+    "height": 720,
+    "orientation": "landscape",
+    "tags": [
+      "对战",
+      "AI",
+      "联机",
+      "传统"
+    ],
+    "emoji": "🀄",
+    "accent": "#f59e0b",
+    "accent2": "#b45309",
+    "license": "自研"
+  },
+  {
+    "slug": "chess",
+    "title": "国际象棋",
+    "subtitle": "八八棋盘上的王者对决",
+    "description": "完整国际象棋规则：兵升变、王车易位、吃过路兵，含将军与将杀判定。可选三档 AI，也能联机与好友对弈。",
+    "category": "board",
+    "game_url": "/games/chess/index.html",
+    "width": 780,
+    "height": 720,
+    "orientation": "landscape",
+    "tags": [
+      "对战",
+      "AI",
+      "联机",
+      "经典"
+    ],
+    "emoji": "♞",
+    "accent": "#a78bfa",
+    "accent2": "#4f46e5",
     "license": "自研"
   }
 ];

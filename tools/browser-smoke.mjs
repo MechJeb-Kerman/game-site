@@ -368,6 +368,42 @@ const TARGETS = [
         " return { cards: links.length, hosts: hosts, groups: groups }; })()"
   },
   {
+    n: 'game-gomoku', w: 640, h: 720, u: BASE + '/games/gomoku/index.html',
+    js: "(async function(){ var b = window.BOARD; if (!b) throw new Error('五子棋：没有 window.BOARD 调试句柄');" +
+        " if (b.slug !== 'gomoku') throw new Error('五子棋：BOARD.slug 不对：' + b.slug);" +
+        " var R = b.rect(); if (!R || R.width < 120 || R.height < 120) throw new Error('五子棋：棋盘区域太小 ' + JSON.stringify(R));" +
+        " if (!window.NetPlay) throw new Error('五子棋：net-play.js 没加载');" +
+        /* 联机小部件可能懒挂载（点了「联机对战」才出现），所以按用户的方式切过去再验，而不是要求一进页面就有 */
+        " b.setMode('online');" +
+        " await new Promise(function(r){ setTimeout(r, 500); });" +
+        " if (!document.querySelector('.np-pill')) throw new Error('五子棋：切到联机模式后没有联机入口');" +
+        " return { mode: b.mode(), moves: b.moveCount(), turn: b.turnText(), rect: Math.round(R.width) + 'x' + Math.round(R.height) }; })()"
+  },
+  {
+    n: 'game-xiangqi', w: 780, h: 720, u: BASE + '/games/xiangqi/index.html',
+    js: "(async function(){ var b = window.BOARD; if (!b) throw new Error('中国象棋：没有 window.BOARD 调试句柄');" +
+        " if (b.slug !== 'xiangqi') throw new Error('中国象棋：BOARD.slug 不对：' + b.slug);" +
+        " var R = b.rect(); if (!R || R.width < 120 || R.height < 120) throw new Error('中国象棋：棋盘区域太小 ' + JSON.stringify(R));" +
+        " if (!window.NetPlay) throw new Error('中国象棋：net-play.js 没加载');" +
+        /* 联机小部件可能懒挂载（点了「联机对战」才出现），所以按用户的方式切过去再验，而不是要求一进页面就有 */
+        " b.setMode('online');" +
+        " await new Promise(function(r){ setTimeout(r, 500); });" +
+        " if (!document.querySelector('.np-pill')) throw new Error('中国象棋：切到联机模式后没有联机入口');" +
+        " return { mode: b.mode(), moves: b.moveCount(), turn: b.turnText(), rect: Math.round(R.width) + 'x' + Math.round(R.height) }; })()"
+  },
+  {
+    n: 'game-chess', w: 780, h: 720, u: BASE + '/games/chess/index.html',
+    js: "(async function(){ var b = window.BOARD; if (!b) throw new Error('国际象棋：没有 window.BOARD 调试句柄');" +
+        " if (b.slug !== 'chess') throw new Error('国际象棋：BOARD.slug 不对：' + b.slug);" +
+        " var R = b.rect(); if (!R || R.width < 120 || R.height < 120) throw new Error('国际象棋：棋盘区域太小 ' + JSON.stringify(R));" +
+        " if (!window.NetPlay) throw new Error('国际象棋：net-play.js 没加载');" +
+        /* 联机小部件可能懒挂载（点了「联机对战」才出现），所以按用户的方式切过去再验，而不是要求一进页面就有 */
+        " b.setMode('online');" +
+        " await new Promise(function(r){ setTimeout(r, 500); });" +
+        " if (!document.querySelector('.np-pill')) throw new Error('国际象棋：切到联机模式后没有联机入口');" +
+        " return { mode: b.mode(), moves: b.moveCount(), turn: b.turnText(), rect: Math.round(R.width) + 'x' + Math.round(R.height) }; })()"
+  },
+  {
     /* 守住线上那个 bug：投稿可以填外站地址，父页面 CSP 的 frame-src 必须放行 http(s)，
        否则外站游戏框整块变成「该内容被屏蔽了」。探针 = 另一个 origin（127.0.0.1:随机端口）。 */
     n: 'frame-src', w: 800, h: 520, u: BASE + '/game/2048',

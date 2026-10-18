@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>中国象棋 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;height:100%;display:flex;gap:10px;padding:10px}
+  .main{position:relative;flex:1 1 auto;min-width:0;min-height:0}
+  #cv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block;
+    border-radius:16px;cursor:pointer;touch-action:manipulation}
+  .side{flex:0 0 246px;display:flex;flex-direction:column;gap:7px;min-height:0;padding:10px;
+    border-radius:16px;background:linear-gradient(160deg,rgba(6,182,212,.14),rgba(14,165,233,.06));
+    border:1px solid rgba(6,182,212,.3);box-shadow:0 12px 34px rgba(0,0,0,.45)}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
+    color:#bfe9ff;border-radius:9px;padding:7px 4px;font:inherit;font-size:12.5px;cursor:pointer}
+  .seg button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;
+    color:#04141c;font-weight:700}
+  .turn{text-align:center;font-size:16px;font-weight:700;color:#a5e9ff;padding:7px 4px;border-radius:11px;
+    background:rgba(6,182,212,.12);border:1px solid rgba(6,182,212,.3)}
+  .turn b{color:#fb7185}
+  .turn.black b{color:#e2e8f0}
+  .turn.check{border-color:rgba(244,63,94,.75);background:rgba(244,63,94,.16);color:#ffe4e6}
+  .hint{font-size:12px;color:#7dd3fc;min-height:34px;line-height:1.45;text-align:center}
+  .room{font-size:12px;color:#a5f3fc;text-align:center;background:rgba(2,10,20,.45);
+    border:1px solid rgba(6,182,212,.25);border-radius:9px;padding:4px 6px}
+  .room b{font:700 14px ui-monospace,Menlo,Consolas,monospace;letter-spacing:2px;color:#a5f3fc}
+  .capRow{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#7dd3fc}
+  .capRow>span{flex:0 0 56px}
+  .caps{flex:1 1 auto;display:flex;flex-wrap:wrap;gap:3px;min-height:18px}
+  .cap{width:18px;height:18px;line-height:16px;text-align:center;border-radius:50%;font-size:11px;font-weight:700}
+  .cap.r{color:#fecaca;border:1px solid rgba(251,113,133,.7);background:rgba(127,29,29,.45)}
+  .cap.b{color:#e2e8f0;border:1px solid rgba(203,213,225,.6);background:rgba(15,23,42,.65)}
+  .logHead{font-size:11.5px;color:#7dd3fc;letter-spacing:1px}
+  .log{flex:1 1 auto;min-height:52px;overflow:auto;font-size:12px;line-height:1.65;color:#cbefff;
+    background:rgba(2,10,20,.35);border:1px solid rgba(6,182,212,.2);border-radius:10px;padding:5px 8px}
+  .log div{display:flex;align-items:baseline;gap:5px;white-space:nowrap}
+  .log i{font-style:normal;color:#5b8ba8;min-width:24px;font-size:11px}
+  .log b{font-weight:700}
+  .log b.r{color:#fb7185}
+  .log b.b{color:#e2e8f0}
+  .log u{text-decoration:none;color:#fbbf24;font-size:11px}
+  .btns{display:flex;gap:6px}
+  .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#dbf8ff;
+    border-radius:11px;padding:9px;cursor:pointer;font:inherit;font-size:13.5px}
+  .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
+  .btn:active{transform:scale(.98)}
+  .note{font-size:10.5px;color:#5b8ba8;line-height:1.45}
+  .ov{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(2,8,16,.72);z-index:9997}
+  .ov[hidden]{display:none}
+  .ovCard{width:86%;max-width:320px;text-align:center;padding:20px 18px;border-radius:18px;
+    background:linear-gradient(160deg,rgba(8,51,68,.98),rgba(5,11,20,.98));
+    border:1px solid rgba(6,182,212,.45);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .ovCard h2{margin:0 0 6px;font-size:24px;color:#e0fbff}
+  .ovCard p{margin:0 0 16px;font-size:13px;color:#7dd3fc;line-height:1.5}
+  /* 人机模式下藏掉联机入口，避免遮挡信息栏 */
+  body.mode-ai .np-pill{display:none !important}
+  @media (max-width:700px){
+    .wrap{flex-direction:column;gap:8px;padding:8px}
+    .main{flex:1 1 auto;min-height:0}
+    .side{flex:0 0 auto;max-height:46%;overflow:auto}
+    .note{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="main" id="main"><canvas id="cv"></canvas></div>
+  <aside class="side">
+    <div class="seg" id="modeSeg">
+      <button type="button" data-mode="ai" class="on">人机</button>
+      <button type="button" data-mode="online">联机</button>
+    </div>
+    <div class="seg" id="lvSeg">
+      <button type="button" data-lv="easy">简单</button>
+      <button type="button" data-lv="normal" class="on">普通</button>
+      <button type="button" data-lv="hard">困难</button>
+    </div>
+    <div class="turn" id="turn"><b>红方</b>走棋</div>
+    <div class="hint" id="hint">点自己的棋子选中，再点目标位置走子</div>
+    <div class="room" id="room" hidden>房间码 <b id="roomCode">------</b></div>
+    <div class="capRow"><span>红方被吃</span><div class="caps" id="capRed"></div></div>
+    <div class="capRow"><span>黑方被吃</span><div class="caps" id="capBlack"></div></div>
+    <div class="logHead">走子记录</div>
+    <div class="log" id="log"></div>
+    <div class="btns">
+      <button class="btn primary" id="btnNew" type="button">重新开局</button>
+      <button class="btn" id="btnResign" type="button" hidden>认输</button>
+    </div>
+    <div class="note">红方在下、黑方在上，坐标 x=0..8 从左到右、y=0..9 从上到下。长将不判负（循环时由一方认输）；连续 60 回合无吃子判和。</div>
+  </aside>
+</div>
+<div class="ov" id="ov" hidden>
+  <div class="ovCard">
+    <h2 id="ovTitle">你赢了</h2>
+    <p id="ovSub">本局结束</p>
+    <button class="btn primary" id="ovBtn" type="button">再来一局</button>
+  </div>
+</div>
+
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script src="/static/js/net-play.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+   * 一、棋盘模型与规则
+   * 9 列(x:0..8 从左到右) × 10 行(y:0..9 从上到下)。
+   * 红方(先手, 联机 seat 0)在下方 y=7..9，黑方(后手, seat 1)在上方 y=0..2。
+   * 棋子编码 = 'r'/'b' + 类型：
+   *   K 帅/将  A 仕/士  E 相/象  H 马  R 车  C 炮  P 兵/卒
+   * ============================================================ */
+  var RED = 0, BLACK = 1;
+  var CH = { rK: '帅', rA: '仕', rE: '相', rH: '马', rR: '车', rC: '炮', rP: '兵',
+             bK: '将', bA: '士', bE: '象', bH: '马', bR: '车', bC: '炮', bP: '卒' };
+  var KING = ['rK', 'bK'];
+  /* 子力价值：车 > 马/炮 > 兵卒 > 仕相/士象 */
+  var VAL = { K: 10000, R: 900, H: 450, C: 450, A: 200, E: 200, P: 100 };
+  var MATE = 100000;
+  /* 中国象棋规则：连续 60 回合（120 个半回合）无吃子判和 */
+  var DRAW_PLIES = 120;
+
+  var KSTEP = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  var AST = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+  var EST = [[-2, -2], [-2, 2], [2, -2], [2, 2]];
+  var HST = [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]];
+  var RST = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+
+  function inb(x, y) { return x >= 0 && x < 9 && y >= 0 && y < 10; }
+  function sOf(p) { return p ? (p.charAt(0) === 'r' ? RED : BLACK) : -1; }
+  function tOf(p) { return p ? p.charAt(1) : ''; }
+  function inPalace(side, x, y) {
+    if (x < 3 || x > 5) return false;
+    return side === RED ? (y >= 7 && y <= 9) : (y >= 0 && y <= 2);
+  }
+
+  /* 初始局面：黑在上、红在下，炮在二/八路，兵卒五枚 */
+  var INIT = (function () {
+    var b = [], i, x, back = ['R', 'H', 'E', 'A', 'K', 'A', 'E', 'H', 'R'];
+    for (i = 0; i < 90; i++) b.push('');
+    for (x = 0; x < 9; x++) { b[0 * 9 + x] = 'b' + back[x]; b[9 * 9 + x] = 'r' + back[x]; }
+    b[2 * 9 + 1] = 'bC'; b[2 * 9 + 7] = 'bC';
+    b[7 * 9 + 1] = 'rC'; b[7 * 9 + 7] = 'rC';
+    for (x = 0; x < 9; x += 2) { b[3 * 9 + x] = 'bP'; b[6 * 9 + x] = 'rP'; }
+    return b;
+  })();
+
+  /* ---------- 伪合法着法（不检查走后自将） ----------
+   * 马走日且蹩马腿；象飞田且塞象眼、不过河；车走直线；
+   * 炮走直线、吃子必须隔一个炮架；兵卒过河前只能前进、过河后可横走、永不后退；
+   * 仕帅限九宫；将帅另可沿空头中路直接吃对方将帅（飞将）。
+   */
+  function pseudo(bd, side) {
+    var out = [], y, x, i, p, q, nx, ny, dx, dy, t;
+    for (y = 0; y < 10; y++) {
+      for (x = 0; x < 9; x++) {
+        p = bd[y * 9 + x];
+        if (!p || sOf(p) !== side) continue;
+        t = p.charAt(1);
+
+        if (t === 'K') {
+          for (i = 0; i < 4; i++) {
+            nx = x + KSTEP[i][0]; ny = y + KSTEP[i][1];
+            if (!inPalace(side, nx, ny)) continue;
+            q = bd[ny * 9 + nx];
+            if (q && sOf(q) === side) continue;
+            out.push({ x1: x, y1: y, x2: nx, y2: ny });
+          }
+          /* 飞将：中路无子，将帅可直取对方（“照面”本身也是非法局面） */
+          var step = side === RED ? -1 : 1;
+          for (ny = y + step; ny >= 0 && ny < 10; ny += step) {
+            q = bd[ny * 9 + x];
+            if (!q) continue;
+            if (q === KING[1 - side]) out.push({ x1: x, y1: y, x2: x, y2: ny });
+            break;
+          }
+        } else if (t === 'A') {
+          for (i = 0; i < 4; i++) {
+            nx = x + AST[i][0]; ny = y + AST[i][1];
+            if (!inPalace(side, nx, ny)) continue;
+            q = bd[ny * 9 + nx];
+            if (q && sOf(q) === side) continue;
+            out.push({ x1: x, y1: y, x2: nx, y2: ny });
+          }
+        } else if (t === 'E') {
+          for (i = 0; i < 4; i++) {
+            nx = x + EST[i][0]; ny = y + EST[i][1];
+            if (!inb(nx, ny)) continue;
+            if (side === RED ? ny < 5 : ny > 4) continue;                 /* 象不过河 */
+            if (bd[(y + EST[i][1] / 2) * 9 + (x + EST[i][0] / 2)]) continue; /* 塞象眼 */
+            q = bd[ny * 9 + nx];
+            if (q && sOf(q) === side) continue;
+            out.push({ x1: x, y1: y, x2: nx, y2: ny });
+          }
+        } else if (t === 'H') {
+          for (i = 0; i < 8; i++) {
+            dx = HST[i][0]; dy = HST[i][1];
+            nx = x + dx; ny = y + dy;
+            if (!inb(nx, ny)) continue;
+            if (Math.abs(dx) === 2) { if (bd[y * 9 + x + dx / 2]) continue; }  /* 蹩马腿 */
+            else { if (bd[(y + dy / 2) * 9 + x]) continue; }
+            q = bd[ny * 9 + nx];
+            if (q && sOf(q) === side) continue;
+            out.push({ x1: x, y1: y, x2: nx, y2: ny });
+          }
+        } else if (t === 'R') {
+          for (i = 0; i < 4; i++) {
+            dx = RST[i][0]; dy = RST[i][1]; nx = x + dx; ny = y + dy;
+            while (inb(nx, ny)) {
+              q = bd[ny * 9 + nx];
+              if (!q) { out.push({ x1: x, y1: y, x2: nx, y2: ny }); }
+              else {
+                if (sOf(q) !== side) out.push({ x1: x, y1: y, x2: nx, y2: ny });
+                break;
+              }
+              nx += dx; ny += dy;
+            }
+          }
+        } else if (t === 'C') {
+          for (i = 0; i < 4; i++) {
+            dx = RST[i][0]; dy = RST[i][1]; nx = x + dx; ny = y + dy;
+            var screen = false;
+            while (inb(nx, ny)) {
+              q = bd[ny * 9 + nx];
+              if (!screen) {
+                if (!q) out.push({ x1: x, y1: y, x2: nx, y2: ny });
+                else screen = true;                       /* 遇到炮架 */
+              } else if (q) {
+                if (sOf(q) !== side) out.push({ x1: x, y1: y, x2: nx, y2: ny });
+                break;
+              }
+              nx += dx; ny += dy;
+            }
+          }
+        } else if (t === 'P') {
+          ny = y + (side === RED ? -1 : 1);
+          if (inb(x, ny)) {
+            q = bd[ny * 9 + x];
+            if (!q || sOf(q) !== side) out.push({ x1: x, y1: y, x2: x, y2: ny });
+          }
+          if (side === RED ? y <= 4 : y >= 5) {           /* 过河后才能横走 */
+            for (i = -1; i <= 1; i += 2) {
+              nx = x + i;
+              if (!inb(nx, y)) continue;
+              q = bd[y * 9 + nx];
+              if (q && sOf(q) === side) continue;
+              out.push({ x1: x, y1: y, x2: nx, y2: y });
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  /* 将帅只在九宫里，所以最多扫 9 格 */
+  function findKing(bd, side) {
+    var y0 = side === RED ? 7 : 0, dx, dy;
+    for (dy = 0; dy < 3; dy++) {
+      for (dx = 0; dx < 3; dx++) {
+        if (bd[(y0 + dy) * 9 + 3 + dx] === KING[side]) return { x: 3 + dx, y: y0 + dy };
+      }
+    }
+    return null;
+  }
+
+  /* 己方被将军？含“将帅照面”这一非法局面 */
+  function inCheck(bd, side) {
+    var k = findKing(bd, side);
+    if (!k) return true;
+    var ek = side === RED ? 'b' : 'r';
+    var i, x, y, p, dx, dy;
+
+    /* 将帅照面：同一列且中间无子 —— 等价于被对方将帅攻击 */
+    var k2 = findKing(bd, 1 - side);
+    if (k2 && k2.x === k.x) {
+      var clear = true;
+      for (y = Math.min(k.y, k2.y) + 1; y < Math.max(k.y, k2.y); y++) {
+        if (bd[y * 9 + k.x]) { clear = false; break; }
+      }
+      if (clear) return true;
+    }
+    /* 车：第一个子；炮：第二个子（隔一个炮架） */
+    for (i = 0; i < 4; i++) {
+      dx = RST[i][0]; dy = RST[i][1]; x = k.x + dx; y = k.y + dy;
+      var screen = false;
+      while (inb(x, y)) {
+        p = bd[y * 9 + x];
+        if (p) {
+          if (!screen) {
+            if (p.charAt(0) === ek && p.charAt(1) === 'R') return true;
+            screen = true;
+          } else {
+            if (p.charAt(0) === ek && p.charAt(1) === 'C') return true;
+            break;
+          }
+        }
+        x += dx; y += dy;
+      }
+    }
+    /* 马：反查八个位置，并确认马腿没被蹩 */
+    for (i = 0; i < 8; i++) {
+      var hx = k.x + HST[i][0], hy = k.y + HST[i][1];
+      if (!inb(hx, hy)) continue;
+      p = bd[hy * 9 + hx];
+      if (!p || p.charAt(0) !== ek || p.charAt(1) !== 'H') continue;
+      var vx = k.x - hx, vy = k.y - hy;
+      var lx = Math.abs(vx) === 2 ? hx + vx / 2 : hx;
+      var ly = Math.abs(vx) === 2 ? hy : hy + vy / 2;
+      if (!bd[ly * 9 + lx]) return true;
+    }
+    /* 兵/卒：正前方一格，或过河后的左右一格 */
+    for (i = 0; i < 4; i++) {
+      x = k.x + RST[i][0]; y = k.y + RST[i][1];
+      if (!inb(x, y)) continue;
+      p = bd[y * 9 + x];
+      if (!p || p.charAt(0) !== ek || p.charAt(1) !== 'P') continue;
+      if (ek === 'b') {
+        if (x === k.x && y + 1 === k.y) return true;
+        if (y === k.y && Math.abs(x - k.x) === 1 && y >= 5) return true;
+      } else {
+        if (x === k.x && y - 1 === k.y) return true;
+        if (y === k.y && Math.abs(x - k.x) === 1 && y <= 4) return true;
+      }
+    }
+    return false;
+  }
+
+  /* 合法着法：伪合法着法里滤掉走后自将 / 将帅照面的 */
+  function legalMoves(bd, side) {
+    var ps = pseudo(bd, side), out = [], i, m, from, to, cap;
+    for (i = 0; i < ps.length; i++) {
+      m = ps[i];
+      from = m.y1 * 9 + m.x1; to = m.y2 * 9 + m.x2;
+      cap = bd[to];
+      bd[to] = bd[from]; bd[from] = '';
+      if (!inCheck(bd, side)) out.push(m);
+      bd[from] = bd[to]; bd[to] = cap;
+    }
+    return out;
+  }
+
+  /* 局面判定：无着可走即败（被将死或将帅被困毙都算输），和棋另按 60 回合无吃子 */
+  function statusOf(bd, side) {
+    var mv = legalMoves(bd, side);
+    if (!mv.length) return { over: true, winner: 1 - side, check: inCheck(bd, side), moves: mv };
+    return { over: false, moves: mv, check: inCheck(bd, side) };
+  }
+
+  function enc(m) { return m.x1 + ',' + m.y1 + '-' + m.x2 + ',' + m.y2; }
+  function dec(s) {
+    var a = String(s).split(/[-,]/);
+    if (a.length !== 4) return null;
+    var m = { x1: +a[0], y1: +a[1], x2: +a[2], y2: +a[3] };
+    if (!inb(m.x1, m.y1) || !inb(m.x2, m.y2)) return null;
+    return m;
+  }
+
+  /* ============================================================
+   * 二、局面评估与 AI
+   * 子力价值 + 位置表（位置表按红方视角给 bonus，黑方做 180° 旋转镜像）。
+   * ============================================================ */
+  function posBonus(p, x, y) {
+    var s = p.charAt(0) === 'r' ? RED : BLACK;
+    var yy = s === RED ? y : 9 - y;        /* yy=9 是自己底线，yy=0 是对方底线 */
+    var xx = s === RED ? x : 8 - x;
+    var center = 4 - Math.abs(xx - 4);
+    var t = p.charAt(1), v = 0;
+    if (t === 'P') {                       /* 兵/卒：过河加分，越靠前越高，底线反而受限 */
+      if (yy <= 4) { v = 12 + (5 - yy) * 7; if (yy === 0) v = 18; v += center * 2; }
+      else v = (yy === 5 ? 4 : 0) + center;
+    } else if (t === 'H') {                /* 马：喜中路、忌边线 */
+      v = center * 6 + (9 - yy) * 3;
+      if (xx === 0 || xx === 8) v -= 12;
+    } else if (t === 'C') {                /* 炮：喜中路，略微靠前 */
+      v = center * 4 + (9 - yy);
+    } else if (t === 'R') {                /* 车：中路与过河小加分 */
+      v = center * 2 + (9 - yy) * 2;
+    }
+    return v;
+  }
+
+  /* 红方视角的总分 */
+  function evaluate(bd) {
+    var s = 0, i, p;
+    for (i = 0; i < 90; i++) {
+      p = bd[i];
+      if (!p) continue;
+      var v = VAL[p.charAt(1)] + posBonus(p, i % 9, (i / 9) | 0);
+      s += p.charAt(0) === 'r' ? v : -v;
+    }
+    return s;
+  }
+  function evalSide(bd, side) { var e = evaluate(bd); return side === RED ? e : -e; }
+
+  var nodes = 0, deadline = 0, aborted = false, useQ = true, rootPrev = null;
+
+  function orderMoves(bd, moves) {
+    for (var i = 0; i < moves.length; i++) {
+      var m = moves[i];
+      var cap = bd[m.y2 * 9 + m.x2];
+      /* MVV-LVA：先吃大子、先用小子吃 */
+      m.sc = cap ? VAL[cap.charAt(1)] * 10 - VAL[bd[m.y1 * 9 + m.x1].charAt(1)] : 0;
+    }
+    moves.sort(function (a, b) { return b.sc - a.sc; });
+    return moves;
+  }
+
+  function timeUp() {
+    if ((++nodes & 511) === 0 && Date.now() > deadline) { aborted = true; return true; }
+    return aborted;
+  }
+
+  function quiesce(bd, side, alpha, beta, ply, qd) {
+    if (timeUp()) return 0;
+    var stand = evalSide(bd, side);
+    if (qd >= 3) return stand;
+    if (stand >= beta) return stand;
+    if (stand > alpha) alpha = stand;
+    var all = legalMoves(bd, side), caps = [], i;
+    for (i = 0; i < all.length; i++) if (bd[all[i].y2 * 9 + all[i].x2]) caps.push(all[i]);
+    orderMoves(bd, caps);
+    for (i = 0; i < caps.length; i++) {
+      var m = caps[i], from = m.y1 * 9 + m.x1, to = m.y2 * 9 + m.x2, cap = bd[to];
+      bd[to] = bd[from]; bd[from] = '';
+      var v = -quiesce(bd, 1 - side, -beta, -alpha, ply + 1, qd + 1);
+      bd[from] = bd[to]; bd[to] = cap;
+      if (aborted) return 0;
+      if (v >= beta) return v;
+      if (v > alpha) alpha = v;
+    }
+    return alpha;
+  }
+
+  function negamax(bd, side, depth, alpha, beta, ply) {
+    if (timeUp()) return 0;
+    var moves = legalMoves(bd, side);
+    if (!moves.length) return -(MATE - ply);      /* 无着可走 = 输（将死 / 困毙） */
+    if (depth <= 0) return useQ ? quiesce(bd, side, alpha, beta, ply, 0) : evalSide(bd, side);
+    orderMoves(bd, moves);
+    var best = -MATE * 2, i;
+    for (i = 0; i < moves.length; i++) {
+      var m = moves[i], from = m.y1 * 9 + m.x1, to = m.y2 * 9 + m.x2, cap = bd[to];
+      bd[to] = bd[from]; bd[from] = '';
+      var v = -negamax(bd, 1 - side, depth - 1, -beta, -alpha, ply + 1);
+      bd[from] = bd[to]; bd[to] = cap;
+      if (aborted) return 0;
+      if (v > best) best = v;
+      if (v > alpha) alpha = v;
+      if (alpha >= beta) break;                   /* beta 截断 */
+    }
+    return best;
+  }
+
+  function rootSearch(bd, side, depth) {
+    var moves = legalMoves(bd, side), i;
+    if (!moves.length) return { best: null, done: true };
+    orderMoves(bd, moves);
+    if (rootPrev) {                               /* 上一层的最优着法优先 */
+      for (i = 0; i < moves.length; i++) {
+        if (moves[i].x1 === rootPrev.x1 && moves[i].y1 === rootPrev.y1 &&
+            moves[i].x2 === rootPrev.x2 && moves[i].y2 === rootPrev.y2) {
+          moves.splice(i, 1); moves.unshift(rootPrev); break;
+        }
+      }
+    }
+    var alpha = -MATE * 2, best = null, bestV = -MATE * 2;
+    for (i = 0; i < moves.length; i++) {
+      var m = moves[i], from = m.y1 * 9 + m.x1, to = m.y2 * 9 + m.x2, cap = bd[to];
+      bd[to] = bd[from]; bd[from] = '';
+      var v = -negamax(bd, 1 - side, depth - 1, -MATE * 2, -alpha, 1);
+      bd[from] = bd[to]; bd[to] = cap;
+      if (aborted) return { best: best, done: false };   /* 只保留已完整搜过的最优手 */
+      if (v > bestV) { bestV = v; best = m; alpha = v; }
+    }
+    return { best: best, done: true, score: bestV };
+  }
+
+  function cloneMove(m) { return { x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2 }; }
+
+  /* 三档难度：
+   * 简单  —— 随机着一个合法着法（七成概率先吃子），会送子；
+   * 普通  —— 固定 2 层搜索 + 子力价值表，会吃白送的子、会躲显威胁；
+   * 困难  —— 迭代加深 alpha-beta（约 3 层）+ MVV-LVA 排序 + 吃子优先 + 静止搜索，
+   *          单步预算 800ms，超时就退回上一层已搜完的深度。
+   */
+  function pickAIMove(level, bd, side) {
+    var legal = legalMoves(bd, side), i;
+    if (!legal.length) return null;
+    if (level === 'easy') {
+      var caps = [];
+      for (i = 0; i < legal.length; i++) if (bd[legal[i].y2 * 9 + legal[i].x2]) caps.push(legal[i]);
+      var pool = (caps.length && Math.random() < 0.7) ? caps : legal;
+      return cloneMove(pool[(Math.random() * pool.length) | 0]);
+    }
+    var hard = level === 'hard';
+    var maxD = hard ? 4 : 2;
+    var budget = hard ? 800 : 300;
+    var t0 = Date.now();
+    var best = null;
+    rootPrev = null; aborted = false; nodes = 0; useQ = hard;
+    for (var d = 1; d <= maxD; d++) {
+      deadline = t0 + budget;
+      var r = rootSearch(bd, side, d);
+      if (r.best) { best = r.best; rootPrev = r.best; }
+      if (!r.done) break;
+      if (r.score > MATE - 1000) break;             /* 已经看到杀棋，不用再深 */
+      if (Date.now() - t0 > budget * 0.7) break;
+    }
+    return best ? cloneMove(best) : cloneMove(legal[0]);
+  }
+
+  /* ============================================================
+   * 三、绘制（canvas）：棋盘线、棋子、选中高亮、合法目标点、最后一手
+   * 棋盘逻辑坐标用 px()/py() 换算，尺寸由 layout() 依容器自适应。
+   * ============================================================ */
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var cell = 40, pad = 28, dpr = 1;
+
+  function px(x) { return pad + x * cell; }
+  function py(y) { return pad + y * cell; }
+
+  function layout() {
+    var box = document.getElementById('main');
+    var W = box.clientWidth, H = box.clientHeight;
+    if (!W || !H) return;
+    /* 棋盘 8 格宽 9 格高，四周各留 0.7 格放棋子 */
+    cell = Math.min(W / 9.4, H / 10.4);
+    cell = Math.max(cell, 12);
+    pad = cell * 0.7;
+    var vw = pad * 2 + cell * 8, vh = pad * 2 + cell * 9;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.style.width = vw + 'px';
+    cv.style.height = vh + 'px';
+    cv.width = Math.round(vw * dpr);
+    cv.height = Math.round(vh * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function line(x1, y1, x2, y2) { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+
+  /* 炮位与兵位的“十”字定位小刻线 */
+  var TICKS = [[1, 2], [7, 2], [1, 7], [7, 7], [0, 3], [2, 3], [4, 3], [6, 3], [8, 3], [0, 6], [2, 6], [4, 6], [6, 6], [8, 6]];
+  function ticks() {
+    var d = cell * 0.1, g = cell * 0.14, i, s, cx, cy, sx;
+    ctx.lineWidth = Math.max(1, cell * 0.022);
+    for (i = 0; i < TICKS.length; i++) {
+      cx = px(TICKS[i][0]); cy = py(TICKS[i][1]);
+      for (s = -1; s <= 1; s += 2) {
+        sx = TICKS[i][0] === 0 ? 1 : (TICKS[i][0] === 8 ? -1 : s);
+        if (TICKS[i][0] === 0 || TICKS[i][0] === 8) {
+          line(cx + sx * g, cy - g - d, cx + sx * g, cy - g);
+          line(cx + sx * g, cy + g, cx + sx * g, cy + g + d);
+          break;
+        }
+        line(cx + s * g, cy - g - d, cx + s * g, cy - g);
+        line(cx + s * g, cy + g, cx + s * g, cy + g + d);
+      }
+      if (TICKS[i][0] !== 0 && TICKS[i][0] !== 8) {
+        for (s = -1; s <= 1; s += 2) {
+          line(cx - g - d, cy + s * g, cx - g, cy + s * g);
+          line(cx + g, cy + s * g, cx + g + d, cy + s * g);
+        }
+      }
+    }
+  }
+
+  function drawBoard() {
+    var W = pad * 2 + cell * 8, H = pad * 2 + cell * 9, x, y;
+    ctx.clearRect(0, 0, W, H);
+    var g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, 'rgba(6,182,212,.15)');
+    g.addColorStop(1, 'rgba(14,165,233,.05)');
+    ctx.fillStyle = g;
+    rr(0.5, 0.5, W - 1, H - 1, cell * 0.3); ctx.fill();
+    ctx.strokeStyle = 'rgba(6,182,212,.32)';
+    ctx.lineWidth = 1;
+    rr(0.5, 0.5, W - 1, H - 1, cell * 0.3); ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(125,211,252,.5)';
+    ctx.lineWidth = Math.max(1, cell * 0.022);
+    for (y = 0; y < 10; y++) line(px(0), py(y), px(8), py(y));
+    for (x = 0; x < 9; x++) {
+      if (x === 0 || x === 8) line(px(x), py(0), px(x), py(9));
+      else { line(px(x), py(0), px(x), py(4)); line(px(x), py(5), px(x), py(9)); }
+    }
+    ctx.lineWidth = Math.max(1.2, cell * 0.045);
+    ctx.strokeStyle = 'rgba(125,211,252,.75)';
+    ctx.strokeRect(px(0), py(0), cell * 8, cell * 9);
+    ctx.lineWidth = Math.max(1, cell * 0.022);
+    ctx.strokeStyle = 'rgba(125,211,252,.45)';
+    line(px(3), py(0), px(5), py(2)); line(px(5), py(0), px(3), py(2));
+    line(px(3), py(7), px(5), py(9)); line(px(5), py(7), px(3), py(9));
+    /* 河界 */
+    ctx.fillStyle = 'rgba(125,211,252,.55)';
+    ctx.font = '600 ' + Math.round(cell * 0.42) + 'px "PingFang SC","Microsoft YaHei",serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('楚 河', px(2), py(4.5));
+    ctx.fillText('汉 界', px(6), py(4.5));
+    ticks();
+  }
+
+  function drawPiece(x, y, p, dim) {
+    var cx = px(x), cy = py(y), r = cell * 0.43;
+    var red = p.charAt(0) === 'r';
+    ctx.save();
+    if (dim) ctx.globalAlpha = 0.55;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    var g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.15, cx, cy, r);
+    if (red) { g.addColorStop(0, 'rgba(254,202,202,.32)'); g.addColorStop(1, 'rgba(127,29,29,.62)'); }
+    else { g.addColorStop(0, 'rgba(226,232,240,.24)'); g.addColorStop(1, 'rgba(15,23,42,.8)'); }
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = Math.max(1.4, cell * 0.035);
+    ctx.strokeStyle = red ? '#fb7185' : '#cbd5e1';
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, cell * 0.018);
+    ctx.strokeStyle = red ? 'rgba(251,113,133,.5)' : 'rgba(203,213,225,.32)';
+    ctx.stroke();
+    ctx.fillStyle = red ? '#ffe4e6' : '#e2e8f0';
+    ctx.font = '700 ' + Math.round(cell * 0.5) + 'px "PingFang SC","Microsoft YaHei",serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(CH[p], cx, cy + cell * 0.02);
+    ctx.restore();
+  }
+
+  function draw() {
+    if (!G.board.length) return;
+    drawBoard();
+    var i, x, y, p;
+    /* 最后一手的起点/终点 */
+    if (G.lastMove) {
+      var lm = G.lastMove;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(251,191,36,.75)';
+      ctx.lineWidth = Math.max(1.2, cell * 0.03);
+      ctx.setLineDash([cell * 0.16, cell * 0.12]);
+      ctx.strokeRect(px(lm.x1) - cell * 0.46, py(lm.y1) - cell * 0.46, cell * 0.92, cell * 0.92);
+      ctx.restore();
+    }
+    for (i = 0; i < 90; i++) {
+      p = G.board[i];
+      if (!p) continue;
+      drawPiece(i % 9, (i / 9) | 0, p, false);
+    }
+    /* 被将军的一方：将/帅套红圈 */
+    if (G.check) {
+      var kk = findKing(G.board, G.turn);
+      if (kk) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(px(kk.x), py(kk.y), cell * 0.5, 0, Math.PI * 2);
+        ctx.lineWidth = Math.max(2, cell * 0.07);
+        ctx.strokeStyle = 'rgba(244,63,94,.95)';
+        ctx.shadowColor = '#f43f5e'; ctx.shadowBlur = cell * 0.4;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    /* 选中的棋子 + 合法目标点（吃子点画圈，空点画点） */
+    if (G.sel) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(px(G.sel.x), py(G.sel.y), cell * 0.5, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(2, cell * 0.06);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = cell * 0.35;
+      ctx.stroke();
+      ctx.restore();
+      for (i = 0; i < G.targets.length; i++) {
+        x = px(G.targets[i].x); y = py(G.targets[i].y);
+        ctx.save();
+        if (G.targets[i].cap) {
+          ctx.beginPath(); ctx.arc(x, y, cell * 0.45, 0, Math.PI * 2);
+          ctx.lineWidth = Math.max(1.6, cell * 0.04);
+          ctx.strokeStyle = 'rgba(34,211,238,.95)';
+          ctx.stroke();
+        } else {
+          ctx.beginPath(); ctx.arc(x, y, cell * 0.12, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(34,211,238,.8)';
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  /* ============================================================
+   * 四、对局状态与交互
+   * ============================================================ */
+  var G = {
+    board: [], turn: RED, mode: 'ai', level: 'normal',
+    sel: null, targets: [], lastMove: null, history: [], captured: { 0: [], 1: [] },
+    thinking: false, over: false, noCap: 0, seat: -1, check: false
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var turnEl = $('turn'), hintEl = $('hint'), logEl = $('log'), ovEl = $('ov');
+  var NP = null;
+
+  function setHint(t) { hintEl.textContent = t; }
+
+  function newGame(keepMode) {
+    G.board = INIT.slice();
+    G.turn = RED;
+    G.sel = null; G.targets = []; G.lastMove = null;
+    G.history = []; G.captured = { 0: [], 1: [] };
+    G.thinking = false; G.over = false; G.noCap = 0; G.check = false;
+    ovEl.hidden = true;
+    if (!keepMode) { /* 模式本身不变，这里只是占位语义 */ }
+    setHint(G.mode === 'ai' ? '你执红先手，点棋子选中再点目标位置'
+                            : '点右下角「联机对战」开房间或加入，红方先手');
+    render();
+    maybeAI();
+  }
+
+  /* 落子（唯一改棋盘的地方）：记录走子、吃子、无吃子回合数 */
+  function applyMove(m) {
+    var from = m.y1 * 9 + m.x1, to = m.y2 * 9 + m.x2;
+    var p = G.board[from], cap = G.board[to];
+    if (!p) return false;
+    G.board[to] = p; G.board[from] = '';
+    if (cap) { G.captured[sOf(cap)].push(cap); G.noCap = 0; }
+    else G.noCap++;
+    G.lastMove = { x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2 };
+    G.history.push({ p: p, m: G.lastMove, cap: cap || '' });
+    G.turn = 1 - G.turn;
+    G.sel = null; G.targets = [];
+    return true;
+  }
+
+  function endGame(title, sub) {
+    G.over = true;
+    $('ovTitle').textContent = title;
+    $('ovSub').textContent = sub || '本局结束';
+    ovEl.hidden = false;
+    render();
+  }
+
+  /* 走完一手后的统一收尾：判终局 -> 轮到电脑就叫 AI */
+  function afterMove() {
+    var st = statusOf(G.board, G.turn);
+    G.check = st.check;
+    if (st.over) {
+      if (G.mode === 'ai') {
+        if (st.winner === RED) endGame('你赢了 🎉', st.check ? '将死黑方' : '黑方无子可动（困毙）');
+        else endGame('你输了', st.check ? '红方被将死' : '红方无子可动（困毙）');
+      } else {
+        setHint(st.check ? '将军！' : '对局结束');
+      }
+      render();
+      return;
+    }
+    if (G.noCap >= DRAW_PLIES) {
+      G.over = true;
+      if (G.mode === 'ai') endGame('和棋', '连续 60 回合无吃子');
+      else setHint('和棋：连续 60 回合无吃子');
+      render();
+      return;
+    }
+    render();
+    maybeAI();
+  }
+
+  function render() {
+    draw();
+    renderBar();
+    renderCaps();
+    renderLog();
+  }
+
+  function renderBar() {
+    var t = G.turn === RED ? '红' : '黑';
+    var txt;
+    if (G.mode === 'ai') {
+      if (G.over) txt = '本局结束';
+      else if (G.turn === RED) txt = '红方走棋（你）';
+      else txt = G.thinking ? '黑方走棋（电脑思考中…）' : '黑方走棋（电脑）';
+    } else {
+      var st = NP ? NP.state() : null;
+      if (!st || st.state === 'idle') txt = '联机：未开局';
+      else if (st.state === 'waiting') txt = '联机：等对手加入';
+      else if (st.state === 'playing') txt = (st.myTurn ? '联机：轮到你（' : '联机：等对手（') + t + '方）';
+      else txt = '联机：本局结束';
+    }
+    if (G.check && !G.over) txt = '将军！ ' + txt;
+    turnEl.className = 'turn' + (G.turn === BLACK ? ' black' : '') + (G.check ? ' check' : '');
+    turnEl.innerHTML = txt;
+  }
+
+  function renderCaps() {
+    var a = $('capRed'), b = $('capBlack'), i, h = '';
+    for (i = 0; i < G.captured[RED].length; i++) h += '<span class="cap r">' + CH[G.captured[RED][i]] + '</span>';
+    a.innerHTML = h;
+    h = '';
+    for (i = 0; i < G.captured[BLACK].length; i++) h += '<span class="cap b">' + CH[G.captured[BLACK][i]] + '</span>';
+    b.innerHTML = h;
+  }
+
+  function renderLog() {
+    var h = '', i, e;
+    for (i = 0; i < G.history.length; i++) {
+      e = G.history[i];
+      h += '<div><i>' + (i + 1) + '</i>' +
+        '<b class="' + (sOf(e.p) === RED ? 'r' : 'b') + '">' + CH[e.p] + '</b>' +
+        '<span>' + e.m.x1 + ',' + e.m.y1 + '→' + e.m.x2 + ',' + e.m.y2 + '</span>' +
+        (e.cap ? '<u>吃' + CH[e.cap] + '</u>' : '') + '</div>';
+    }
+    logEl.innerHTML = h;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  /* 我当前能操作的一方：人机固定执红；联机用座位号（0 红 / 1 黑） */
+  function mySide() { return G.mode === 'ai' ? RED : G.seat; }
+  function canAct() {
+    if (G.over || G.thinking) return false;
+    if (G.mode === 'ai') return G.turn === RED;
+    if (!NP) return false;
+    var st = NP.state();
+    return st.state === 'playing' && st.myTurn;
+  }
+
+  /* ---------- 联机：把一手交给 net-play，自己不在本地先落子 ---------- */
+  function sendOnlineMove(m) {
+    var bd = G.board.slice();
+    var to = m.y2 * 9 + m.x2, from = m.y1 * 9 + m.x1;
+    var cap = bd[to], noCap = cap ? 0 : G.noCap + 1;
+    bd[to] = bd[from]; bd[from] = '';
+    var st = statusOf(bd, 1 - G.turn);
+    var result = '';
+    if (st.over) result = G.seat === 0 ? 'host' : 'guest';   /* 对手无着可走 = 我赢 */
+    else if (noCap >= DRAW_PLIES) result = 'draw';
+    NP.send(enc(m), result);
+    setHint(st.over ? '对手无子可动，本局已结束' : '已落子，等对手');
+  }
+
+  function doMove(m) {
+    if (G.mode === 'online') { sendOnlineMove(m); return; }
+    if (!applyMove(m)) return;
+    afterMove();
+  }
+
+  /* 点棋盘：先选中自己的棋子，再点目标位置 */
+  function onPoint(x, y) {
+    if (G.over) return;
+    if (!canAct()) {
+      if (G.mode === 'online') {
+        var st = NP ? NP.state() : null;
+        setHint(st && st.state === 'playing' ? '等对手落子…'
+          : (st && st.state !== 'idle' ? '还没轮到你先手 / 对局未开始' : '先在右下角开房间或加入'));
+      } else if (G.thinking) setHint('电脑思考中…');
+      else setHint('还没轮到你');
+      return;
+    }
+    var side = mySide();
+    var p = G.board[y * 9 + x];
+    if (G.sel) {
+      var hit = null, i;
+      for (i = 0; i < G.targets.length; i++) if (G.targets[i].x === x && G.targets[i].y === y) hit = G.targets[i];
+      if (hit) { doMove({ x1: G.sel.x, y1: G.sel.y, x2: x, y2: y }); return; }
+      if (G.sel.x === x && G.sel.y === y) { G.sel = null; G.targets = []; render(); return; }
+      if (p && sOf(p) === side) { select(x, y); return; }   /* 改选自己另一枚子 */
+      setHint('这一步不合规则，重选一枚棋子吧');
+      G.sel = null; G.targets = []; render();
+      return;
+    }
+    if (!p) { setHint('这里是空点，先点自己的棋子'); return; }
+    if (sOf(p) !== side) { setHint(side === G.turn ? '那是对方的棋子' : '还没轮到你'); return; }
+    select(x, y);
+  }
+
+  function select(x, y) {
+    var side = mySide(), i, mv = legalMoves(G.board, side), targets = [];
+    for (i = 0; i < mv.length; i++) {
+      if (mv[i].x1 === x && mv[i].y1 === y) {
+        targets.push({ x: mv[i].x2, y: mv[i].y2, cap: !!G.board[mv[i].y2 * 9 + mv[i].x2] });
+      }
+    }
+    G.sel = { x: x, y: y };
+    G.targets = targets;
+    setHint(targets.length ? ('已选中 ' + CH[G.board[y * 9 + x]] + '，点高亮位置走子（' + targets.length + ' 个合法点）')
+                           : '这枚子没有可走的合法着法');
+    render();
+  }
+
+  cv.addEventListener('click', function (e) {
+    var r = cv.getBoundingClientRect();
+    var mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (!cell) return;
+    var x = Math.round((mx - pad) / cell), y = Math.round((my - pad) / cell);
+    if (!inb(x, y)) return;
+    var dx = mx - px(x), dy = my - py(y);
+    if (Math.sqrt(dx * dx + dy * dy) > cell * 0.62) return;
+    onPoint(x, y);
+  });
+
+  /* ---------- 电脑走子 ---------- */
+  function maybeAI() {
+    if (G.mode !== 'ai' || G.over || G.turn !== BLACK) return;
+    G.thinking = true;
+    renderBar();
+    /* 让出一帧先把“思考中”画出来，再做搜索 */
+    setTimeout(function () {
+      if (G.mode !== 'ai' || G.over || G.turn !== BLACK) { G.thinking = false; return; }
+      var bd = G.board.slice();
+      var m = pickAIMove(G.level, bd, BLACK);
+      G.thinking = false;
+      if (!m) { var st = statusOf(G.board, BLACK); G.check = st.check; endGame('你赢了 🎉', '黑方无子可动（困毙）'); return; }
+      applyMove(m);
+      afterMove();
+    }, 220);
+  }
+
+  /* ---------- 联机（NetPlay）接入 ---------- */
+  if (window.NetPlay && window.NetPlay.mount) {
+    NP = window.NetPlay.mount({
+      game: 'xiangqi',
+      onMove: function (e, info) {
+        if (G.mode !== 'online') return;
+        G.seat = info.seat;
+        var m = dec(e.move);
+        if (!m) return;
+        if (!G.over) applyMove(m);
+        var st = statusOf(G.board, G.turn);
+        G.check = st.check;
+        render();
+        setHint(e.mine ? '已落子，等对手' : (st.check ? '将军！' : '轮到你了'));
+      },
+      onReset: function (info) {
+        if (G.mode !== 'online') return;
+        G.seat = info.seat;
+        newGame(true);
+        setHint('新的一局开始，红方先手');
+      },
+      onStatus: function (info) {
+        if (G.mode !== 'online') return;
+        G.seat = info.seat;
+        var inRoom = info.state !== 'idle';
+        $('room').hidden = !inRoom;
+        if (inRoom) $('roomCode').textContent = info.code || '------';
+        $('btnResign').hidden = info.state !== 'playing';
+        if (info.state === 'waiting') setHint('把房间码发给朋友，等人加入');
+        else if (info.state === 'playing' && info.myTurn) setHint(G.history.length ? '轮到你了' : '对局开始，你先手');
+        else if (info.state === 'playing') setHint('等对手落子…');
+        if (info.seat >= 0) G.seat = info.seat;
+        render();
+      },
+      onEnd: function (info) {
+        if (G.mode !== 'online') return;
+        var res = info.result || '';
+        if (!res) {   /* 兜底：对手客户端没声明时，用本地棋盘推断 */
+          var st = statusOf(G.board, G.turn);
+          if (st.over) res = st.winner === RED ? 'host' : 'guest';
+          else if (G.noCap >= DRAW_PLIES) res = 'draw';
+        }
+        var title;
+        if (info.state === 'closed') title = res ? '房间已关闭' : '对手离开了这一局';
+        else if (res === 'draw') title = '和棋';
+        else {
+          var mine = (res === 'host' && info.seat === 0) || (res === 'guest' && info.seat === 1);
+          title = mine ? '你赢了 🎉' : '你输了';
+        }
+        if (info.state === 'closed') { G.over = true; render(); endGame(title, '房间已关闭，可以再开一局'); return; }
+        endGame(title, res === 'draw' ? '连续 60 回合无吃子或双方同意' : '本局结束');
+      },
+      onNotice: function (t) { if (G.mode === 'online') setHint(t); }
+    });
+  }
+
+  function setMode(mode) {
+    if (mode === G.mode) return;
+    if (G.mode === 'online' && NP) {
+      var st = NP.state();
+      if (st.state !== 'idle') NP.leave();       /* 离开联机就别把房间挂着 */
+      NP.close();                                /* 面板收起来，别盖住棋盘 */
+    }
+    document.body.className = mode === 'ai' ? 'mode-ai' : 'mode-online';
+    $('modeSeg').querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.mode === mode);
+    });
+    $('lvSeg').style.display = mode === 'ai' ? 'flex' : 'none';
+    $('room').hidden = true;
+    $('btnResign').hidden = true;
+    G.mode = mode;
+    G.seat = -1;
+    newGame(true);
+  }
+
+  $('modeSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (b) setMode(b.dataset.mode);
+  });
+  $('lvSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    G.level = b.dataset.lv;
+    $('lvSeg').querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    setHint('难度：' + b.textContent + '，重新开局');
+    newGame(true);
+  });
+  $('btnNew').addEventListener('click', function () { newGame(true); });
+  $('btnResign').addEventListener('click', function () {
+    if (G.mode === 'online' && NP) NP.resign();
+  });
+  $('ovBtn').addEventListener('click', function () {
+    ovEl.hidden = true;
+    if (G.mode === 'online' && NP) { NP.rematch(); setHint('已准备再来一局，等对手同意'); }
+    else newGame(true);
+  });
+
+  /* ---------- 自适应尺寸 ---------- */
+  window.addEventListener('resize', layout);
+  if (window.ResizeObserver) new ResizeObserver(layout).observe(document.getElementById('main'));
+
+  document.body.className = 'mode-ai';
+  $('lvSeg').style.display = 'flex';
+  layout();
+  newGame(true);
+  layout();
+  /* 带 ?room=CODE 打开时直接进联机模式（小部件会自动入房） */
+  if (/[?&]room=/.test(location.search)) setMode('online');
+
+  /* 自动化验收只读句柄：tools/board-games-test.mjs / tools/gamepad-test.mjs / tools/browser-smoke.mjs 依赖此契约 */
+  window.BOARD = {
+    slug: 'xiangqi',
+    mode: function () { return G.mode; },
+    setMode: function (m) { setMode(m); },
+    rect: function () { var r = cv.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
+    moveCount: function () { return G.history.length; },
+    turnText: function () { return turnEl.textContent; },
+    over: function () { return !!G.over; },
+    /* 给自动化测试用：格坐标 -> 视口坐标；给出一手能真正走的着法 */
+    grid: function () { return { cols: 9, rows: 10 }; },
+    pointAt: function (x, y) {
+      var r = cv.getBoundingClientRect();
+      return { x: r.left + px(x), y: r.top + py(y) };
+    },
+    sampleClicks: function () {
+      var ms = legalMoves(G.board, G.turn);
+      if (!ms.length) return [];
+      var m = ms[(Math.random() * ms.length) | 0];
+      var r = cv.getBoundingClientRect();
+      return [
+        { x: r.left + px(m.x1), y: r.top + py(m.y1) },
+        { x: r.left + px(m.x2), y: r.top + py(m.y2) }
+      ];
+    }
+  };
+})();
+</script>
+</body>
+</html>

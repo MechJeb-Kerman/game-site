@@ -136,7 +136,7 @@ curl -sI https://你的域名/nope                  # 404 + x-robots-tag: noinde
 curl -sI https://你的域名/favicon.ico           # 302 -> /favicon.svg
 ```
 
-再打开首页确认「已累计 0 次游玩」、12 张卡片，进任意详情页确认游戏能玩（静态版没有登录 / 评分 / 评论 / 收藏 / 后台，页面里只读）。
+再打开首页确认「已累计 0 次游玩」、16 张卡片，进任意详情页确认游戏能玩（静态版没有登录 / 评分 / 评论 / 收藏 / 后台，页面里只读）。
 
 ## 这个 Worker 不能做什么
 
@@ -149,14 +149,14 @@ curl -sI https://你的域名/favicon.ico           # 302 -> /favicon.svg
 
 这套改造的核心工作是把数据层从同步 SQLite 换成异步 D1、把 `express` 的路由换成 Worker 里的 `URL` 分发。
 
-> **这些都已经做好了。** 想要带服务端的完整版，直接看 [`DEPLOY-CLOUDFLARE-D1.md`](DEPLOY-CLOUDFLARE-D1.md)：账号 / 邮箱验证 / 找回密码 / 第三方登录 / 评分 / 评论与楼中楼 / 举报 / 收藏 / 投稿（含上传单文件 HTML） / 公告与更新说明（含公告评论、置顶、撤回） / **论坛（`/forum`，可挂 `forum.fishport.cn`：待审队列、关键词黑名单、限流、禁言、编辑留痕）** / 后台（批量上下架、举报处理、封禁、彻底删除、集成自检、公告发布与编辑） / 排行榜 / 拼音搜索 / 隐私政策与用户协议全部在 Workers + D1 上，本机验收 **58 项账号 + 149 项功能 + 42 项邮件与第三方登录 + 24 项产物冒烟 + 21 项浏览器冒烟**全部通过。
+> **这些都已经做好了。** 想要带服务端的完整版，直接看 [`DEPLOY-CLOUDFLARE-D1.md`](DEPLOY-CLOUDFLARE-D1.md)：账号 / 邮箱验证 / 找回密码 / 第三方登录 / 评分 / 评论与楼中楼 / 举报 / 收藏 / 投稿（含上传单文件 HTML） / 公告与更新说明（含公告评论、置顶、撤回） / **论坛（`/forum`，可挂 `forum.fishport.cn`：待审队列、关键词黑名单、限流、禁言、编辑留痕）** / 后台（批量上下架、举报处理、封禁、彻底删除、集成自检、公告发布与编辑） / 排行榜 / 拼音搜索 / 隐私政策与用户协议全部在 Workers + D1 上，本机验收 **58 项账号 + 227 项功能 + 42 项邮件与第三方登录 + 26 项产物冒烟 + 28 项浏览器冒烟 + 42 项棋类联机**全部通过。
 
 ## 我这边验证过的
 
 ```
 node tools/worker-test.mjs
   → worker 冒烟：26 项断言全部通过（含安全头与 server.js:24-45 逐字段比对）
-  → 站内链接全部可访问（54 条，新增了 /rank）
+  → 站内链接全部可访问（74 条）
 ```
 
 ```
@@ -164,7 +164,7 @@ node tools/worker-test.mjs
     node tools/worker-app-test.mjs           → 58 项账号断言全部通过
     node tools/worker-feature-test.mjs       → 227 项功能断言全部通过（同一份用例换 D1 数据层，含投稿上传单文件 HTML、彻底删除、公告与更新说明、隐私政策/用户协议与注册同意，以及论坛）
     node tools/worker-mail-oauth-test.mjs    → 42 项邮件与第三方登录断言全部通过（自起假邮件服务端 + 假 OAuth Provider，不连外网）
-    BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 24 项浏览器冒烟全部通过
+    BASE=http://127.0.0.1:4400 node tools/browser-smoke.mjs → 28 项浏览器冒烟全部通过
     wrangler dev（真 workerd，端口 8788）     → 逐路径实测：无跳转，安全头 / 缓存头 / 404 / favicon 302 全部正确
     wrangler dev -c wrangler.d1.toml（8790）  → D1 版逐页面 200，/favorites 与 /admin 正确 302 到登录
     BASE=http://127.0.0.1:8790 node tools/account-test.mjs → 58 项断言全部通过（这次跑在真 workerd + 真 D1 语义上）

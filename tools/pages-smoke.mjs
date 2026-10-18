@@ -139,14 +139,14 @@ const TARGETS = [
   {
     n: "pages-home", w: 1280, h: 1050, u: BASE,
     js: `(function(){ var acct = document.querySelector(".acct"); return { cards: document.querySelectorAll(".card").length, h1: (document.querySelector("h1")||{}).textContent || "", sections: document.querySelectorAll(".sec").length, submit: has = /投稿/.test(document.body.innerHTML), acct: acct ? acct.textContent.trim() : null, iframe: !!document.querySelector("iframe") }; })()`,
-    want: function (s) { var e = []; if (s.cards !== 14) e.push("首页卡片应为 14 张（7 款 × 热门/最新），实际 " + s.cards); if (s.sections < 2) e.push("首页区块太少：" + s.sections); if (s.submit) e.push("静态版不应有投稿入口"); if (s.acct) e.push("静态版不应有账号区：" + s.acct); if (s.iframe) e.push("首页不应有 iframe"); return e; }
+    want: function (s) { var e = []; if (s.cards !== 16) e.push("首页卡片应为 16 张（热门 / 最新各 8 张上限），实际 " + s.cards); if (s.sections < 2) e.push("首页区块太少：" + s.sections); if (s.submit) e.push("静态版不应有投稿入口"); if (s.acct) e.push("静态版不应有账号区：" + s.acct); if (s.iframe) e.push("首页不应有 iframe"); return e; }
   },
   {
     n: "pages-list", w: 1280, h: 1000, u: BASE + "games.html?sort=title",
     js: `(function(){ var cards = [].slice.call(document.querySelectorAll(".grid .card")); return { n: cards.length, on: (document.querySelector(".tab.on")||{}).textContent || "", onCount: document.querySelectorAll(".tab.on").length, order: cards.map(function(c){ return c.getAttribute("data-title"); }) }; })()`,
     want: function (s) {
       var e = [];
-      if (s.n !== 7) e.push("列表页卡片应为 7 张，实际 " + s.n);
+      if (s.n !== 10) e.push("列表页卡片应为 10 张，实际 " + s.n);
       if (s.onCount !== 1 || s.on !== "名称") e.push("排序标签高亮不对：" + s.onCount + " / " + s.on);
       var sorted = s.order.slice().sort(function (a, b) { return a.localeCompare(b, "zh-Hans-CN"); });
       if (s.order.join("|") !== sorted.join("|")) e.push("按名称排序没生效：" + s.order.join(" > "));

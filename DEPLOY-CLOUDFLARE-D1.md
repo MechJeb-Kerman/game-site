@@ -3,7 +3,7 @@
 纯静态版（`worker/index.js`）只能浏览和玩游戏；这一份用 `worker/app.js` + **D1**（Cloudflare 的托管 SQLite）
 把 Express 版的服务端能力整体搬到边缘：注册登录、评分、评论、收藏、投稿（含上传单文件 HTML）、管理后台、游玩次数统计全都在。
 
-> 我在本机把整条链路跑通了（58 项账号验收 + 227 项功能验收 + 42 项邮件与第三方登录端到端 + 24 项浏览器冒烟），但**没有外网、没有 Cloudflare 凭证**，
+> 我在本机把整条链路跑通了（58 项账号验收 + 227 项功能验收 + 42 项邮件与第三方登录端到端 + 28 项浏览器冒烟 + 42 项棋类联机），但**没有外网、没有 Cloudflare 凭证**，
 > 所以最后那几条 `wrangler` 命令需要你在自己机器上执行。下面每条都写清了预期输出。
 
 ## 一、两个版本的区别
@@ -41,8 +41,8 @@ wrangler deploy --config wrangler.d1.toml
 
 部署成功会打印 `https://game-site-d1.<账号>.workers.dev`。**第一次打开这个地址时**，Worker 会自动：
 
-1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql`、`migrations/0002_game_files.sql`、`migrations/0003_posts.sql`、`migrations/0004_forum.sql` 一致，就算忘了 apply 迁移也能跑）；
-2. 灌种子数据：4 个分类 + 7 款游戏（2048 / 贪吃蛇 / 记忆翻牌 / 打地鼠 / 井字棋 / 俄罗斯方块 / 黑洞吞噬）；种子按 slug 幂等补齐——线上已有的库第一次请求就会自动补上新增的那款；
+1. 建表（`CREATE TABLE IF NOT EXISTS`，和 `migrations/0001_init.sql`、`migrations/0002_game_files.sql`、`migrations/0003_posts.sql`、`migrations/0004_forum.sql`、`migrations/0005_play.sql` 一致，就算忘了 apply 迁移也能跑）；
+2. 灌种子数据：4 个分类 + 10 款游戏（2048 / 贪吃蛇 / 记忆翻牌 / 打地鼠 / 井字棋 / 俄罗斯方块 / 黑洞吞噬 / 五子棋 / 中国象棋 / 国际象棋）；种子按 slug 幂等补齐——线上已有的库第一次请求就会自动补上新增的那几款；
 3. 创建站长账号 `admin` / `admin123`（可被环境变量覆盖）。
 
 ### 先改掉默认密码（重要）
@@ -120,7 +120,7 @@ Workers & Pages → **Create application** → 选 **Workers** → 连接 Git �
 
 ### 6. 首次部署之后
 
-1. 打开 `https://game-site-d1.<账号>.workers.dev`：首页 7 款游戏、游玩次数 0 就对了（老库会在这次请求里自动补齐第 7 款）；
+1. 打开 `https://game-site-d1.<账号>.workers.dev`：首页 10 款游戏、游玩次数 0 就对了（老库会在这次请求里自动补齐新增的那几款）；
 2. 立刻改站长口令：面板里加 `ADMIN_USER` / `ADMIN_PASS` 环境变量（或 `npx wrangler secret put ADMIN_PASS`），然后**删掉默认站长让新口令生效**——执行一句 SQL `DELETE FROM users WHERE username='admin'`（命令写法见路线 A），再访问一次站点；
 3. 非生产分支（比如 PR）默认也会触发构建并给一个预览 URL；不需要就在面板里关掉，或只保留生产分支。
 
@@ -193,7 +193,7 @@ wrangler d1 execute game-site-db --remote --command "SELECT slug, plays, rating,
 wrangler d1 execute game-site-db --remote --command "DELETE FROM comments; DELETE FROM ratings; DELETE FROM favorites; DELETE FROM play_logs; DELETE FROM games;"
 ```
 
-表结构见 `migrations/0001_init.sql`（第一批）、`migrations/0002_game_files.sql`（投稿上传的单文件 HTML）、`migrations/0003_posts.sql`（公告 posts 表 + comments.target 列）与 `migrations/0004_forum.sql`（论坛 7 张表：forums / forum_threads / forum_posts / forum_post_edits / forum_reports / forum_blacklist / form_nonces）。0001 是早期从 `worker/schema.js` 的 DDL 生成的快照，之后新增的表都单开一个迁移文件；两边都以 `worker/schema.js` 的 `CREATE TABLE IF NOT EXISTS` 兜底。
+表结构见 `migrations/0001_init.sql`（第一批）、`migrations/0002_game_files.sql`（投稿上传的单文件 HTML）、`migrations/0003_posts.sql`（公告 posts 表 + comments.target 列）、`migrations/0004_forum.sql`（论坛 7 张表：forums / forum_threads / forum_posts / forum_post_edits / forum_reports / forum_blacklist / form_nonces）与 `migrations/0005_play.sql`（棋类联机 2 张表：play_rooms / play_moves，只做轮流出招中继，不判胜负）。0001 是早期从 `worker/schema.js` 的 DDL 生成的快照，之后新增的表都单开一个迁移文件；两边都以 `worker/schema.js` 的 `CREATE TABLE IF NOT EXISTS` 兜底。
 
 ### 老库升级：新表与新列不用手工处理
 
@@ -239,7 +239,7 @@ node tools/browser-smoke.mjs               # 另开终端，BASE=http://127.0.0.
 - 本机实测结果：**58 项账号断言全过**（注册/登录/评分/收藏/评论/投稿/后台/开放重定向），
   **227 项功能断言全过**（评论分页 / 楼中楼 / 举报、排行榜、拼音与首字母搜索、邮箱验证、改密、找回密码、演示登录、后台批量上下架 / 举报处理 / 封禁 / 手动验证邮箱、投稿上传单文件 HTML：存进 D1、按 `/ugc/<slug>.html` 取回、响应带 sandbox CSP、超 512 KB / 扩展名不对 / 非文本一律 400，彻底删除：上架中拒绝、确认页数据量、删完详情页与 `/ugc/` 都 404，以及公告与更新说明：发布 / 置顶 / 评论 / 楼中楼 / 举报 / 改内容 / 撤回 / 再发布，`/changelog` 由 git 历史生成），
   **42 项邮件与第三方登录断言全过**（`tools/mail-oauth-test.mjs` 的场景换成 D1 数据层：绑定邮箱收到验证信、点链接变已验证、找回密码改密、GitHub / Google 授权回调建号与复用账号、`state` 校验失败 400、后台集成自检面板），
-  **24 项浏览器冒烟全过**（含 6 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想、公告列表与详情、更新说明页、首页公告横幅关闭、论坛首页与主题页），无 console 报错、无资源 404。
+  **28 项浏览器冒烟全过**（含 10 款游戏真操作、后台页、收藏页、投稿页、排行榜页、搜索联想、公告列表与详情、更新说明页、首页公告横幅关闭、论坛首页与主题页），无 console 报错、无资源 404。
   静态产物那边 `node tools/worker-test.mjs` 另有 **26 项断言**（页面 200、10 个页面 75 条站内链接全通）。
 - 后来又在**真实 workerd + 真实 D1 语义**下跑了一遍（`wrangler dev -c wrangler.d1.toml`，wrangler 4.151.0，端口 8790）：
   首页 / 列表 / 详情 / 分类 / 标签 / 搜索 / 注册 / 登录 / 404 / sitemap / robots 全部 200，`/favorites`、`/admin` 未登录正确 302 到 `/login?next=…`，
@@ -278,7 +278,7 @@ curl -s  https://你的域名/robots.txt           # Worker 动态生成，Cloud
 curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 ```
 
-浏览器里依次确认：首页 7 款游戏、游玩次数为 0（种子不灌假数字）、能注册、能评分（一人一票、可改）、
+浏览器里依次确认：首页 10 款游戏、游玩次数为 0（种子不灌假数字）、能注册、能评分（一人一票、可改）、
 能评论、能收藏、`/submit` 投稿后出现在 `/admin` 的待审核里；`/submit` 上传一份单文件 HTML：待审时 `/ugc/<slug>.html` 对游客 404、站长能取到，站长上架后谁都能取到并能直接玩，退回待审后又 404。站长能上架/下架。
 
 ## 十、排错
@@ -290,7 +290,7 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 | 登录后一刷新又变游客 | Cookie 没写进去 | 必须用 https 域名访问，不要用 IP；确认浏览器没屏蔽第三方 Cookie 扩展 |
 | 改了 CSS/JS 不生效 | `/static/*` 缓存 7 天 | 把 `src/views.js` 里两个 `?v=` 的版本号 +1（现为 `?v=4`），重新构建 + 部署 |
 | 游玩次数不变、打不了星、发不出评论，页面却看着一切正常 | `dist-cf/static/js/app.js` 被静态版前端顶掉了：Workers/D1 把 `dist-cf/` 当 ASSETS 目录，动态页面加载到的是没有 `/api/...` 逻辑的 `app-static.js` | 重新 `pnpm build:pages`（构建自检会直接拦住）；规则是 `static/js/app.js` = 动态版（来自 `public/js/app.js`）、`app-static.js` = 静态版，静态页面只引后者 |
-| `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql`、`0002_game_files.sql`、`0003_posts.sql`、`0004_forum.sql` 都在里面 |
+| `d1 migrations apply` 说找不到迁移 | `migrations_dir` 不对 | 确认是仓库根的 `migrations/`，且 `0001_init.sql`、`0002_game_files.sql`、`0003_posts.sql`、`0004_forum.sql`、`0005_play.sql` 都在里面 |
 | 控制台明明加了变量，线上却读不到：`/admin` 的「集成自检」里邮件通道退回开发发件箱、GitHub/Google 的 client_id 与 secret 全是 ❌，`/auth/github` 还 404 | 加到了**「构建」分区的「变量和机密」**（邻居是构建监视路径 / API 令牌 / 部署挂钩），那是构建期变量，Worker 运行时的 `env` 里没有 | 把那几张卡片删掉，改加到**「运行时」分区的「变量和机密」**（类型选「密钥」=Secret）；非机密值（client_id、`MAIL_FROM`）也可以写进 `wrangler.d1.toml` 的 `[vars]` 随代码部署；改完重新部署，刷新 `/admin` 看自检变 ✅ |
 | `wrangler deploy` 报 assets 目录不存在 | 没构建 | 先跑第二步的 `build-pages` |
 | 打开就「重定向次数过多」/ `ERR_TOO_MANY_REDIRECTS` | `html_handling` 不是 `none`，资源层把 `.html` 路径 308 回去了 | 把 `wrangler*.toml` 改回 `html_handling = "none"` 再部署；`node tools/worker-test.mjs` 会拦住这个改错 |
@@ -305,4 +305,4 @@ curl -s  https://你的域名/sitemap.xml          # 里应是你的真实域名
 - D1 的免费额度与限额数字。
 
 已经在本机验证过的：`worker/app.js` 的全部路由与业务逻辑（58 项账号断言 + 227 项功能断言 + 42 项邮件与登录断言，账号那套还在真 workerd + 真 D1 语义下复跑通过）、
-浏览器里的页面渲染与交互（24 项冒烟，含公告与更新说明、论坛与导航页）、静态资源与安全响应头（26 项断言，见 `tools/worker-test.mjs`）。
+浏览器里的页面渲染与交互（28 项冒烟，含公告与更新说明、论坛与导航页）、静态资源与安全响应头（26 项断言，见 `tools/worker-test.mjs`）。

@@ -1,4 +1,4 @@
-/* 手柄支持自测：往 Chrome 里注入一个假手柄（Gamepad API 探针），真实点击/按键跑一遍 7 款游戏。
+/* 手柄支持自测：往 Chrome 里注入一个假手柄（Gamepad API 探针），真实点击/按键跑一遍 10 款游戏。
  *
  * 用法（先起服务器）：
  *   node tools/gamepad-test.mjs
@@ -106,7 +106,44 @@ const HELPERS = [
 "  if (st !== 'ok') return st;",
 "  await window.__tap(0, 130);",
 "  return 'ok';",
-"};"
+"};",
+"window.__steerTo = async function (x, y, maxMs) {",
+"  var t0 = Date.now();",
+"  while (Date.now() - t0 < (maxMs || 4000)) {",
+"    var c = window.__gp.pos();",
+"    var dx = x - c.x, dy = y - c.y;",
+"    if (Math.abs(dx) < 14 && Math.abs(dy) < 14) { window.__pad.set(0, 0, []); return true; }",
+"    window.__pad.set(Math.max(-1, Math.min(1, dx / 45)), Math.max(-1, Math.min(1, dy / 45)), []);",
+"    await new Promise(function (r) { setTimeout(r, 25); });",
+"  }",
+"  window.__pad.set(0, 0, []);",
+"  return false;",
+"};",
+"/* 棋盘类：把虚拟光标开到棋盘格点上按 A（三款棋类暴露了 window.BOARD 调试句柄） */",
+"window.__boardMove = async function () {",
+"  if (!window.BOARD) return 'no-board';",
+"  var before = window.BOARD.moveCount();",
+"  var R = window.BOARD.rect();",
+"  /* 页面自己给出「一手能真正走成」的点击点，摇杆逐个开过去按 A */",
+"  var pts = window.BOARD.sampleClicks ? window.BOARD.sampleClicks() : null;",
+"  if (pts && pts.length) {",
+"    for (var j = 0; j < pts.length; j++) {",
+"      await window.__steerTo(pts[j].x, pts[j].y, 4000);",
+"      await window.__tap(0, 150);",
+"      await new Promise(function (r) { setTimeout(r, 300); });",
+"    }",
+"    await new Promise(function (r) { setTimeout(r, 400); });",
+"    if (window.BOARD.moveCount() > before) return 'ok';",
+"  }",
+"  for (var i = 0; i < 25; i++) {",
+"    var gx = ((i % 5) + 0.5) / 5, gy = ((Math.floor(i / 5) % 5) + 0.5) / 5;",
+"    await window.__steerTo(R.left + R.width * gx, R.top + R.height * gy, 4000);",
+"    await window.__tap(0, 150);",
+"    await new Promise(function (r) { setTimeout(r, 300); });",
+"    if (window.BOARD.moveCount() > before) return 'ok';",
+"  }",
+"  return 'no-move';",
+"};",
 ].join(NL);
 
 /* ---------- CDP ---------- */
@@ -266,6 +303,48 @@ const CASES = [
     want(r && r.moved > 10, "黑洞：左摇杆推了 1.2 秒，黑洞没往右走 " + JSON.stringify(r));
     want(r && r.used, "黑洞：摇杆输入没有被识别（G.used_gamepad 还是假）" + JSON.stringify(r));
     return "A 关教学 → 左摇杆右推，黑洞 x +" + r.moved + "（G.time +" + r.ran + "）";
+  }
+},
+{
+  name: "gamepad-gomoku",
+  desc: "摇杆把虚拟光标开到棋盘上 + A 键落子",
+  run: async () => {
+    await goto(BASE + "/games/gomoku/index.html");
+    await ev(HELPERS);
+    const r = await ev('(async function () { var has = !!document.getElementById("gpCursor"); if (!window.BOARD) return { cursor: has, board: false }; window.BOARD.setMode("ai"); await new Promise(function (x) { setTimeout(x, 350); }); var st = await window.__boardMove(); return { cursor: has, board: true, st: st, moves: window.BOARD.moveCount(), turn: window.BOARD.turnText() }; })()');
+    await shot("gamepad-gomoku");
+    want(r && r.cursor, "五子棋：手柄连上了但没有出现虚拟光标");
+    want(r && r.board, "五子棋：页面没有暴露 window.BOARD 调试句柄");
+    want(r.st === "ok", "五子棋：摇杆把光标开到棋盘上按 A 也没能落子（" + (r && r.st) + "）");
+    return "光标开到棋盘按 A 落子，累计走子 " + r.moves + " 手（" + r.turn + "）";
+  }
+},
+{
+  name: "gamepad-xiangqi",
+  desc: "摇杆把虚拟光标开到棋盘上 + A 键落子",
+  run: async () => {
+    await goto(BASE + "/games/xiangqi/index.html");
+    await ev(HELPERS);
+    const r = await ev('(async function () { var has = !!document.getElementById("gpCursor"); if (!window.BOARD) return { cursor: has, board: false }; window.BOARD.setMode("ai"); await new Promise(function (x) { setTimeout(x, 350); }); var st = await window.__boardMove(); return { cursor: has, board: true, st: st, moves: window.BOARD.moveCount(), turn: window.BOARD.turnText() }; })()');
+    await shot("gamepad-xiangqi");
+    want(r && r.cursor, "中国象棋：手柄连上了但没有出现虚拟光标");
+    want(r && r.board, "中国象棋：页面没有暴露 window.BOARD 调试句柄");
+    want(r.st === "ok", "中国象棋：摇杆把光标开到棋盘上按 A 也没能落子（" + (r && r.st) + "）");
+    return "光标开到棋盘按 A 落子，累计走子 " + r.moves + " 手（" + r.turn + "）";
+  }
+},
+{
+  name: "gamepad-chess",
+  desc: "摇杆把虚拟光标开到棋盘上 + A 键落子",
+  run: async () => {
+    await goto(BASE + "/games/chess/index.html");
+    await ev(HELPERS);
+    const r = await ev('(async function () { var has = !!document.getElementById("gpCursor"); if (!window.BOARD) return { cursor: has, board: false }; window.BOARD.setMode("ai"); await new Promise(function (x) { setTimeout(x, 350); }); var st = await window.__boardMove(); return { cursor: has, board: true, st: st, moves: window.BOARD.moveCount(), turn: window.BOARD.turnText() }; })()');
+    await shot("gamepad-chess");
+    want(r && r.cursor, "国际象棋：手柄连上了但没有出现虚拟光标");
+    want(r && r.board, "国际象棋：页面没有暴露 window.BOARD 调试句柄");
+    want(r.st === "ok", "国际象棋：摇杆把光标开到棋盘上按 A 也没能落子（" + (r && r.st) + "）");
+    return "光标开到棋盘按 A 落子，累计走子 " + r.moves + " 手（" + r.turn + "）";
   }
 },
 {

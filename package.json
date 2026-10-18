@@ -24,7 +24,11 @@
     "test:worker-features": "node tools/worker-feature-test.mjs",
     "test:mail": "node tools/mail-oauth-test.mjs",
     "test:worker-mail": "node tools/worker-mail-oauth-test.mjs",
-    "gen:changelog": "node tools/gen-changelog.mjs"
+    "gen:changelog": "node tools/gen-changelog.mjs",
+    "gen:seed": "node tools/gen-seed-data.mjs",
+    "test:play": "node tools/play-api-test.mjs",
+    "test:worker-play": "node tools/worker-play-test.mjs",
+    "test:boards": "node tools/board-games-test.mjs"
   },
   "engines": {
     "node": ">=22.5"
