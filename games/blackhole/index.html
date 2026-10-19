@@ -14,7 +14,7 @@
     width: 100%; height: 100%; overflow: hidden;
     background: #000; touch-action: none;
     font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    user-select: none; -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none;
     overscroll-behavior: none;
   }
   body {
@@ -28,6 +28,8 @@
   }
   #game {
     display: block;
+    touch-action: none;
+    overscroll-behavior: none;
     background: radial-gradient(ellipse at 50% 40%, #0d0b1e 0%, #05060f 70%, #000 100%);
     border-radius: 0;
     box-shadow: 0 0 40px rgba(120, 80, 255, 0.15);
@@ -634,6 +636,15 @@ const joystick = {
 };
 const BTN_PAUSE = { x: W - 130, y: H - 60, w: 110, h: 40 };
 const BTN_MENU  = { x: W - 260, y: H - 60, w: 110, h: 40 };
+/* 触摸热区：小屏（内嵌播放器 360x332 时缩放低到 0.42）按钮视觉高度只有 20 多个 CSS px，
+   这里按逻辑尺寸把命中框撑到 >=110（小屏 >=44 CSS px），多出来的部分向上/左右扩展，视觉不变。 */
+const HIT_MIN = 110;
+function touchHit(b) {
+  const w = Math.max(b.w, HIT_MIN), h = Math.max(b.h, HIT_MIN);
+  return { x: b.x - (w - b.w) / 2, y: b.y - (h - b.h), w: w, h: h };
+}
+function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms || 10); } catch (e) {} }
+const HIT_PAUSE = touchHit(BTN_PAUSE), HIT_MENU = touchHit(BTN_MENU);
 
 function screenToLogical(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -1589,23 +1600,26 @@ function onPointerDown(lx, ly) {
   }
 
   if (G.state === "play") {
-    if (lx >= BTN_PAUSE.x && lx <= BTN_PAUSE.x + BTN_PAUSE.w &&
-        ly >= BTN_PAUSE.y && ly <= BTN_PAUSE.y + BTN_PAUSE.h) {
+    if (lx >= HIT_PAUSE.x && lx <= HIT_PAUSE.x + HIT_PAUSE.w &&
+        ly >= HIT_PAUSE.y && ly <= HIT_PAUSE.y + HIT_PAUSE.h) {
       G.paused_manual = !G.paused_manual;
       audio.play("ui", 0.5);
+      buzz(12);
       return;
     }
-    if (lx >= BTN_MENU.x && lx <= BTN_MENU.x + BTN_MENU.w &&
-        ly >= BTN_MENU.y && ly <= BTN_MENU.y + BTN_MENU.h) {
+    if (lx >= HIT_MENU.x && lx <= HIT_MENU.x + HIT_MENU.w &&
+        ly >= HIT_MENU.y && ly <= HIT_MENU.y + HIT_MENU.h) {
       G.options_open = true;
       audio.play("ui", 0.5);
+      buzz(12);
       return;
     }
     const sk = [G.dash, G.invuln, G.burst_sk];
     for (let i = 0; i < G.skill_boxes.length; i++) {
-      const b = G.skill_boxes[i];
+      const b = touchHit(G.skill_boxes[i]);
       if (lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h) {
         tryUseSkill(sk[i]);
+        buzz(12);
         return;
       }
     }
@@ -1621,11 +1635,13 @@ function onPointerDown(lx, ly) {
     const bw2 = 220, bh2 = 56;
     const r1 = { x: W/2 - bw2 - 20, y: H/2 + 180, w: bw2, h: bh2 };
     const r2 = { x: W/2 + 20, y: H/2 + 180, w: bw2, h: bh2 };
-    if (lx >= r1.x && lx <= r1.x + r1.w && ly >= r1.y && ly <= r1.y + r1.h) {
+    const h1 = touchHit(r1), h2 = touchHit(r2);
+    if (lx >= h1.x && lx <= h1.x + h1.w && ly >= h1.y && ly <= h1.y + h1.h) {
       restartGame();
+      buzz(12);
       return;
     }
-    if (lx >= r2.x && lx <= r2.x + r2.w && ly >= r2.y && ly <= r2.y + r2.h) {
+    if (lx >= h2.x && lx <= h2.x + h2.w && ly >= h2.y && ly <= h2.y + h2.h) {
       const ks = Object.keys(GAME_MODES);
       const cur = G.save.mode;
       const next = ks[(ks.indexOf(cur) + 1) % ks.length];

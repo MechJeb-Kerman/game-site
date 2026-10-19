@@ -376,7 +376,7 @@
       if (document.fullscreenElement) {
         document.exitFullscreen();
       } else if (box.requestFullscreen) {
-        box.requestFullscreen().catch(function () { toast('当前浏览器不支持全屏'); });
+        box.requestFullscreen().then(lockWide).catch(function () { toast('当前浏览器不支持全屏'); });
       } else if (frame.requestFullscreen) {
         frame.requestFullscreen();
       } else {
@@ -385,10 +385,23 @@
     }
   });
 
-  /* 3) 全屏时同步按钮文案 */
+  /* 3) 全屏时同步按钮文案；横屏比例的游戏在手机上进全屏顺手锁横屏（失败就保持原样） */
+  var lockWide = function () {
+    if (!player.classList.contains('player--wide')) return;
+    try {
+      if (screen.orientation && screen.orientation.lock &&
+        window.matchMedia('(pointer:coarse)').matches) {
+        var p = screen.orientation.lock('landscape');
+        if (p && p.catch) p.catch(function () { });
+      }
+    } catch (e) { }
+  };
   document.addEventListener('fullscreenchange', function () {
     var btn = player.querySelector('[data-act="fullscreen"]');
     if (btn) btn.textContent = document.fullscreenElement ? '⛶ 退出全屏' : '⛶ 全屏';
+    if (!document.fullscreenElement) {
+      try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) { }
+    }
   });
 
   /* 4) 键盘：F 全屏，R 重开（不在输入框里时） */
@@ -430,6 +443,21 @@
       for (var i = 0; i < pads.length; i++) if (pads[i] && pads[i].connected) has = true;
       if (has) focusFrame();
     }, 1000);
+  })();
+
+  /* 手机端顶栏折叠菜单：点导航项 / 按 Esc 后自动收起（展开本身是纯 CSS，不依赖这段） */
+  (function () {
+    var cb = document.getElementById('mnavToggle');
+    if (!cb) return;
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!cb.checked || !t || !t.closest) return;
+      var hit = t.closest('.nav a,.acct a,.acct button,form.inline button');
+      if (hit || t.closest('main,.ftr,.skip')) cb.checked = false;
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && cb.checked) cb.checked = false;
+    });
   })();
 
 })();

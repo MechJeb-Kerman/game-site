@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>记忆翻牌 - 趣玩小游戏</title>
 <style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
   html,body{height:100%;margin:0;overflow:hidden}
   body{display:flex;align-items:center;justify-content:center;padding:12px;
     background:radial-gradient(circle at 50% 0%,#241a4d,#080a18 70%);color:#ece9ff;
@@ -17,10 +17,10 @@
   .stat b{color:#fff;margin-left:3px;font-size:15px}
   .levels{margin-left:auto;display:flex;gap:6px}
   .levels button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
-    color:#cfc9ff;border-radius:9px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
+    color:#cfc9ff;border-radius:9px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer;min-height:44px;min-width:44px;touch-action:manipulation}
   .levels button.on{background:linear-gradient(135deg,#8b5cf6,#6366f1);border-color:transparent;color:#fff;font-weight:700}
   .board{position:relative;display:grid;gap:8px;width:100%;flex:1 1 auto;min-height:0}
-  .card{position:relative;height:100%;min-height:0;perspective:800px;cursor:pointer}
+  .card{position:relative;height:100%;min-height:0;perspective:800px;cursor:pointer;touch-action:manipulation}
   .inner{position:relative;width:100%;height:100%;transition:transform .34s cubic-bezier(.4,.2,.2,1);
     transform-style:preserve-3d}
   .card.flip .inner{transform:rotateY(180deg)}
@@ -43,7 +43,7 @@
   .overlay p{margin:0;color:#b9b2f0;font-size:14px;line-height:1.8}
   .overlay b{color:#fff;font-size:18px}
   .btn{background:linear-gradient(135deg,#8b5cf6,#6366f1);border:0;color:#fff;font-weight:700;
-    padding:11px 26px;border-radius:11px;cursor:pointer;font-size:15px;font-family:inherit}
+    padding:11px 26px;border-radius:11px;cursor:pointer;font-size:15px;font-family:inherit;min-height:44px;touch-action:manipulation}
   .btn:active{transform:scale(.97)}
   .tip{font-size:12.5px;color:#8b86bd;text-align:center}
 </style>

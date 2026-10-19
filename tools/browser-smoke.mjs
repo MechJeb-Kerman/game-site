@@ -95,6 +95,11 @@ async function load(c, url) {
   await sleep(500);
 }
 
+// 这些是浏览器策略提示，不是页面故障：
+//  - navigator.vibrate 需要真实用户手势，CDP 合成触摸不算手势（真机上点一下就会震）
+//  - 无头 Chrome 取 favicon 失败之类
+const BENIGN_LOG = [/Blocked call to navigator\.vibrate/, /favicon/i];
+
 function problems(c) {
   const out = [];
   for (const e of c.events) {
@@ -105,7 +110,10 @@ function problems(c) {
     if (e.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].indexOf(e.params.type) >= 0) {
       out.push(e.params.type.toUpperCase() + ' ' + e.params.args.map(function (a) { return a.value != null ? a.value : (a.description || ''); }).join(' '));
     }
-    if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error') out.push('LOG ' + e.params.entry.text);
+    if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error' &&
+      !BENIGN_LOG.some(function (re) { return re.test(e.params.entry.text); })) {
+      out.push('LOG ' + e.params.entry.text);
+    }
   }
   return out;
 }

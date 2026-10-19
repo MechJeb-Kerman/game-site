@@ -157,6 +157,18 @@
       var stage = document.getElementById("stage") || player;
       if (stage && stage.requestFullscreen) {
         var p = stage.requestFullscreen();
+        if (p && p.then) p.then(function () {
+          /* 横屏比例的游戏：手机上进全屏顺手锁横屏，失败就保持原样 */
+          try {
+            var ply = document.getElementById("player");
+            if (ply && ply.className.indexOf("player--wide") >= 0 &&
+              screen.orientation && screen.orientation.lock &&
+              window.matchMedia("(pointer:coarse)").matches) {
+              var lk = screen.orientation.lock("landscape");
+              if (lk && lk.catch) lk.catch(function () {});
+            }
+          } catch (err) {}
+        });
         if (p && p.catch) p.catch(function () {});
       }
     } else if (act === "reload" && frame) {
@@ -250,5 +262,20 @@
       for (var i = 0; i < pads.length; i++) if (pads[i] && pads[i].connected) has = true;
       if (has) focusFrame();
     }, 1000);
+  })();
+
+  /* 手机端顶栏折叠菜单：点导航项 / 按 Esc 后自动收起 */
+  (function () {
+    var cb = document.getElementById("mnavToggle");
+    if (!cb) return;
+    document.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!cb.checked || !t || !t.closest) return;
+      var hit = t.closest(".nav a,.acct a,.acct button,form.inline button");
+      if (hit || t.closest("main,.ftr,.skip")) cb.checked = false;
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && cb.checked) cb.checked = false;
+    });
   })();
 })();

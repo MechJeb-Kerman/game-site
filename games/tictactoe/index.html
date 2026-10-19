@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>井字棋 - 趣玩小游戏</title>
 <style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
   html,body{height:100%;margin:0;overflow:hidden}
   body{display:flex;align-items:center;justify-content:center;padding:12px;
     background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
@@ -17,7 +17,7 @@
   .stat b{color:#fff;margin-left:3px}
   .levels{margin-left:auto;display:flex;gap:6px}
   .levels button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
-    color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer}
+    color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer;min-height:44px;min-width:44px;touch-action:manipulation}
   .levels button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;color:#fff;font-weight:700}
   .status{text-align:center;font-size:15px;color:#a5e9ff;min-height:24px;font-weight:600}
   .board{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:min(100%,calc(100vh - 170px));align-self:center;
@@ -26,7 +26,7 @@
     border:1px solid rgba(6,182,212,.3);box-shadow:0 12px 34px rgba(0,0,0,.45);container-type:inline-size}
   .cell{display:flex;align-items:center;justify-content:center;border-radius:12px;
     background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
-    font-size:min(15vw,62px);font-size:min(16cqw,96px);font-weight:800;cursor:pointer;transition:.15s;line-height:1}
+    font-size:min(15vw,62px);font-size:min(16cqw,96px);font-weight:800;cursor:pointer;transition:.15s;line-height:1;touch-action:manipulation}
   .cell:hover{background:rgba(6,182,212,.18)}
   .cell.x{color:#22d3ee;text-shadow:0 0 18px rgba(34,211,238,.8)}
   .cell.o{color:#f472b6;text-shadow:0 0 18px rgba(244,114,182,.8)}
@@ -37,9 +37,13 @@
   @keyframes pp{from{transform:scale(.5);opacity:.3}to{transform:scale(1);opacity:1}}
   .foot{display:flex;gap:8px}
   .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
-    color:#dbf8ff;border-radius:11px;padding:11px;cursor:pointer;font:inherit;font-size:14px}
+    color:#dbf8ff;border-radius:11px;padding:11px;cursor:pointer;font:inherit;font-size:14px;min-height:44px;touch-action:manipulation}
   .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
   .btn:active{transform:scale(.98)}
+  /* 小屏（比如 360x420 播放器内嵌尺寸）：按钮长到 44px 后整列会顶出视口，棋盘按可用高度收一点 */
+  @media (max-width:520px) and (max-height:560px){
+    .board{width:min(100%,calc(100vh - 200px))}
+  }
 </style>
 </head>
 <body>

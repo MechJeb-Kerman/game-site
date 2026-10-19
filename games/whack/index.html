@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>打地鼠 - 趣玩小游戏</title>
 <style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{height:100%;margin:0;overflow:hidden}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+  html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
   body{display:flex;align-items:center;justify-content:center;padding:12px;
     background:radial-gradient(circle at 50% 110%,#3a2410,#0d0a06 70%);color:#ffeede;
     font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
@@ -19,7 +19,7 @@
   .timebar i{display:block;height:100%;width:100%;border-radius:99px;
     background:linear-gradient(90deg,#f97316,#facc15);transition:width .1s linear}
   .field{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
-    padding:16px;border-radius:16px;aspect-ratio:1;width:100%;
+    padding:16px;border-radius:16px;aspect-ratio:1;width:100%;touch-action:manipulation;overscroll-behavior:none;max-width:min(100%,calc(100vh - 118px));margin:0 auto;
     background:linear-gradient(180deg,#4b2e14,#2a190a);border:1px solid rgba(249,115,22,.35);
     box-shadow:0 10px 34px rgba(0,0,0,.5) inset}
   .hole{position:relative;display:flex;align-items:flex-end;justify-content:center;overflow:hidden}
@@ -47,8 +47,8 @@
   .overlay p{margin:0;color:#ffc899;font-size:14px;line-height:1.9}
   .overlay b{color:#fff;font-size:20px}
   .btn{background:linear-gradient(135deg,#f97316,#dc2626);border:0;color:#fff;font-weight:700;
-    padding:12px 30px;border-radius:11px;cursor:pointer;font-size:15px;font-family:inherit}
-  .btn:active{transform:scale(.97)}
+    padding:12px 30px;border-radius:11px;cursor:pointer;font-size:15px;font-family:inherit;min-height:44px}
+  .btn:active,.btn.pressed{transform:scale(.97)}
 </style>
 </head>
 <body>
@@ -183,6 +183,23 @@
   }
 
   document.getElementById('start').addEventListener('click', start);
+})();
+</script>
+<script>
+/* 移动端按下反馈：轻震动 + .pressed 类（合成触摸/部分浏览器不会触发 :active，显式加类保证可见反馈） */
+(function () {
+  var cur = null;
+  function clear() { if (cur) { cur.classList.remove('pressed'); cur = null; } }
+  document.addEventListener('pointerdown', function (e) {
+    clear();
+    var el = e.target;
+    el = (el && el.closest) ? el.closest('button, .mole') : null;
+    if (!el) return;
+    try { if (navigator.vibrate) navigator.vibrate(8); } catch (err) {}
+    if (el.tagName === 'BUTTON') { el.classList.add('pressed'); cur = el; }
+  }, { passive: true });
+  document.addEventListener('pointerup', clear, true);
+  document.addEventListener('pointercancel', clear, true);
 })();
 </script>
 </body>

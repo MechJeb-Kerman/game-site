@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>五子棋 - 趣玩小游戏</title>
 <style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
   html,body{height:100%;margin:0;overflow:hidden}
   body{display:flex;align-items:center;justify-content:center;padding:10px;
     background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
@@ -18,7 +18,7 @@
   .stat b{color:#fff;margin-left:3px}
   .seg{display:flex;gap:6px}
   .seg button,.levels button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
-    color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer}
+    color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer;min-height:44px;min-width:44px;touch-action:manipulation}
   .seg button.on,.levels button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);
     border-color:transparent;color:#fff;font-weight:700}
   .levels{margin-left:auto;display:flex;gap:6px}
@@ -45,7 +45,7 @@
   /* 挂载了 NetPlay 之后，右下角会有一个固定悬浮按钮，给它留出位置 */
   body.npmounted .foot{padding-right:116px}
   .btn{flex:1 1 auto;min-width:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
-    color:#dbf8ff;border-radius:11px;padding:11px 8px;cursor:pointer;font:inherit;font-size:14px;
+    color:#dbf8ff;border-radius:11px;padding:11px 8px;cursor:pointer;font:inherit;font-size:14px;min-height:44px;touch-action:manipulation;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
   .btn:active{transform:scale(.98)}

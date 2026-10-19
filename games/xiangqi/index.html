@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>中国象棋 - 趣玩小游戏</title>
 <style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
   html,body{height:100%;margin:0;overflow:hidden}
   body{background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
     font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
@@ -18,7 +18,7 @@
     border:1px solid rgba(6,182,212,.3);box-shadow:0 12px 34px rgba(0,0,0,.45)}
   .seg{display:flex;gap:6px}
   .seg button{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
-    color:#bfe9ff;border-radius:9px;padding:7px 4px;font:inherit;font-size:12.5px;cursor:pointer}
+    color:#bfe9ff;border-radius:9px;padding:7px 4px;font:inherit;font-size:12.5px;cursor:pointer;min-height:44px;min-width:44px;touch-action:manipulation}
   .seg button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;
     color:#04141c;font-weight:700}
   .turn{text-align:center;font-size:16px;font-weight:700;color:#a5e9ff;padding:7px 4px;border-radius:11px;
@@ -47,7 +47,7 @@
   .log u{text-decoration:none;color:#fbbf24;font-size:11px}
   .btns{display:flex;gap:6px}
   .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#dbf8ff;
-    border-radius:11px;padding:9px;cursor:pointer;font:inherit;font-size:13.5px}
+    border-radius:11px;padding:9px;cursor:pointer;font:inherit;font-size:13.5px;min-height:44px;touch-action:manipulation}
   .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
   .btn:active{transform:scale(.98)}
   .note{font-size:10.5px;color:#5b8ba8;line-height:1.45}

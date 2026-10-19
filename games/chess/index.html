@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>国际象棋 - 趣玩小游戏</title>
 <style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
   html,body{height:100%;margin:0;overflow:hidden}
   body{display:flex;align-items:center;justify-content:center;padding:8px;
     background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
@@ -21,7 +21,7 @@
     border-radius:14px;overflow:hidden;border:1px solid rgba(6,182,212,.32);
     box-shadow:0 12px 34px rgba(0,0,0,.45);background:rgba(2,10,20,.5)}
   .cell{position:relative;display:flex;align-items:center;justify-content:center;
-    line-height:1;cursor:pointer;transition:background .12s}
+    line-height:1;cursor:pointer;transition:background .12s;touch-action:manipulation}
   .cell.light{background:rgba(186,230,253,.17)}
   .cell.dark{background:rgba(12,74,110,.42)}
   .cell:hover{filter:brightness(1.14)}
@@ -49,7 +49,7 @@
     box-shadow:0 12px 34px rgba(0,0,0,.35)}
   .tabs,.levels{display:flex;gap:6px}
   .tabs button,.levels button{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
-    color:#bfe9ff;border-radius:9px;padding:7px 4px;font:inherit;font-size:12.5px;cursor:pointer}
+    color:#bfe9ff;border-radius:9px;padding:7px 4px;font:inherit;font-size:12.5px;cursor:pointer;min-height:44px;min-width:44px;touch-action:manipulation}
   .tabs button.on,.levels button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);
     border-color:transparent;color:#fff;font-weight:700}
   .badge{font-size:12px;color:#7dd3fc;background:rgba(6,182,212,.13);
@@ -70,7 +70,7 @@
   .foot{display:flex;gap:8px;padding-right:96px}
   body.mode-online .foot{display:none}
   .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#dbf8ff;
-    border-radius:11px;padding:10px;cursor:pointer;font:inherit;font-size:13.5px}
+    border-radius:11px;padding:10px;cursor:pointer;font:inherit;font-size:13.5px;min-height:44px;touch-action:manipulation}
   .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;color:#04141c;font-weight:700}
   .btn:active{transform:scale(.98)}
 
@@ -94,8 +94,9 @@
   /* 竖屏 / 窄屏：信息栏折到棋盘下方 */
   @media (max-width:660px){
     .app{flex-direction:column;align-items:center;gap:10px}
-    .boardwrap{width:min(calc(100vw - 16px),calc(100vh - 274px))}
-    .panel{width:100%;max-width:none}
+    /* fitBoard 给字号设了 14px 下限 -> 棋盘窄于约 112px 时 8 列 1fr 会被 14px 的棋子撑破、格子溢出棋盘外，点不到；这里给棋盘一个宽度下限，多出来的部分交给下面可滚动的面板 */
+    .boardwrap{width:min(calc(100vw - 16px),max(176px,calc(100vh - 274px)))}
+    .panel{width:100%;max-width:none;overflow-y:auto;overflow-x:hidden}
   }
 </style>
 </head>

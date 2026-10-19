@@ -45,7 +45,7 @@ export function fmtNum(n) {
   return String(n);
 }
 
-function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true }) {
+function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true, bodyClass = '' }) {
   const bare = chrome === 'none';
   const full = title ? (titleSuffix ? title + ' - ' + SITE.name : title) : SITE.name;
   const ld = jsonLd
@@ -69,15 +69,15 @@ ${noindex ? '<meta name="robots" content="noindex,follow">' : ''}
 <meta property="og:image" content="${esc(origin)}/static/img/og.svg">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
-<link rel="stylesheet" href="/static/css/style.css?v=4">
+<link rel="stylesheet" href="/static/css/style.css?v=7">
 ${preload}${ld}
 </head>
-<body>
+<body${bodyClass ? ' class="' + bodyClass + '"' : ''}>
 <a class="skip" href="#main">跳到主要内容</a>
 ${bare ? '' : header(user)}
 <main id="main">${content}</main>
 ${bare ? '' : footer()}
-<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=4" defer></script>
+<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=7" defer></script>
 </body>
 </html>`;
 }
@@ -97,13 +97,15 @@ function header(user = null) {
       '<a class="nav-cta" href="/register">注册</a>';
   return `<header class="hdr">
   <div class="wrap hdr-in">
+    <input type="checkbox" id="mnavToggle" class="mnav-cb">
+    <label class="mnav-btn" for="mnavToggle" title="展开导航菜单"><span aria-hidden="true">☰</span><b>菜单</b></label>
     <a class="logo" href="/" aria-label="${esc(SITE.name)}首页">
       <span class="logo-ico">${SITE.logo}</span>
       <span class="logo-txt">趣玩<em>小游戏</em></span>
     </a>
     <div class="search-wrap">
       <form class="search" action="/search" method="get" role="search">
-        <input type="search" name="q" placeholder="搜索游戏，如 2048 / 贪吃蛇" aria-label="搜索游戏" autocomplete="off">
+        <input type="search" name="q" placeholder="搜索游戏，如 2048 / 贪吃蛇" aria-label="搜索游戏" autocomplete="off" enterkeyhint="search" autocapitalize="off" spellcheck="false">
         <button type="submit" aria-label="搜索">🔍</button>
       </form>
       <div class="sug" id="sug" hidden></div>
@@ -446,6 +448,8 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
     .join('');
 
   const hint = HINTS[game.slug] || '支持键盘与触屏操作，点击全屏获得最佳体验';
+  // 横屏比例的游戏在手机竖屏下会被压得很扁，提示用户点全屏转横屏
+  const isWideGame = Number(game.width) > Number(game.height);
 
   const starBtns = [1, 2, 3, 4, 5]
     .map((n) => '<button class="star' + (n <= myStars ? ' on' : '') + '" type="button" data-star="' + n +
@@ -498,7 +502,7 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
   <div class="game-layout">
     <div class="game-main">
       <h1 class="game-title">${esc(game.title)} <small>${esc(game.subtitle || '')}</small></h1>
-      <div class="player" id="player" data-slug="${esc(game.slug)}" data-url="${esc(game.game_url)}" style="--a:${esc(game.accent)}">
+      <div class="player${isWideGame ? ' player--wide' : ''}" id="player" data-slug="${esc(game.slug)}" data-url="${esc(game.game_url)}" style="--a:${esc(game.accent)}">
         <div class="player-bar">
           <button class="btn" data-act="fullscreen" type="button">⛶ 全屏</button>
           <button class="btn" data-act="reload" type="button">↻ 重开</button>
@@ -514,6 +518,7 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
                   allow="fullscreen; autoplay; gamepad; accelerometer; gyroscope"
                   loading="eager" referrerpolicy="no-referrer"></iframe>
         </div>
+        ${isWideGame ? '<p class="rot-tip">📱 横屏更好玩：点「全屏」后把手机横过来</p>' : ''}
         <p class="player-hint">🎮 ${esc(hint)}</p>
       </div>
 
@@ -544,7 +549,7 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
   </div>
 </div>`;
 
-  return layout({ origin, user, title: game.title + ' - 在线玩', description: game.description, path, content, jsonLd: ld });
+  return layout({ origin, user, title: game.title + ' - 在线玩', description: game.description, path, content, jsonLd: ld, bodyClass: 'pg-game' });
 }
 
 /* ---------- 公告 ---------- */
