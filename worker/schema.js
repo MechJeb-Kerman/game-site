@@ -280,6 +280,31 @@ export const DDL = [
   "      created_at INTEGER NOT NULL DEFAULT 0",
   "    );",
   "    CREATE INDEX IF NOT EXISTS idx_play_moves_room ON play_moves(room_id, seq);",
+  "",
+  "    -- 第六批：观战 / 棋谱回放 / 每日挑战（第六批的功能都只用服务端可验证的数据）",
+  "    CREATE TABLE IF NOT EXISTS play_replays (",
+  "      id         INTEGER PRIMARY KEY AUTOINCREMENT,",
+  "      game       TEXT NOT NULL,",
+  "      room_code  TEXT NOT NULL DEFAULT '',",
+  "      host_name  TEXT NOT NULL DEFAULT '',",
+  "      guest_name TEXT NOT NULL DEFAULT '',",
+  "      result     TEXT NOT NULL DEFAULT '',",
+  "      move_count INTEGER NOT NULL DEFAULT 0,",
+  "      moves      TEXT NOT NULL DEFAULT '[]',",
+  "      plays      INTEGER NOT NULL DEFAULT 0,",
+  "      created_at INTEGER NOT NULL DEFAULT 0",
+  "    );",
+  "    CREATE INDEX IF NOT EXISTS idx_replays_game ON play_replays(game, id DESC);",
+  "",
+  "    -- 每日挑战：一天一人一条（UNIQUE 索引兜底，重复提交写不进去）",
+  "    CREATE TABLE IF NOT EXISTS daily_results (",
+  "      id         INTEGER PRIMARY KEY AUTOINCREMENT,",
+  "      day        TEXT NOT NULL,",
+  "      user_id    INTEGER NOT NULL,",
+  "      slug       TEXT NOT NULL,",
+  "      created_at INTEGER NOT NULL DEFAULT 0",
+  "    );",
+  "    CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_user ON daily_results(day, user_id);",
 ].join("\n");
 
 /** 老库补字段：D1 的 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列（对应 src/db.js 的 addColumn） */
@@ -298,7 +323,10 @@ export const ADD_COLUMNS = [
   ['comments', 'target', "target TEXT NOT NULL DEFAULT 'game'"],
   // 第四批：论坛禁言（到点自动解除；封禁仍走 users.banned）
   ['users', 'muted_until', 'muted_until TEXT'],
-  ['users', 'mute_reason', 'mute_reason TEXT']
+  ['users', 'mute_reason', 'mute_reason TEXT'],
+  // 第六批：观战凭证与棋谱 id（ALTER 必须由运行时补，见上方注释）
+  ['play_rooms', 'watch_token', "watch_token TEXT NOT NULL DEFAULT ''"],
+  ['play_rooms', 'replay_id', 'replay_id INTEGER DEFAULT 0']
 ];
 
 /** 老库补索引（对应 src/db.js 的 addIndex） */

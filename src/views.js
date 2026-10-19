@@ -45,6 +45,24 @@ export function fmtNum(n) {
   return String(n);
 }
 
+/* PWA：注册 Service Worker。静态导出线由 public/js/app-static.js 里等价的兜底逻辑覆盖，两处互补。
+   只在 https 或 localhost 注册；失败静默，绝不影响页面。 */
+function pwaRegisterScript() {
+  return `<script>
+(function () {
+  if (window.__pwaSW) return;
+  if (!('serviceWorker' in navigator)) return;
+  var h = location.hostname;
+  var local = location.protocol === 'http:' && (h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1');
+  if (location.protocol !== 'https:' && !local) return;
+  window.__pwaSW = 1;
+  addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+})();
+</script>`;
+}
+
 function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true, bodyClass = '' }) {
   const bare = chrome === 'none';
   const full = title ? (titleSuffix ? title + ' - ' + SITE.name : title) : SITE.name;
@@ -69,8 +87,10 @@ ${noindex ? '<meta name="robots" content="noindex,follow">' : ''}
 <meta property="og:image" content="${esc(origin)}/static/img/og.svg">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png">
 <link rel="stylesheet" href="/static/css/style.css?v=7">
-${preload}${ld}
+${preload}${ld}${STATIC_MODE ? '' : pwaRegisterScript()}
 </head>
 <body${bodyClass ? ' class="' + bodyClass + '"' : ''}>
 <a class="skip" href="#main">跳到主要内容</a>
@@ -114,6 +134,7 @@ function header(user = null) {
       <a href="/">首页</a>
       <a href="/games">全部游戏</a>
       <a href="/rank">排行榜</a>
+      ${STATIC_MODE ? '' : '<a href="/daily">每日挑战</a>'}
       <a href="/notice">公告</a>
       ${STATIC_MODE ? '' : '<a href="/forum">论坛</a>'}
       <a href="/category/action">动作</a>
@@ -416,7 +437,7 @@ function commentPanel({ thread, total = 0, user = null, path, slug, endpoint, lo
   '</div>';
 }
 
-export function gamePage({ origin, game, related, myStars = 0, user = null, favorited = false, favCount = 0, comments = [], commentTotal = 0, thread = null, preview = false, cmtNotice = '' }) {
+export function gamePage({ origin, game, related, myStars = 0, user = null, favorited = false, favCount = 0, comments = [], commentTotal = 0, thread = null, preview = false, cmtNotice = '', watch = '', replay = '' }) {
   const path = '/game/' + game.slug;
   const votes = Number(game.rating_count) || 0;
   const ld = {
@@ -447,6 +468,9 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
     .map((t) => `<a class="tag" href="/tag/${encodeURIComponent(t)}">${esc(t)}</a>`)
     .join('');
 
+  // ?watch=观战钥匙 / ?replay=棋谱 id 由 net-play.js 在 iframe 内自动接管，这里只负责把参数透传进去
+  const extra = watch ? '?watch=' + encodeURIComponent(watch) : replay ? '?replay=' + encodeURIComponent(replay) : '';
+  const frameUrl = game.game_url + extra;
   const hint = HINTS[game.slug] || '支持键盘与触屏操作，点击全屏获得最佳体验';
   // 横屏比例的游戏在手机竖屏下会被压得很扁，提示用户点全屏转横屏
   const isWideGame = Number(game.width) > Number(game.height);
@@ -512,7 +536,7 @@ export function gamePage({ origin, game, related, myStars = 0, user = null, favo
         </div>
         <div class="player-stage" id="stage" style="--ar:${game.width}/${game.height}">
           <iframe id="gameFrame"
-                  src="${esc(game.game_url)}"
+                  src="${esc(frameUrl)}"
                   title="${esc(game.title)} 在线玩"
                   sandbox="${ugcHtml ? 'allow-scripts allow-pointer-lock allow-orientation-lock' : 'allow-scripts allow-same-origin allow-pointer-lock allow-orientation-lock allow-popups'}"
                   allow="fullscreen; autoplay; gamepad; accelerometer; gyroscope"
@@ -971,7 +995,13 @@ function emailPill(user) {
     : '<span class="pill s2">待验证</span>';
 }
 
-export function accountPage({ origin, user, providers = [], links = [], notice = '', error = '', devLink = '' }) {
+/** 账号设置页的徽章胶囊（与个人主页同一套数据，未解锁的半透明显示进度） */
+function accountBadge(b) {
+  return '<span class="chip" title="' + esc(b.desc) + (b.done ? '' : '（进度 ' + b.now + '/' + b.need + '）') + '"' +
+    (b.done ? '' : ' style="opacity:.45"') + '>' + b.icon + ' ' + esc(b.name) + (b.done ? '' : ' <b>' + b.now + '/' + b.need + '</b>') + '</span>';
+}
+
+export function accountPage({ origin, user, providers = [], links = [], notice = '', error = '', devLink = '', profile = null }) {
   const okMsg = ACCOUNT_OK[notice] || '';
   const errMsg = ACCOUNT_ERR[error] || '';
   const devBox = devLink
@@ -1025,6 +1055,14 @@ export function accountPage({ origin, user, providers = [], links = [], notice =
       <h3 class="sub">绑定更多</h3>
       ${bindForm}
     </section>
+
+    ${profile ? `
+    <section class="acct-sec">
+      <h2>等级与徽章 <small>Lv.${profile.level} · ${esc(profile.title)} · ${profile.badgesOwned}/${profile.badges.length} 枚</small></h2>
+      <p class="dim">经验 ${fmtNum(profile.xp)}，距离 Lv.${profile.level + 1} 还差 ${fmtNum(profile.xpNeed)}。徽章只认服务端能验证的行为（评论、收藏、评分、论坛发帖、每日挑战），别人刷不了。</p>
+      <div class="chips">${profile.badges.map(accountBadge).join('')}</div>
+      <p class="dim"><a href="/u/${encodeURIComponent(user.username)}">看我的个人主页 ›</a></p>
+    </section>` : ''}
 
     <section class="acct-sec">
       <h2>账号信息</h2>
@@ -1674,3 +1712,200 @@ export function forumAdminPage({ origin, user, stats = {}, pendingThreads = [], 
 </div>`;
   return layout({ origin, user, title: '论坛管理', description: '论坛审核后台', path: '/forum/admin', content, noindex: true });
 }
+
+/* ---------- 每日挑战 ---------- */
+
+/** 最近 n 天的日期键（本地时区），用于打卡日历；end 为空表示到今天就结束 */
+function dateList(n = 28, end = '') {
+  const base = end ? new Date(end + 'T12:00:00') : new Date();
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(base.getTime());
+    d.setDate(d.getDate() - i);
+    const p = (x) => (x < 10 ? '0' + x : String(x));
+    out.push(d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()));
+  }
+  return out;
+}
+
+/**
+ * 每日挑战页：每天按日期哈希从已上架游戏里轮换一题。
+ * 完成判定由服务端做（当天那款游戏收到一次播放事件即算完成），页面只展示进度，不做客户端申报。
+ */
+export function dailyPage({ origin, user = null, day = '', game = null, stats = null, board = null }) {
+  const s = stats || { total: 0, streak: 0, doneToday: false, done: [], slug: '' };
+  const done = new Set((s.done || []).map((d) => String(d).slice(0, 10)));
+  const loginHref = '/login?next=' + encodeURIComponent('/daily');
+  const boardRows = (board && board.rows) || [];
+
+  const todayBox = game
+    ? '<div class="panel">' +
+        '<div class="sec-head"><h2>🎯 今天的题目</h2><span class="pill">' + esc(day) + '</span></div>' +
+        '<div class="grid grid-side">' + gameCard(game) + '</div>' +
+        '<p class="dim" style="margin-top:14px">' + esc(game.description || '') + '</p>' +
+        '<p style="margin:16px 0 4px">' +
+          '<a class="btn btn-primary" href="/game/' + esc(game.slug) + '">开始今日挑战 ›</a>' +
+          (s.doneToday ? ' <span class="pill">✅ 今天已打卡</span>' : '') +
+        '</p>' +
+        '<p class="dim">玩一次上面这款游戏就算完成今天的挑战（服务端按播放事件自动记录，不用手动提交成绩）。每天 0 点换题。</p>' +
+      '</div>'
+    : '<p class="empty">今天的题目还没准备好，过会儿再来看看</p>';
+
+  const userBox = user
+    ? '<div class="stats">' +
+        '<div class="stat"><b>' + fmtNum(s.total) + '</b><span>累计打卡（天）</span></div>' +
+        '<div class="stat"><b>' + fmtNum(s.streak) + '</b><span>连续打卡（天）</span></div>' +
+        '<div class="stat"><b>' + (s.doneToday ? '已打' : '未打') + '</b><span>今日状态</span></div>' +
+      '</div>'
+    : '<p class="dim" style="margin:18px 0"><a href="' + loginHref + '">登录</a> 后才会记录你的打卡与连续天数。</p>';
+
+  const days = dateList(28, day);
+  const cal = '<div class="chips">' + days.map((d) =>
+      '<span class="chip" title="' + esc(d) + '"' + (done.has(d) ? '' : ' style="opacity:.45"') + '>' +
+        (done.has(d) ? '✅ ' : '· ') + esc(d.slice(5)) + '</span>'
+    ).join('') + '</div>';
+
+  const boardBox = '<div class="table-wrap"><table class="tbl" style="min-width:320px"><thead><tr><th>#</th><th>玩家</th></tr></thead><tbody>' +
+    (boardRows.length
+      ? boardRows.map((r, i) => '<tr><td>' + (i + 1) + '</td><td><a href="/u/' + encodeURIComponent(r.username) + '">' + esc(r.name || r.username) + '</a></td></tr>').join('')
+      : '<tr><td colspan="2" class="dim">今天还没有人打卡，你可以做第一个</td></tr>') +
+    '</tbody></table></div>';
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>每日挑战</b></nav>
+  <div class="page-head">
+    <h1>📅 每日挑战</h1>
+    <p class="page-sub">每天换一款游戏，玩一次就算打卡；连续打卡天数会记在你的个人主页上。</p>
+  </div>
+  ${todayBox}
+  ${userBox}
+  <div class="panel">
+    <div class="sec-head"><h2>🗓️ 最近 28 天</h2><a class="more" href="${user ? '/u/' + encodeURIComponent(user.username) : loginHref}">看我的徽章 ›</a></div>
+    ${cal}
+  </div>
+  <div class="panel">
+    <div class="sec-head"><h2>🏅 今日打卡榜</h2><span class="pill">${boardRows.length} / ${(board && board.count) || boardRows.length} 人</span></div>
+    ${boardBox}
+  </div>
+</div>`;
+  return layout({
+    origin, user, path: '/daily',
+    title: '每日挑战',
+    description: '每天一款游戏，玩一次即打卡。累计与连续打卡天数、今日打卡榜都在这里。',
+    content
+  });
+}
+
+/* ---------- 棋谱回放 ---------- */
+
+/** 棋谱回放页：棋谱存在服务端（对局结束那一刻落库），这里只做展示 + 打开播放器 */
+export function replayPage({ origin, user = null, replay, game = null, more = [] }) {
+  const r = replay || {};
+  const title = (game && game.title) || r.game || '对局';
+  const moves = Number(r.moveCount) || (r.moves ? r.moves.length : 0);
+  const frame = '/games/' + encodeURIComponent(r.game) + '/index.html?replay=' + encodeURIComponent(String(r.id));
+  const host = r.hostName || '房主';
+  const guest = r.guestName || '挑战者';
+  const resultText = r.result === 'draw' ? '🤝 和棋' : r.winner ? '🏆 ' + esc(r.winner) + ' 获胜' : '对局结束';
+
+  const moreBox = more.length
+    ? '<div class="panel"><div class="sec-head"><h2>🎬 同款游戏的其它棋谱</h2></div><div class="chips">' +
+      more.map((x) => '<a class="chip" href="/replay/' + x.id + '">' + esc(x.hostName || '房主') + ' vs ' + esc(x.guestName || '挑战者') +
+        ' <b>' + (x.result === 'draw' ? '和' : esc(x.winner || '')) + ' · ' + (Number(x.moveCount) || 0) + ' 手</b></a>').join('') +
+      '</div></div>'
+    : '';
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span>${game ? '<a href="/game/' + esc(game.slug) + '">' + esc(game.title) + '</a><span>›</span>' : ''}<b>棋谱回放</b></nav>
+  <div class="page-head">
+    <h1>🎬 棋谱回放</h1>
+    <p class="page-sub">${esc(host)} <b>vs</b> ${esc(guest)} · ${resultText} · 共 ${moves} 手${r.plays ? ' · 被看过 ' + fmtNum(r.plays) + ' 次' : ''}</p>
+  </div>
+  <div class="panel">
+    <div class="player" style="--a:${esc((game && game.accent) || '#6366f1')}">
+      <div class="player-bar">
+        <button class="btn" data-act="fullscreen" type="button">⛶ 全屏</button>
+        <a class="btn" href="${esc(frame)}" target="_blank" rel="noopener noreferrer">↗ 新窗口</a>
+        ${game ? '<a class="btn" href="/game/' + esc(game.slug) + '">🎮 我也要玩</a>' : ''}
+      </div>
+      <div class="player-stage" style="--ar:${(game && game.width) || 640}/${(game && game.height) || 640}">
+        <iframe id="gameFrame" src="${esc(frame)}" title="${esc(title)} 棋谱回放"
+                sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-orientation-lock allow-popups"
+                allow="fullscreen; autoplay; gamepad; accelerometer; gyroscope"
+                loading="eager" referrerpolicy="no-referrer"></iframe>
+      </div>
+    </div>
+    <p class="player-hint">▶ 播放器在棋盘下方：⏮ 上一手 / ▶ 播放 / ⏭ 下一手，还能调速、跳到最后和复制分享链接。</p>
+    <p class="dim" style="margin-top:10px">回放链接：<code>${esc(origin + '/replay/' + r.id)}</code></p>
+  </div>
+  ${moreBox}
+</div>`;
+  return layout({
+    origin, user, path: '/replay/' + r.id,
+    title: title + ' 棋谱回放',
+    description: host + ' 对 ' + guest + ' 的' + title + '对局回放，共 ' + moves + ' 手。',
+    content
+  });
+}
+
+/* ---------- 个人主页 ---------- */
+
+/** 个人主页：只展示公开信息（昵称、等级、徽章、公开计数），邮箱之类一概不出现在这里 */
+export function profilePage({ origin, user = null, profile, isSelf = false }) {
+  const p = profile || {};
+  const initial = String(p.name || p.username || '?').slice(0, 1);
+  const badges = p.badges || [];
+  const owned = badges.filter((b) => b.done);
+  const locked = badges.filter((b) => !b.done);
+  const span = Math.max(1, p.xpNext - p.xpFloor);
+  const pct = p.xpNeed ? Math.max(4, Math.round((p.xp - p.xpFloor) / span * 100)) : 100;
+
+  const badgeChip = (b) => '<span class="chip" title="' + esc(b.desc) + (b.done ? '' : '（进度 ' + b.now + '/' + b.need + '）') + '"' +
+    (b.done ? '' : ' style="opacity:.45"') + '>' + b.icon + ' ' + esc(b.name) +
+    (b.done ? '' : ' <b>' + b.now + '/' + b.need + '</b>') + '</span>';
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>个人主页</b></nav>
+
+  <div class="panel">
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <span style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;font-size:28px;font-weight:800;background:linear-gradient(135deg,#6366f1,#22d3ee);color:#fff">${esc(initial)}</span>
+      <div style="flex:1;min-width:200px">
+        <h1 style="margin:0 0 6px">${esc(p.name || p.username)} <span class="pill">${esc(p.title || '新面孔')}</span></h1>
+        <p class="dim" style="margin:0">Lv.${p.level} · ${fmtNum(p.xp)} 经验${p.xpNeed ? ' · 距下一级还差 ' + fmtNum(Math.max(0, p.xpNext - p.xp)) : ' · 已满级'} · ${esc(String(p.joinedAt || '').slice(0, 10))} 加入</p>
+        <div style="height:10px;background:rgba(255,255,255,.1);border-radius:999px;overflow:hidden;margin-top:10px">
+          <i style="display:block;height:100%;width:${pct}%;background:linear-gradient(135deg,#6366f1,#22d3ee)"></i>
+        </div>
+      </div>
+      <div>${isSelf ? '<a class="btn" href="/account">账号设置</a>' : ''}</div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>${fmtNum(p.comments)}</b><span>评论</span></div>
+    <div class="stat"><b>${fmtNum(p.favorites)}</b><span>收藏</span></div>
+    <div class="stat"><b>${fmtNum(p.ratings)}</b><span>评分</span></div>
+    <div class="stat"><b>${fmtNum(p.threads)}</b><span>论坛主题</span></div>
+    <div class="stat"><b>${fmtNum(p.replies)}</b><span>论坛回复</span></div>
+    <div class="stat"><b>${fmtNum(p.daily)}</b><span>每日打卡</span></div>
+    <div class="stat"><b>${fmtNum(p.streak)}</b><span>连续天数</span></div>
+    <div class="stat"><b>${fmtNum(p.days)}</b><span>加入天数</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="sec-head"><h2>🏅 成就徽章</h2><span class="pill">${owned.length} / ${badges.length}</span></div>
+    <div class="chips">${owned.map(badgeChip).join('') || '<span class="dim">还没有解锁任何徽章</span>'}</div>
+    ${locked.length ? '<h3 class="sub" style="margin-top:18px">未解锁</h3><div class="chips">' + locked.map(badgeChip).join('') + '</div>' : ''}
+  </div>
+
+  ${isSelf ? '' : '<p class="dim">只展示公开数据：评论、收藏、评分、论坛发帖与每日打卡。邮箱、登录记录等隐私信息不会出现在这里。</p>'}
+  <p class="dim">想有自己的主页？<a href="/register">注册</a> 或 <a href="/login">登录</a> 后就有了，顺手去 <a href="/daily">每日挑战</a> 打卡。</p>
+</div>`;
+  return layout({
+    origin, user, path: '/u/' + encodeURIComponent(p.username || ''),
+    title: (p.name || p.username || '玩家') + ' 的主页',
+    description: (p.name || p.username) + ' 在' + SITE.name + '的公开主页：等级、徽章与公开数据统计。',
+    content
+  });
+}
+

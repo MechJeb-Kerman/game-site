@@ -278,4 +278,24 @@
       if (e.key === "Escape" && cb.checked) cb.checked = false;
     });
   })();
+
+  /* ---------- PWA：注册 Service Worker ----------
+     动态线（Express / Cloudflare Worker）由 src/views.js 的 head 内联脚本负责；
+     静态线（STATIC_MODE 不输出内联脚本）由这里负责，两处互补且幂等。
+     只在 https 或 localhost 注册；失败静默 —— 没有 /sw.js 也只是安静跳过，不影响任何功能。
+     只在根路径部署（BASE === "/"）注册：public/sw.js 的内部路径全是根相对的（离线壳取 "/"、
+     静态前缀是 /static/、/games/…），子路径部署（GitHub Pages 仓库站点）注册它只会把父站点首页
+     当成离线壳缓存下来 —— 那种场景只享受 manifest 与图标。 */
+  (function () {
+    if (window.__pwaSW) return;
+    if (BASE !== "/") return;
+    if (!("serviceWorker" in navigator)) return;
+    var h = location.hostname;
+    var local = location.protocol === "http:" && (h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1");
+    if (location.protocol !== "https:" && !local) return;
+    window.__pwaSW = 1;
+    addEventListener("load", function () {
+      navigator.serviceWorker.register(BASE + "sw.js").catch(function () { });
+    });
+  })();
 })();

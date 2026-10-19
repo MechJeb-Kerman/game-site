@@ -38,6 +38,15 @@ async function post(path, body) {
   return postRaw(path, body);
 }
 
+/** 读接口：回放 / 回放页这两个 GET 用得上（非 JSON 响应 data 为 null） */
+async function getRaw(path) {
+  const res = await fetch(BASE + path);
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* 非 JSON 就当错 */ }
+  return { status: res.status, data, text };
+}
+
 async function main() {
   console.log('联机对战接口验收：' + BASE);
 
@@ -115,6 +124,7 @@ async function main() {
   ok('走法超长（>256）→ 400 bad_move', r.status === 400 && r.data.error === 'bad_move', r.status + ' ' + r.text.slice(0, 120));
 
   r = await post('/api/play/move', { id: roomId, token: guestToken, move: { x: 7, y: 8 }, result: 'guest' });
+  const fin = r.data || {};   /* 终局响应：后面那局棋的回放断言要用它的 replayId（重赛会把房间的 replay_id 归零） */
   ok('对手落子并声明胜负 → 对局结束', r.status === 200 && r.data.finished === true && r.data.result === 'guest' && r.data.room.status === 'done',
     r.status + ' ' + r.text.slice(0, 160));
   ok('client 声明的 result 原样转发（服务端不判棋）', r.data.room.result === 'guest', r.data.room.result);
@@ -165,6 +175,81 @@ async function main() {
     r.status === 201 && r.data.room.code !== q1.room.code && r.data.seat === 0, r.status + ' ' + r.text.slice(0, 160));
   r = await post('/api/play/quick', { game: qg2, name: '快4' });
   ok('不同棋种不互相匹配', r.status === 201 && r.data.room.game === qg2 && r.data.seat === 0, r.status + ' ' + r.text.slice(0, 160));
+
+  /* ---------- 棋谱回放：用上面那局 2 手的棋（甲 7,7 → 乙 7,8 收尾） ---------- */
+  const replayId = Number(fin.replayId || 0);
+  ok('终局响应里带 replayId', replayId > 0, JSON.stringify({ replayId: fin.replayId, result: fin.result }));
+  ok('房间视图里带的是同一个 replayId', Number((fin.room && fin.room.replayId) || 0) === replayId, String(fin.room && fin.room.replayId));
+
+  r = await getRaw('/api/replays/' + replayId);
+  const rep = (r.data && r.data.replay) || {};
+  ok('读棋谱 → 200 {ok:true}', r.status === 200 && r.data && r.data.ok === true, r.status + ' ' + r.text.slice(0, 160));
+  ok('棋谱记的是这款棋，手数＝实际走子数（2）',
+    rep.game === 'gomoku' && rep.moveCount === 2, JSON.stringify({ game: rep.game, moveCount: rep.moveCount }));
+  ok('moves 长度与 moveCount 一致，首手座位是 0/1、内容是字符串',
+    Array.isArray(rep.moves) && rep.moves.length === rep.moveCount &&
+    (rep.moves[0].seat === 0 || rep.moves[0].seat === 1) && typeof rep.moves[0].move === 'string' && rep.moves[0].move.length > 0,
+    JSON.stringify(rep.moves));
+  ok('两手棋按座位 0 → 1 记', !!rep.moves && rep.moves.length === 2 && rep.moves[0].seat === 0 && rep.moves[1].seat === 1,
+    JSON.stringify(rep.moves));
+
+  r = await getRaw('/api/replays/abc');
+  ok('棋谱 id 不是数字 → 400 bad_id', r.status === 400 && r.data && r.data.error === 'bad_id', r.status + ' ' + r.text.slice(0, 120));
+  r = await getRaw('/api/replays/0');
+  ok('棋谱 id 是 0 → 400 bad_id', r.status === 400 && r.data && r.data.error === 'bad_id', r.status + ' ' + r.text.slice(0, 120));
+  r = await getRaw('/api/replays/99999999');
+  ok('棋谱不存在 → 404 not_found', r.status === 404 && r.data && r.data.error === 'not_found', r.status + ' ' + r.text.slice(0, 120));
+
+  r = await getRaw('/replay/' + replayId);
+  ok('回放页 → 200，内嵌该棋的游戏页 iframe（?replay=<id>）',
+    r.status === 200 && r.text.includes('/games/gomoku/index.html?replay=' + replayId), r.status + ' ' + r.text.slice(0, 160));
+  ok('回放页给出「回放链接」与双方名字', r.text.includes('回放链接') && r.text.includes('甲') && r.text.includes('乙'), '');
+  r = await getRaw('/replay/99999999');
+  ok('回放页棋谱不存在 → 404 页', r.status === 404 && r.text.includes('404'), r.status);
+
+  /* ---------- 观战：只看不走 ---------- */
+  r = await post('/api/play/create', { game: 'gomoku', name: '观战甲' });
+  const wHost = r.data || {};
+  const wRoom = wHost.room || {};
+  const wKey = wRoom.watchKey || '';
+  ok('为观战另开一间房（201、0 号座位、拿得到观战钥匙）',
+    r.status === 201 && wHost.seat === 0 && /^\d+-[a-f0-9]{12,64}$/.test(wKey), r.status + ' ' + r.text.slice(0, 160));
+  ok('建房响应里没有 host_token / guest_token', !/host_token|guest_token/.test(r.text), r.text.slice(0, 160));
+
+  r = await post('/api/play/join', { code: wRoom.code, name: '观战乙' });
+  const wGuest = r.data || {};
+  ok('第二个人加入观战房 → 1 号座位、开局',
+    r.status === 200 && wGuest.seat === 1 && !!wGuest.room && wGuest.room.status === 'playing', r.status + ' ' + r.text.slice(0, 160));
+  r = await post('/api/play/move', { id: wRoom.id, token: wHost.token, move: { x: 7, y: 7 } });
+  ok('观战房第一手（房主）', r.status === 200 && r.data.seq === 1, r.status + ' ' + r.text.slice(0, 120));
+  r = await post('/api/play/move', { id: wRoom.id, token: wGuest.token, move: { x: 7, y: 8 } });
+  ok('观战房第二手（对手），棋还没下完', r.status === 200 && r.data.seq === 2 && r.data.finished === false, r.status + ' ' + r.text.slice(0, 120));
+
+  r = await post('/api/play/watch', { key: wKey, since: 0 });
+  const w1 = r.data || {};
+  ok('凭观战钥匙看棋 → 200，座位 -1（只看不走）',
+    r.status === 200 && w1.ok === true && !!w1.room && w1.room.seat === -1 && w1.watch === true, r.status + ' ' + r.text.slice(0, 200));
+  ok('观战拿到公开房间视图与已有走子',
+    !!w1.room && w1.room.id === wRoom.id && !!w1.room.players && w1.room.players[0].name === '观战甲' &&
+    Array.isArray(w1.moves) && w1.moves.length === 2, JSON.stringify(w1.moves));
+  ok('观战走子带座位与内容（0 → 1）',
+    Array.isArray(w1.moves) && w1.moves[0].seat === 0 && w1.moves[1].seat === 1 && typeof w1.moves[1].move === 'string',
+    JSON.stringify(w1.moves));
+  ok('观战的公开视图里没有 host_token / guest_token，也不回发观战钥匙',
+    !!w1.room && !('host_token' in w1.room) && !('guest_token' in w1.room) && w1.room.watchKey === '' && !/host_token|guest_token/.test(r.text),
+    r.text.slice(0, 200));
+
+  r = await post('/api/play/watch', { key: wKey, since: 1 });
+  ok('观战增量：since=1 只回第二手',
+    r.status === 200 && !!r.data && Array.isArray(r.data.moves) && r.data.moves.length === 1 && r.data.moves[0].seq === 2,
+    JSON.stringify(r.data && r.data.moves));
+
+  r = await post('/api/play/watch', { key: 'not-a-key', since: 0 });
+  ok('乱写的观战钥匙 → 403 bad_token', r.status === 403 && !!r.data && r.data.error === 'bad_token', r.status + ' ' + r.text.slice(0, 120));
+  r = await post('/api/play/watch', { key: wRoom.id + '-' + 'f'.repeat(24), since: 0 });
+  ok('房间号对、钥匙不对 → 403 bad_token', r.status === 403 && !!r.data && r.data.error === 'bad_token', r.status + ' ' + r.text.slice(0, 120));
+  r = await post('/api/play/watch', { key: '99999999-' + 'a'.repeat(24), since: 0 });
+  ok('钥匙格式合法但房间不存在 → 404 not_found', r.status === 404 && !!r.data && r.data.error === 'not_found', r.status + ' ' + r.text.slice(0, 120));
 
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>连连看 · Link Up</title>
+<style>
+  :root{
+    --ink:#dbf8ff; --cyan:#22d3ee; --cyan2:#67e8f9; --blue:#0ea5e9;
+    --line:rgba(34,211,238,.35); --panel:rgba(6,182,212,.13);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; }
+  /* 根元素铺底色：body 的渐变即使被某些捕获/合成路径跳过，画布底色仍是深色 */
+  html{ background:#050b14; }
+  body{
+    min-height:100vh; color:var(--ink);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    background:radial-gradient(circle at 50% 0%, #083344, #050b14 72%) no-repeat #050b14;
+    display:flex; justify-content:center; padding:8px 10px 14px;
+  }
+  .wrap{ width:100%; max-width:980px; display:flex; flex-direction:column; align-items:center; gap:7px; }
+  h1{
+    font-size:clamp(17px,4.4vw,25px); margin:0; letter-spacing:.12em; font-weight:700; line-height:1.2;
+    text-shadow:0 0 14px rgba(34,211,238,.65), 0 0 40px rgba(14,165,233,.35);
+  }
+  h1 span{ font-size:.6em; letter-spacing:.2em; color:#7dd3fc; opacity:.85; margin-left:.35em; }
+  .bar{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; align-items:center; }
+  .btn{
+    font:inherit; font-size:13px; line-height:1; color:#cdf3ff; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px; padding:0 11px; min-height:44px;
+    cursor:pointer; touch-action:manipulation; transition:background .15s,border-color .15s,transform .08s;
+  }
+  .btn b{ font-weight:700; color:#fff; }
+  .btn:hover{ background:rgba(6,182,212,.22); }
+  .btn:active{ transform:scale(.96); }
+  .btn[disabled]{ opacity:.42; cursor:default; }
+  .btn.on,.btn.primary{
+    background:linear-gradient(135deg,#06b6d4,#0ea5e9); border-color:rgba(103,232,249,.75); color:#03212b;
+    box-shadow:0 0 16px rgba(34,211,238,.45);
+  }
+  .btn.on b,.btn.primary b{ color:#03212b; }
+  .stats{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; }
+  .stat{
+    display:inline-flex; gap:6px; align-items:baseline; padding:5px 11px; border-radius:10px;
+    background:var(--panel); border:1px solid var(--line); font-size:12.5px; letter-spacing:.04em;
+  }
+  .stat b{ color:#fff; font-size:15px; font-variant-numeric:tabular-nums; }
+  .stat.warn{ border-color:rgba(248,113,113,.75); background:rgba(248,113,113,.14); }
+  .stat.warn b{ color:#fca5a5; }
+  .tip{ margin:0; font-size:12px; color:#8ec9dd; text-align:center; line-height:1.5; }
+  .tip b{ color:#bdf0ff; }
+  .boardWrap{ position:relative; display:flex; justify-content:center; }
+  .board{
+    --cell:40px; --pad:calc(var(--cell) * .62);
+    position:relative;
+    width:calc(var(--cell) * var(--cols) + var(--pad) * 2);
+    height:calc(var(--cell) * var(--rows) + var(--pad) * 2);
+    background:radial-gradient(circle at 50% 0%, rgba(8,145,178,.20), rgba(4,17,28,.55) 78%);
+    border:1px solid rgba(34,211,238,.22); border-radius:14px;
+    box-shadow:0 18px 44px rgba(0,0,0,.5), 0 0 0 1px rgba(8,47,73,.7) inset;
+    touch-action:manipulation;
+  }
+  .grid{
+    position:absolute; left:var(--pad); top:var(--pad);
+    display:grid; grid-template-columns:repeat(var(--cols), var(--cell));
+    grid-template-rows:repeat(var(--rows), var(--cell));
+  }
+  .fx{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
+  .fxline{
+    fill:none; stroke:#67e8f9; stroke-width:.17; stroke-linecap:round; stroke-linejoin:round;
+    filter:drop-shadow(0 0 5px rgba(34,211,238,.95));
+    animation:fxOut .44s ease-in forwards;
+  }
+  @keyframes fxOut{ 0%{opacity:1} 70%{opacity:1} 100%{opacity:0} }
+
+  .tile{ position:relative; width:var(--cell); height:var(--cell); display:flex; align-items:center; justify-content:center; }
+  .tile.gone{ visibility:hidden; }
+  .face{
+    width:86%; height:86%; border-radius:22%;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif;
+    font-size:calc(var(--cell) * .5); line-height:1;
+    background:linear-gradient(160deg, rgba(14,165,233,.24), rgba(6,182,212,.10) 55%, rgba(8,145,178,.22));
+    border:1px solid rgba(34,211,238,.30);
+    box-shadow:0 1px 0 rgba(255,255,255,.07) inset, 0 3px 10px rgba(0,0,0,.38);
+    transition:transform .1s ease, box-shadow .12s ease, border-color .12s ease, background .12s ease;
+  }
+  .tile:hover .face{ border-color:rgba(103,232,249,.65); }
+  .tile.sel .face{
+    background:linear-gradient(160deg,#06b6d4,#0ea5e9); border-color:#a5f3fc; transform:scale(.93);
+    box-shadow:0 0 0 2px rgba(103,232,249,.55), 0 0 22px rgba(34,211,238,.8);
+  }
+  .tile.hint .face{ animation:hintPulse .62s ease-in-out infinite alternate; }
+  @keyframes hintPulse{ from{ box-shadow:0 0 0 1px rgba(103,232,249,.5), 0 0 6px rgba(34,211,238,.4); }
+                       to  { box-shadow:0 0 0 2px rgba(103,232,249,.95), 0 0 20px rgba(34,211,238,.95); } }
+  .tile.bad .face{ animation:bad .3s ease; }
+  @keyframes bad{ 0%,100%{transform:translateX(0)} 25%{transform:translateX(-3px)} 75%{transform:translateX(3px)} }
+  .tile.pop .face{ animation:pop .26s ease-in forwards; }
+  @keyframes pop{ 0%{transform:scale(1)} 35%{transform:scale(1.16); box-shadow:0 0 22px rgba(103,232,249,.95)}
+                  100%{transform:scale(.15); opacity:0} }
+
+  .cover{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(3,10,18,.74); border-radius:14px; z-index:3;
+  }
+  .cover.on{ display:flex; }
+  .card{
+    text-align:center; padding:16px 20px; border-radius:14px; max-width:86%;
+    background:rgba(7,20,30,.94); border:1px solid rgba(34,211,238,.38);
+    box-shadow:0 18px 50px rgba(0,0,0,.62), 0 0 30px rgba(14,165,233,.25) inset;
+  }
+  .card h2{ margin:0 0 6px; font-size:19px; letter-spacing:.06em; }
+  .card p{ margin:0 0 12px; font-size:12.5px; color:#9fd8ea; line-height:1.6; }
+  .card .btn{ min-height:44px; padding:0 18px; font-size:14px; }
+  @media (max-width:520px){
+    .btn{ font-size:12px; padding:0 9px; }
+    .stat{ font-size:11.5px; padding:4px 9px; }
+    .tip{ font-size:11px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>连连看<span>LINK UP</span></h1>
+
+  <div class="bar">
+    <button class="btn on" id="lvNormal" data-lv="normal">8 × 10 标准</button>
+    <button class="btn" id="lvMini" data-lv="mini">8 × 8 轻松</button>
+    <button class="btn" id="shuffleBtn">🔀 洗牌 <b id="shuffleN">3</b></button>
+    <button class="btn" id="hintBtn">💡 提示 <b id="hintN">3</b></button>
+    <button class="btn primary" id="again">🔄 重新开始</button>
+  </div>
+
+  <div class="stats">
+    <span class="stat">分数 <b id="scoreEl">0</b></span>
+    <span class="stat">剩余 <b id="leftEl">40</b> 对</span>
+    <span class="stat" id="timeStat">时间 <b id="timeEl">02:40</b></span>
+  </div>
+
+  <p class="tip" id="tip">
+    <span>点两个相同图案：通路拐点 ≤ 2 即可消除（<b>棋盘外一圈也算通路</b>）</span><br />
+    <span>手柄：左摇杆移光标 · <b>A</b> 选中/消除 · <b>B</b> 取消选择 · <b>X</b> 提示 · <b>Start</b> 重开</span>
+  </p>
+
+  <div class="boardWrap">
+    <div class="board" id="board">
+      <div class="grid" id="grid"></div>
+      <svg class="fx" id="fx" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="cover" id="cover">
+      <div class="card">
+        <h2 id="ovTitle">通关！</h2>
+        <p id="ovText"></p>
+        <button class="btn primary" id="ovBtn">再来一局</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ======================= 难度 ======================= */
+  var LEVELS = [
+    { key: 'normal', name: '8 × 10 标准', cols: 8, rows: 10, base: 160 },
+    { key: 'mini',   name: '8 × 8 轻松',  cols: 8, rows: 8,  base: 130 }
+  ];
+  var BY_KEY = {};
+  for (var li = 0; li < LEVELS.length; li++) BY_KEY[LEVELS[li].key] = LEVELS[li];
+
+  var ICONS = ['🔥', '❄️', '⚡', '🍀', '🎵', '🎁', '⭐', '💎'];   /* 8 种图案 */
+  var TIME_BONUS = 2;      /* 每消一对加时（秒） */
+  var COMBO_BONUS = 50;    /* 连击加分：100 + 50*(连击-1) */
+  var SHUFFLE_MAX = 3, HINT_MAX = 3;
+
+  /* ======================= URL 参数（种子 / 每日挑战） ======================= */
+  function param(name) {
+    var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  /* FNV-1a 32bit：把 ?daily=YYYY-MM-DD 派生成全球同一天的同一个种子 */
+  function hash32(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  var dailyParam = param('daily');
+  var seedParam = null;                                              /* 只反映 URL 里的 ?seed= */
+  var dailySeed = null;                                              /* ?daily= 时从日期 hash 派生的种子 */
+  var seedBase = null;
+  (function () {
+    var raw = param('seed');
+    var n = raw === null || raw === '' ? NaN : parseInt(raw, 10);
+    if (!isNaN(n)) seedParam = n >>> 0;                               /* ?seed= 优先 */
+    else if (dailyParam) dailySeed = hash32('linkup|' + dailyParam);
+    seedBase = seedParam === null ? dailySeed : seedParam;
+  })();
+
+  /* mulberry32：确定性 PRNG（同一 seed 每次得到同一串数字），不用 Math.random 播种 */
+  function mulberry32(a) {
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* ======================= DOM ======================= */
+  var wrapEl = document.querySelector('.wrap');
+  var boardEl = document.getElementById('board');
+  var gridEl = document.getElementById('grid');
+  var fxEl = document.getElementById('fx');
+  var tipEl = document.getElementById('tip');
+  var coverEl = document.getElementById('cover');
+  var ovTitleEl = document.getElementById('ovTitle');
+  var ovTextEl = document.getElementById('ovText');
+  var scoreEl = document.getElementById('scoreEl');
+  var leftEl = document.getElementById('leftEl');
+  var timeEl = document.getElementById('timeEl');
+  var timeStatEl = document.getElementById('timeStat');
+  var shuffleNEl = document.getElementById('shuffleN');
+  var hintNEl = document.getElementById('hintN');
+  var shuffleBtn = document.getElementById('shuffleBtn');
+  var hintBtn = document.getElementById('hintBtn');
+
+  /* ======================= 局面状态 ======================= */
+  var level = 'normal';
+  var COLS = BY_KEY[level].cols, ROWS = BY_KEY[level].rows;
+  var cells = [];              /* 长度 COLS*ROWS，0 = 空，1..8 = 图案编号 */
+  var tiles = [];              /* 每格的 .tile 元素 */
+  var sel = null;              /* 已选中的格子下标 */
+  var over = false, won = false;
+  var score = 0, combo = 0;
+  var timeLeft = 0, timeMax = 0, elapsedMs = 0;
+  var shuffleLeft = SHUFFLE_MAX, hintLeft = HINT_MAX;
+  var runSeed = 0, rng = null;
+  var gen = 0;                 /* 代次：restart 后让旧定时器失效 */
+  var started = false;
+  var lastTick = 0, tickTimer = 0;
+  var hintCells = [], hintTimer = 0;
+  var hasPair = true;          /* 当前残局是否还存在可消的一对 */
+  var lastPath = null;         /* 最近一次成功连线的拐点（给自测读） */
+
+  function idx(r, c) { return r * COLS + c; }
+  function inB(r, c) { return r >= 0 && r < ROWS && c >= 0 && c < COLS; }
+  function at(r, c) { return inB(r, c) ? cells[idx(r, c)] : 0; }
+  function remainPairs() {
+    var n = 0;
+    for (var i = 0; i < cells.length; i++) if (cells[i]) n++;
+    return n >> 1;
+  }
+  function totalPairs() { return (COLS * ROWS) >> 1; }
+
+  /* ======================= 路径查找（0 / 1 / 2 拐点） =======================
+     坐标模型：棋盘外再补一圈“虚拟格”（行 -1 与 ROWS、列 -1 与 COLS），
+     外圈永远可通行，所以“绕棋盘外一圈”的通路天然成立。
+     pass(r,c)：该格可被通路穿过（越界 = true，空格 = true，有图案 = false）。 */
+  function pass(r, c) {
+    if (r < -1 || r > ROWS || c < -1 || c > COLS) return false;
+    if (r === -1 || r === ROWS || c === -1 || c === COLS) return true;   /* 外圈 */
+    return cells[idx(r, c)] === 0;
+  }
+  /* 同行 r 上 c1..c2 之间（不含端点）是否全可通行 */
+  function clearH(r, c1, c2) {
+    var a = Math.min(c1, c2), b = Math.max(c1, c2);
+    for (var c = a + 1; c < b; c++) if (!pass(r, c)) return false;
+    return true;
+  }
+  /* 同列 c 上 r1..r2 之间（不含端点）是否全可通行 */
+  function clearV(c, r1, r2) {
+    var a = Math.min(r1, r2), b = Math.max(r1, r2);
+    for (var r = a + 1; r < b; r++) if (!pass(r, c)) return false;
+    return true;
+  }
+  /* 返回从 a 到 b 的一条通路（拐点尽量少），无解返回 null */
+  function findPath(a, b) {
+    if (a === b) return null;
+    var ra = (a / COLS) | 0, ca = a % COLS, rb = (b / COLS) | 0, cb = b % COLS;
+    if (cells[a] === 0 || cells[b] === 0) return null;
+    if (cells[a] !== cells[b]) return null;
+    /* 0 拐点：同行或同列直连 */
+    if (ra === rb && clearH(ra, ca, cb)) return [[ra, ca], [rb, cb]];
+    if (ca === cb && clearV(ca, ra, rb)) return [[ra, ca], [rb, cb]];
+    /* 1 拐点：两个直角候选 */
+    if (ra !== rb && ca !== cb) {
+      if (pass(ra, cb) && clearH(ra, ca, cb) && clearV(cb, ra, rb)) return [[ra, ca], [ra, cb], [rb, cb]];
+      if (pass(rb, ca) && clearV(ca, ra, rb) && clearH(rb, ca, cb)) return [[ra, ca], [rb, ca], [rb, cb]];
+    }
+    /* 2 拐点：中间一段横线（在行 r 上） */
+    for (var r = -1; r <= ROWS; r++) {
+      if (!pass(r, ca) || !pass(r, cb)) continue;
+      if (clearV(ca, ra, r) && clearH(r, ca, cb) && clearV(cb, r, rb)) {
+        return [[ra, ca], [r, ca], [r, cb], [rb, cb]];
+      }
+    }
+    /* 2 拐点：中间一段竖线（在列 c 上） */
+    for (var c = -1; c <= COLS; c++) {
+      if (!pass(ra, c) || !pass(rb, c)) continue;
+      if (clearH(ra, ca, c) && clearV(c, ra, rb) && clearH(rb, c, cb)) {
+        return [[ra, ca], [ra, c], [rb, c], [rb, cb]];
+      }
+    }
+    return null;
+  }
+  function pathTurns(p) { return p ? p.length - 2 : 99; }
+
+  /* ======================= 布局生成（反向构造，保证能全部消完） =======================
+     做法：从空盘开始，每次挑两个“当前仍互相连通”的空格放同一对图案。
+     因为每一步都只用到当时还空着的格子，玩家按放置的逆序消除即可清盘。 */
+  function emptyCells() {
+    var out = [];
+    for (var r = 0; r < ROWS; r++) for (var c = 0; c < COLS; c++) if (cells[idx(r, c)] === 0) out.push(idx(r, c));
+    return out;
+  }
+  /* 一个空格四周的可通行方向数（越小越“死角”，越该先放） */
+  function openDirs(i) {
+    var r = (i / COLS) | 0, c = i % COLS, n = 0;
+    if (pass(r - 1, c)) n++;
+    if (pass(r + 1, c)) n++;
+    if (pass(r, c - 1)) n++;
+    if (pass(r, c + 1)) n++;
+    return n;
+  }
+  function pickKind(kinds) {
+    var pool = [];
+    for (var k = 0; k < kinds.length; k++) if (kinds[k] > 0) pool.push(k + 1);
+    return pool.length ? pool[(rng() * pool.length) | 0] : 1;
+  }
+  /* 生成整盘：pairs 对，图案种类 8 种（按种类数量均分） */
+  function buildLayout(pairs) {
+    var n = COLS * ROWS;
+    cells = new Array(n);
+    for (var i = 0; i < n; i++) cells[i] = 0;
+    var kinds = [], k;
+    for (k = 0; k < ICONS.length; k++) kinds.push(0);
+    for (var p = 0; p < pairs; p++) kinds[p % ICONS.length] += 2;    /* 每种数量尽量平均 */
+    for (var step = 0; step < pairs; step++) {
+      var cand = emptyCells();
+      if (cand.length < 2) break;
+      cand.sort(function (x, y) { return openDirs(x) - openDirs(y); });
+      var a = -1, b = -1;
+      for (var ia = 0; ia < cand.length && b < 0; ia++) {
+        for (var ib = ia + 1; ib < cand.length; ib++) {
+          if (findPath(cand[ia], cand[ib])) { a = cand[ia]; b = cand[ib]; break; }
+        }
+      }
+      if (a < 0) { a = cand[0]; b = cand[1]; }                        /* 兜底（正常不会走到） */
+      var kind = pickKind(kinds);
+      kinds[kind - 1] -= 2;
+      cells[a] = kind; cells[b] = kind;
+    }
+  }
+
+  /* ======================= 建盘 / 重开 ======================= */
+  function buildGrid() {
+    var sp = '0 0 ' + (COLS + 1.24) + ' ' + (ROWS + 1.24);
+    boardEl.style.setProperty('--cols', COLS);
+    boardEl.style.setProperty('--rows', ROWS);
+    fxEl.setAttribute('viewBox', sp);
+    gridEl.textContent = '';
+    tiles = new Array(COLS * ROWS);
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var t = document.createElement('div');
+        t.className = 'tile';
+        t.dataset.r = r; t.dataset.c = c;
+        gridEl.appendChild(t);
+        tiles[idx(r, c)] = t;
+      }
+    }
+    fit();
+  }
+  function paint(i) {
+    var t = tiles[i];
+    if (!t) return;
+    var v = cells[i];
+    if (!v) { t.className = 'tile gone'; t.textContent = ''; return; }
+    var cls = 'tile' + (sel === i ? ' sel' : '') + (hintCells.indexOf(i) >= 0 ? ' hint' : '');
+    if (t.className !== cls) t.className = cls;
+    var face = t.firstChild;
+    if (!face) { face = document.createElement('span'); face.className = 'face'; t.appendChild(face); }
+    if (face.textContent !== ICONS[v - 1]) face.textContent = ICONS[v - 1];
+  }
+  function paintAll() { for (var i = 0; i < cells.length; i++) paint(i); }
+
+  function paintHud() {
+    scoreEl.textContent = String(score);
+    leftEl.textContent = String(remainPairs());
+    var s = Math.max(0, Math.ceil(timeLeft));
+    var mm = Math.floor(s / 60), ss = s % 60;
+    timeEl.textContent = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+    timeStatEl.className = 'stat' + (timeLeft <= 20 ? ' warn' : '');
+    shuffleNEl.textContent = String(shuffleLeft);
+    hintNEl.textContent = String(hintLeft);
+    shuffleBtn.disabled = shuffleLeft <= 0 || over;
+    hintBtn.disabled = hintLeft <= 0 || over;
+  }
+  function clearHint() {
+    if (!hintCells.length) return;
+    var old = hintCells; hintCells = [];
+    for (var i = 0; i < old.length; i++) paint(old[i]);
+    if (hintTimer) { clearTimeout(hintTimer); hintTimer = 0; }
+  }
+  function drawPath(path) {
+    var pts = [], i;
+    for (i = 0; i < path.length; i++) {
+      var x = path[i][1] + 1.12, y = path[i][0] + 1.12;                /* 单位 = cell */
+      if (i && pts[i - 1][0] === x && pts[i - 1][1] === y) continue;
+      pts.push([x, y]);
+    }
+    var poly = document.createElementNS(fxEl.namespaceURI, 'polyline');   /* 用元素自带命名空间，避免文件里出现外部 URI 字面量 */
+    poly.setAttribute('class', 'fxline');
+    var s = '';
+    for (i = 0; i < pts.length; i++) s += (i ? ' ' : '') + pts[i][0].toFixed(3) + ',' + pts[i][1].toFixed(3);
+    poly.setAttribute('points', s);
+    fxEl.appendChild(poly);
+    var myGen = gen;
+    setTimeout(function () { if (myGen === gen && poly.parentNode) poly.parentNode.removeChild(poly); }, 470);
+  }
+  function clearFx() { while (fxEl.firstChild) fxEl.removeChild(fxEl.firstChild); }
+
+  function select(i) {
+    var old = sel;
+    sel = i;
+    if (old !== null && old !== i) paint(old);
+    if (i !== null) paint(i);
+  }
+  function popTiles(a, b) {
+    var myGen = gen;
+    var ta = tiles[a], tb = tiles[b];
+    if (ta) ta.classList.add('pop');
+    if (tb) tb.classList.add('pop');
+    setTimeout(function () {
+      if (myGen !== gen) return;
+      if (ta) ta.className = 'tile gone';
+      if (tb) tb.className = 'tile gone';
+    }, 250);
+  }
+  function shake(i) {
+    var t = tiles[i];
+    if (!t) return;
+    var myGen = gen;
+    t.classList.add('bad');
+    setTimeout(function () { if (myGen === gen && t.className.indexOf('bad') >= 0) t.className = t.className.replace(' bad', ''); }, 320);
+  }
+  /* 没有用户手势时调用 vibrate 会被浏览器拦下并留下一条 error 日志，先问 userActivation */
+  function buzz(ms) {
+    try {
+      if (!navigator.vibrate) return;
+      if (navigator.userActivation && navigator.userActivation.hasBeenActive === false) return;
+      navigator.vibrate(ms);
+    } catch (e) {}
+  }
+
+  /* 处理一次“点格子”：真正的点击、手柄点击、自测调用都走这里 */
+  function tap(i) {
+    if (over || !cells[i]) return false;
+    /* shim 在 pointer 模式下会把 B 也当成一次点击派发过来；B 的语义是「取消」，
+       所以 B 按下期间到达的点击直接丢掉，免得取消的同时又选中一格。 */
+    if (padDown(1)) { clearHint(); select(null); return false; }
+    beginPlay();
+    clearHint();
+    if (sel === null) { select(i); return false; }
+    if (sel === i) { select(null); return false; }
+    if (cells[sel] !== cells[i]) { var prev = sel; select(i); paint(prev); return false; }
+    var path = findPath(sel, i);
+    if (!path) { shake(i); return false; }
+    eliminate(sel, i, path);
+    return true;
+  }
+  function eliminate(a, b, path) {
+    var va = cells[a];
+    cells[a] = 0; cells[b] = 0;
+    sel = null;
+    combo++;
+    score += 100 + COMBO_BONUS * (combo - 1);
+    timeLeft = Math.min(timeMax, timeLeft + TIME_BONUS);
+    lastPath = path;
+    drawPath(path);
+    popTiles(a, b);
+    buzz(8);
+    paintHud();
+    if (remainPairs() === 0) { win(); return; }
+    checkPairExists();
+  }
+  /* 残局是否还有可消的对子（没有就该洗牌了） */
+  function checkPairExists() {
+    hasPair = !!findAnyPair();
+    return hasPair;
+  }
+  function findAnyPair() {
+    var byKind = [], k;
+    for (k = 0; k <= ICONS.length; k++) byKind.push([]);
+    for (var i = 0; i < cells.length; i++) {
+      var v = cells[i];
+      if (v && byKind[v]) byKind[v].push(i);      /* 越界编号（异常局面）直接跳过，别让查找抛异常 */
+    }
+    for (k = 1; k <= ICONS.length; k++) {
+      var list = byKind[k];
+      for (var x = 0; x < list.length; x++) {
+        for (var y = x + 1; y < list.length; y++) {
+          if (findPath(list[x], list[y])) return [list[x], list[y]];
+        }
+      }
+    }
+    return null;
+  }
+
+  /* ======================= 计时 / 胜负 ======================= */
+  function startClock() {
+    lastTick = performance.now();
+    if (tickTimer) clearInterval(tickTimer);
+    tickTimer = setInterval(tick, 100);
+  }
+  function stopClock() { if (tickTimer) { clearInterval(tickTimer); tickTimer = 0; } }
+  /* 倒计时从“第一次操作”开始跑，避免刚打开页面读提示就掉时间 */
+  function beginPlay() {
+    if (!started && !over) { started = true; lastTick = performance.now(); }
+  }
+  function tick() {
+    var now = performance.now();
+    var dt = (now - lastTick) / 1000;
+    lastTick = now;
+    if (over || !started) return;
+    elapsedMs += dt * 1000;
+    timeLeft -= dt;
+    if (timeLeft <= 0) { timeLeft = 0; lose(); return; }
+    paintHud();
+  }
+  function showOverlay(title, text) {
+    ovTitleEl.textContent = title;
+    ovTextEl.textContent = text;
+    coverEl.classList.add('on');
+  }
+  function win() {
+    over = true; won = true; stopClock();
+    var sec = Math.round(elapsedMs / 1000);
+    score += Math.round(timeLeft) * 5;                               /* 剩余时间奖励 */
+    combo = 0;
+    updateButtons();
+    postDaily();
+    showOverlay('🎉 全部消除！', '得分 ' + score + ' · 用时 ' + sec + ' 秒 · 剩余 ' + Math.round(timeLeft) + ' 秒');
+    paintHud();
+  }
+  function lose() {
+    over = true; won = false; stopClock();
+    combo = 0;
+    updateButtons();
+    showOverlay('⌛ 时间到', '还剩 ' + remainPairs() + ' 对没消掉 · 得分 ' + score);
+    paintHud();
+  }
+  function postDaily() {
+    if (!dailyParam) return;
+    try {
+      window.parent.postMessage({
+        type: 'gs:daily-done', game: 'linkup', date: dailyParam, score: score
+      }, '*');
+    } catch (e) { /* 被跨域策略挡住也不影响游戏 */ }
+  }
+  function updateButtons() {
+    var lvBtns = document.querySelectorAll('.bar .btn[data-lv]');
+    for (var i = 0; i < lvBtns.length; i++) lvBtns[i].classList.toggle('on', lvBtns[i].dataset.lv === level);
+  }
+
+  function newGame() {
+    gen++;
+    stopClock();
+    clearHint();
+    clearFx();
+    coverEl.classList.remove('on');
+    sel = null; over = false; won = false;
+    score = 0; combo = 0; elapsedMs = 0; started = false;
+    shuffleLeft = SHUFFLE_MAX; hintLeft = HINT_MAX;
+    lastPath = null;
+    runSeed = seedBase === null ? ((Math.random() * 4294967296) >>> 0) : seedBase;
+    rng = mulberry32(runSeed);
+    var lv = BY_KEY[level];
+    var sizeChanged = (lv.cols !== COLS || lv.rows !== ROWS);
+    COLS = lv.cols; ROWS = lv.rows;
+    buildLayout(totalPairs());
+    if (sizeChanged) buildGrid();
+    timeMax = lv.base; timeLeft = lv.base;
+    paintAll(); paintHud(); updateButtons();
+    checkPairExists();
+    startClock();
+    fit();
+  }
+  function restart() { newGame(); return true; }
+
+  /* ======================= 输入：鼠标 / 触摸 / 手柄合成的点击 ======================= */
+  function cellFromEvent(e) {
+    var t = e.target && e.target.closest ? e.target.closest('.tile') : null;
+    if (!t || !gridEl.contains(t)) return null;
+    return idx(Number(t.dataset.r), Number(t.dataset.c));
+  }
+  /* 鼠标 / 触摸 / 手柄 shim 合成的点击都在这里统一处理：
+     手柄 shim 的虚拟光标本来就停在它要点的位置（pointer 模式），所以只认格子，不区分事件来源。 */
+  boardEl.addEventListener('pointerdown', function (e) {
+    var i = cellFromEvent(e);
+    if (i === null) return;
+    tap(i);
+  });
+  boardEl.addEventListener('contextmenu', function (e) {
+    if (cellFromEvent(e) !== null) e.preventDefault();
+  });
+
+  /* 手柄扩展：shim 只把 A/B 都当成“点一下”，且不处理 X / Start 之外的语义。
+     这里自己再读一遍原始手柄，补上 B=取消选择、X=提示、Start=重开（边沿触发）。 */
+  function padDown(n) {
+    var pads = null;
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : null; } catch (e) { pads = null; }
+    if (!pads) return false;
+    for (var i = 0; i < pads.length; i++) {
+      var p = pads[i];
+      if (!p || !p.buttons) continue;
+      var b = p.buttons[n];
+      if (b && (b.pressed || b.value > .5)) return true;
+    }
+    return false;
+  }
+  function pollPad() {
+    var pads = null;
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : null; } catch (e) { pads = null; }
+    if (pads) {
+      for (var i = 0; i < pads.length; i++) {
+        var p = pads[i];
+        if (!p || !p.buttons) continue;
+        var b = p.buttons[1], x = p.buttons[2], st = p.buttons[9];
+        var bNow = !!(b && (b.pressed || b.value > .5));
+        var xNow = !!(x && (x.pressed || x.value > .5));
+        var sNow = !!(st && (st.pressed || st.value > .5));
+        if (bNow && !padPrev[1] && !over) { clearHint(); select(null); }
+        if (xNow && !padPrev[2]) doHint();
+        if (sNow && !padPrev[9]) restart();
+        padPrev[1] = bNow; padPrev[2] = xNow; padPrev[9] = sNow;
+      }
+    }
+    requestAnimationFrame(pollPad);
+  }
+  var padPrev = { 1: false, 2: false, 9: false };
+
+  /* ======================= 洗牌 / 提示 ======================= */
+  function doShuffle() {
+    if (over || shuffleLeft <= 0) return false;
+    beginPlay();
+    shuffleLeft--;
+    /* 用同一套“反向构造”重排剩下的图案：保证洗完后仍然能全部消完 */
+    var kinds = [], k;
+    for (k = 0; k <= ICONS.length; k++) kinds.push(0);
+    for (var i = 0; i < cells.length; i++) if (cells[i]) kinds[cells[i]] += 1;
+    var n = COLS * ROWS;
+    cells = new Array(n);
+    for (i = 0; i < n; i++) cells[i] = 0;
+    var pairsLeft = 0;
+    for (k = 1; k <= ICONS.length; k++) pairsLeft += kinds[k] >> 1;
+    for (var step = 0; step < pairsLeft; step++) {
+      var cand = emptyCells();
+      if (cand.length < 2) break;
+      cand.sort(function (x, y) { return openDirs(x) - openDirs(y); });
+      var a = -1, b = -1;
+      for (var ia = 0; ia < cand.length && b < 0; ia++) {
+        for (var ib = ia + 1; ib < cand.length; ib++) {
+          if (findPath(cand[ia], cand[ib])) { a = cand[ia]; b = cand[ib]; break; }
+        }
+      }
+      if (a < 0) { a = cand[0]; b = cand[1]; }
+      var kind = 0, pool = [];
+      for (k = 1; k <= ICONS.length; k++) if (kinds[k] >= 2) pool.push(k);
+      kind = pool.length ? pool[(rng() * pool.length) | 0] : 1;
+      kinds[kind] -= 2;
+      cells[a] = kind; cells[b] = kind;
+    }
+    select(null);
+    clearHint();
+    paintAll(); paintHud();
+    checkPairExists();
+    return true;
+  }
+  function doHint() {
+    if (over || hintLeft <= 0) return null;
+    beginPlay();
+    var pr = findAnyPair();
+    if (!pr) { hasPair = false; return null; }
+    hintLeft--;
+    clearHint();
+    hintCells = pr.slice();
+    for (var i = 0; i < hintCells.length; i++) paint(hintCells[i]);
+    var myGen = gen;
+    hintTimer = setTimeout(function () { if (myGen === gen) clearHint(); }, 2600);
+    paintHud();
+    return pr;
+  }
+  function setLevel(key) {
+    if (BY_KEY[key]) level = key;
+    newGame();
+    return level;
+  }
+
+  /* ======================= 自适应 ======================= */
+  function fit() {
+    var w = wrapEl.clientWidth - 4;
+    var top = tipEl.getBoundingClientRect().bottom;
+    var h = window.innerHeight - top - 26;
+    if (h < 120) h = 120;
+    var cell = Math.floor(Math.min(w / (COLS + 1.24), h / (ROWS + 1.24)));
+    if (!(cell > 0)) cell = 24;
+    boardEl.style.setProperty('--cell', Math.max(16, cell) + 'px');
+  }
+  window.addEventListener('resize', fit);
+  window.addEventListener('orientationchange', function () { setTimeout(fit, 120); });
+
+  /* ======================= 按钮 ======================= */
+  shuffleBtn.addEventListener('click', function () { doShuffle(); });
+  hintBtn.addEventListener('click', function () { doHint(); });
+  document.getElementById('again').addEventListener('click', function () { restart(); });
+  document.getElementById('ovBtn').addEventListener('click', function () { restart(); });
+  document.querySelector('.bar').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-lv]') : null;
+    if (b) setLevel(b.dataset.lv);
+  });
+
+  /* ======================= 布局哈希（给验收脚本比对种子布局） ======================= */
+  function layoutHash() {
+    var h = 2166136261;
+    h = Math.imul(h ^ COLS, 16777619);
+    h = Math.imul(h ^ ROWS, 16777619);
+    for (var i = 0; i < cells.length; i++) { h ^= cells[i] & 255; h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  /* ======================= 调试 / 验收句柄 ======================= */
+  window.GAME = {
+    slug: 'linkup',
+    state: function () {
+      return {
+        slug: 'linkup', level: level, levelName: BY_KEY[level].name,
+        cols: COLS, rows: ROWS, total: totalPairs(),
+        remaining: remainPairs(), matched: totalPairs() - remainPairs(),
+        over: over, won: won, score: score, combo: combo,
+        timeLeft: Math.round(timeLeft * 10) / 10, timeMax: timeMax,
+        elapsed: Math.round(elapsedMs / 100) / 10,
+        started: started, shuffleLeft: shuffleLeft, hintLeft: hintLeft,
+        sel: sel, hasPair: hasPair,
+        seed: runSeed, seedParam: seedParam, dailySeed: dailySeed, daily: dailyParam,
+        layoutHash: layoutHash()
+      };
+    },
+    restart: function () { return restart(); },
+    seed: function () { return runSeed; },
+    setLevel: function (k) { return setLevel(k); },
+    /* 仅给自测 / 验收用：读布局、查通路、代打 */
+    _api: {
+      grid: function () {
+        var out = [], idOf = {}, seq = 0;
+        for (var r = 0; r < ROWS; r++) {
+          var s = '';
+          for (var c = 0; c < COLS; c++) {
+            var k = cells[idx(r, c)];
+            if (!k) { s += '.'; continue; }
+            if (idOf[k] === undefined) idOf[k] = String.fromCharCode(65 + (seq++ % 26));
+            s += idOf[k];
+          }
+          out.push(s);
+        }
+        return out;
+      },
+      remain: remainPairs,
+      /* 两点之间的通路（拐点表），无解返回 null */
+      link: function (r1, c1, r2, c2) {
+        var p = findPath(idx(r1, c1), idx(r2, c2));
+        return p ? { turns: p.length - 2, points: p } : null;
+      },
+      lastPath: function () { return lastPath; },
+      findPair: function () { var p = findAnyPair(); return p ? [p[0], p[1]] : null; },
+      /* 直接摆一个指定局面（每行一个字符串，'.' 或空格 = 空，其余字符 = 图案），
+         用来构造 0 / 1 / 2 拐点与「无解」的确定性用例 */
+      setGrid: function (rowsIn) {
+        if (!rowsIn || rowsIn.length !== ROWS) return false;
+        for (var r0 = 0; r0 < ROWS; r0++) if (String(rowsIn[r0]).length !== COLS) return false;
+        var map = {}, seq = 0;
+        for (var r = 0; r < ROWS; r++) {
+          var line = String(rowsIn[r]);
+          for (var c = 0; c < COLS; c++) {
+            var ch = line.charAt(c);
+            if (ch === '.' || ch === ' ') { cells[idx(r, c)] = 0; continue; }
+            /* 任意字符按出现顺序映射成真实图案编号 1..8，与真实牌面同一套语义 */
+            if (map[ch] === undefined) map[ch] = (seq++ % ICONS.length) + 1;
+            cells[idx(r, c)] = map[ch];
+          }
+        }
+        over = false; won = false; sel = null; started = true;
+        lastTick = performance.now();
+        clearHint(); clearFx();
+        for (var i = 0; i < cells.length; i++) paint(i);
+        checkPairExists(); paintHud();
+        return true;
+      },
+      /* 自测用：把倒计时改成指定秒数，用来快速验证超时判负 */
+      setTime: function (sec) {
+        timeLeft = Math.max(0, Number(sec) || 0);
+        started = true; lastTick = performance.now(); paintHud();
+        return timeLeft;
+      },
+      click: function (r, c) { return tap(idx(r, c)); },
+      select: function (r, c) { select(cells[idx(r, c)] ? idx(r, c) : null); return sel; },
+      shuffle: function () { return doShuffle(); },
+      hint: function () { return doHint(); },
+      /* 自动把当前这一盘消完（走真实点击路径），用来验证可解性与每日上报 */
+      autoPlay: function (maxSteps) {
+        var limit = maxSteps || (totalPairs() + 10), steps = 0;
+        while (!over && steps < limit) {
+          var pr = findAnyPair();
+          if (!pr) break;
+          if (sel !== null) select(null);
+          tap(pr[0]); tap(pr[1]);
+          steps++;
+        }
+        return { steps: steps, over: over, won: won, remaining: remainPairs(), score: score };
+      }
+    }
+  };
+
+  /* ======================= 启动 ======================= */
+  buildGrid();
+  newGame();
+  requestAnimationFrame(pollPad);
+})();
+</script>
+</body>
+</html>

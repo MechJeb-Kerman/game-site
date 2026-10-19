@@ -1,0 +1,62 @@
+{
+  "name": "趣玩小游戏",
+  "short_name": "趣玩小游戏",
+  "description": "免费在线小游戏，即点即玩，无需下载。自研小游戏合集，支持手柄操作与联机对战。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "orientation": "any",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "categories": [
+    "games",
+    "entertainment"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/apple-touch-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "游戏库",
+      "short_name": "游戏库",
+      "url": "/games",
+      "description": "浏览全部小游戏"
+    },
+    {
+      "name": "每日挑战",
+      "short_name": "挑战",
+      "url": "/daily",
+      "description": "今天的每日挑战"
+    }
+  ]
+}

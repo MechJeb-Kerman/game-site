@@ -147,6 +147,82 @@ function press(keys) {
   return out;
 }
 
+/* 新 10 款游戏（minesweeper…solitaire，2026-10-20 上线）走同一份契约：window.GAME = { slug, state(), restart() }。
+   所以它们共用一套用例模板，只验「页面真能用、且与各游戏规则无关」的那一层：
+     ① 导航响应 200；② 资源没有 4xx/5xx、没有跨域请求；③ GAME.slug / GAME.state / GAME.restart 齐备；
+     ④ state() 返回非空对象；⑤ 有可见的「开始 / 重开 / 再来」按钮就点一下（找不到就跳过）；
+     ⑥ 在主区域真派发一次 pointerdown+pointerup 与一个方向键，交互期间不报错、之后 state() 仍能返回。
+   各游戏的具体玩法断言属于它们自己的专项探针，这里刻意不写（pointId 用 1：没有游戏调 setPointerCapture，
+   合成指针不会撞上 NotFoundError）。 */
+const NEW_GAMES = [
+  ['minesweeper', 1240, 860], ['sudoku', 740, 900], ['sokoban', 880, 820],
+  ['linkup', 1000, 880], ['idiom', 920, 900], ['connect4', 700, 820],
+  ['reversi', 740, 860], ['draughts', 820, 820], ['match3', 920, 860], ['solitaire', 1060, 880]
+];
+// dev server 给 HTML 回 Cache-Control: public, max-age=3600，加一次性查询串免得吃到一小时内的旧页面
+const CB = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+function gameCase(slug, w, h) {
+  return {
+    n: 'game-' + slug, w: w, h: h,
+    u: BASE + '/games/' + slug + '/index.html?_cb=' + CB,
+    js: '(async function(){' +
+        ' function nap(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }' +
+        ' var res = { slug: null, keys: 0, clicked: "", hit: "", changed: false };' +
+        ' var nav = (performance.getEntriesByType("navigation") || [])[0] || {};' +
+        ' res.status = nav.responseStatus;' +
+        ' if (res.status && res.status !== 200) throw new Error("页面响应不是 200：" + res.status);' +
+        ' var ext = [], http = [];' +
+        ' performance.getEntriesByType("resource").forEach(function(e){' +
+        '   var u = new URL(e.url, location.href);' +
+        '   if (u.host !== location.host) ext.push(u.href);' +
+        '   if (e.responseStatus >= 400) http.push(e.responseStatus + " " + u.pathname);' +
+        ' });' +
+        ' if (ext.length) throw new Error("页面请求了外部域名：" + JSON.stringify(ext));' +
+        ' if (http.length) throw new Error("有资源返回 4xx/5xx：" + JSON.stringify(http));' +
+        ' for (var i = 0; i < 40 && !window.GAME; i++) await nap(50);' +
+        ' if (!window.GAME) throw new Error("页面没有定义 window.GAME");' +
+        ' if (window.GAME.slug !== ' + JSON.stringify(slug) + ') throw new Error("GAME.slug 不对：" + window.GAME.slug);' +
+        ' if (typeof window.GAME.state !== "function") throw new Error("GAME.state 不是函数");' +
+        ' if (typeof window.GAME.restart !== "function") throw new Error("GAME.restart 不是函数");' +
+        ' if (!window.GAME.state() || typeof window.GAME.state() !== "object") throw new Error("GAME.state() 没返回对象");' +
+        ' res.slug = window.GAME.slug; res.keys = Object.keys(window.GAME.state()).length;' +
+        ' if (!res.keys) throw new Error("GAME.state() 返回了空对象");' +
+        ' var btn = [].slice.call(document.querySelectorAll("button, .btn, #start, #again")).filter(function(b){' +
+        '   var r = b.getBoundingClientRect();' +
+        '   return r.width > 4 && r.height > 4 && /开始|重开|再来/.test((b.textContent || "").trim()); })[0];' +
+        ' if (btn) { btn.click(); res.clicked = (btn.textContent || "").trim().slice(0, 12); await nap(500); }' +
+        ' var before = JSON.stringify(window.GAME.state());' +
+        ' var best = null, area = 0;' +
+        ' [].slice.call(document.querySelectorAll("canvas, #board, .board, main, .wrap")).forEach(function(e){' +
+        '   var r = e.getBoundingClientRect();' +
+        '   var vw = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0));' +
+        '   var vh = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));' +
+        '   if (vw * vh > area) { area = vw * vh; best = r; } });' +
+        ' var x = Math.round(innerWidth / 2), y = Math.round(innerHeight / 2);' +
+        ' if (best) { x = Math.round(Math.min(innerWidth - 2, Math.max(1, best.left + best.width / 2))); y = Math.round(Math.min(innerHeight - 2, Math.max(1, best.top + best.height / 2))); }' +
+        ' var el = document.elementFromPoint(x, y) || document.body;' +
+        ' var errs = [];' +
+        ' function onErr(e){ errs.push(String((e && (e.message || (e.reason && e.reason.message))) || e)); }' +
+        ' window.addEventListener("error", onErr); window.addEventListener("unhandledrejection", onErr);' +
+        ' var base = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, clientX: x, clientY: y };' +
+        ' el.dispatchEvent(new PointerEvent("pointerdown", Object.assign({ buttons: 1 }, base)));' +
+        ' el.dispatchEvent(new PointerEvent("pointerup", Object.assign({ buttons: 0 }, base)));' +
+        ' document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));' +
+        ' document.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }));' +
+        ' await nap(400);' +
+        ' res.hit = el.tagName.toLowerCase() + "@" + x + "," + y;' +
+        ' var after = window.GAME.state();' +
+        ' res.keysAfter = Object.keys(after || {}).length;' +
+        ' res.changed = JSON.stringify(after) !== before;' +
+        ' window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr);' +
+        ' if (errs.length) throw new Error("交互后页面报错：" + JSON.stringify(errs));' +
+        ' if (!res.keysAfter) throw new Error("交互后 GAME.state() 不再返回对象：" + JSON.stringify(after));' +
+        ' return res; })()'
+  };
+}
+const NEW_GAME_TARGETS = NEW_GAMES.map(function (g) { return gameCase(g[0], g[1], g[2]); });
+
 /* 临时探针服务器：验证 CSP 的 frame-src 真的放行「别的 origin」的页面。
  * 响应故意不带 X-Frame-Options；页面一旦被载入就把 PROBE_OK 抛给父页面 ——
  * 被 CSP 挡掉的 frame 根本不会执行脚本，所以在父页面等不到这条消息就是回归。
@@ -411,6 +487,7 @@ const TARGETS = [
         " if (!document.querySelector('.np-pill')) throw new Error('国际象棋：切到联机模式后没有联机入口');" +
         " return { mode: b.mode(), moves: b.moveCount(), turn: b.turnText(), rect: Math.round(R.width) + 'x' + Math.round(R.height) }; })()"
   },
+  ...NEW_GAME_TARGETS,
   {
     /* 守住线上那个 bug：投稿可以填外站地址，父页面 CSP 的 frame-src 必须放行 http(s)，
        否则外站游戏框整块变成「该内容被屏蔽了」。探针 = 另一个 origin（127.0.0.1:随机端口）。 */

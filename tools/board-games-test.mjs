@@ -1,4 +1,4 @@
-// 三款棋类游戏（五子棋 / 中国象棋 / 国际象棋）的浏览器端验收：
+// 六款棋类游戏（五子棋 / 中国象棋 / 国际象棋 / 四子棋 / 黑白棋 / 国际跳棋）的浏览器端验收：
 //   1) 人机模式：真的点棋盘落子，AI 会应一手（用页面暴露的 window.BOARD 读数）；
 //   2) 联机模式：开两个标签页，A 开房间、B 用 ?room= 加入，A 落子后 B 的棋盘要跟着变。
 // 前置条件：站点已在 BASE（默认 http://127.0.0.1:3000）跑起来。
@@ -31,7 +31,10 @@ fs.mkdirSync(OUT, { recursive: true });
 const GAMES = [
   { slug: 'gomoku', w: 640, h: 720, label: '五子棋' },
   { slug: 'xiangqi', w: 780, h: 720, label: '中国象棋' },
-  { slug: 'chess', w: 780, h: 720, label: '国际象棋' }
+  { slug: 'chess', w: 780, h: 720, label: '国际象棋' },
+  { slug: 'connect4', w: 640, h: 760, label: '四子棋' },
+  { slug: 'reversi', w: 640, h: 760, label: '黑白棋' },
+  { slug: 'draughts', w: 640, h: 760, label: '国际跳棋' }
 ];
 
 let pass = 0, fail = 0;
@@ -47,6 +50,8 @@ const chrome = spawn(CHROME, [
   '--disable-extensions', '--no-first-run', '--mute-audio',
   '--remote-debugging-port=' + PORT, '--user-data-dir=' + ud, 'about:blank'
 ], { stdio: 'ignore' });
+/* unref：别让子进程句柄吊住事件循环——否则跑完 main 后 node 永不退出，下面的 exit 钩子也就永不触发 */
+chrome.unref();
 process.on('exit', function () { try { chrome.kill(); } catch (e) {} });
 
 async function ready() {
@@ -311,6 +316,9 @@ async function main() {
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   if (fail) process.exitCode = 1;
+  /* 收尾：主动关掉自己 spawn 的无头浏览器（只杀自己的 PID），把 CDP 端口让给下一次运行 */
+  try { chrome.kill(); } catch (e) {}
+  await sleep(500);
 }
 
 main().catch(function (e) { console.error('测试脚本自身出错：', e); process.exit(2); });

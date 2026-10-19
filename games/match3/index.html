@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>宝石三消 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+  html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+  body{display:flex;align-items:center;justify-content:center;padding:10px;
+    background:radial-gradient(circle at 50% 0%,#0b2a4a,#05080f 72%);color:#dbf1ff;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;max-width:min(100%,900px);display:flex;flex-direction:column;gap:8px}
+  .head{display:flex;align-items:center;gap:10px}
+  .title{margin:0;font-size:clamp(20px,5.2vw,30px);font-weight:800;letter-spacing:1px;
+    background:linear-gradient(120deg,#67e8f9,#a78bfa 55%,#f472b6);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .modes{margin-left:auto;display:flex;gap:6px}
+  .mbtn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#bfe9ff;
+    border-radius:10px;padding:8px 12px;font:inherit;font-size:13px;cursor:pointer;
+    min-height:40px;touch-action:manipulation}
+  .mbtn.on{background:linear-gradient(135deg,#06b6d4,#6366f1);border-color:transparent;color:#fff;font-weight:700}
+  .hud{display:flex;gap:6px;flex-wrap:wrap;font-size:12px;color:#7dd3fc}
+  .stat{background:rgba(6,182,212,.12);border:1px solid rgba(6,182,212,.3);
+    padding:5px 10px;border-radius:10px;white-space:nowrap}
+  .stat b{color:#fff;margin-left:4px;font-size:14px;font-variant-numeric:tabular-nums}
+  .stat.hot{background:rgba(250,204,21,.18);border-color:rgba(250,204,21,.6);color:#fde68a}
+  .stat.hot b{color:#fde047}
+  .stat.warn{background:rgba(244,63,94,.18);border-color:rgba(244,63,94,.6);color:#fda4af}
+  .stat.warn b{color:#fb7185}
+  .status{text-align:center;font-size:13px;color:#a5e9ff;min-height:20px;font-weight:600}
+  .board{position:relative;width:min(100%,calc(100vh - 220px));align-self:center;aspect-ratio:1;
+    --gap:5px;padding:var(--gap);border-radius:18px;container-type:inline-size;
+    background:linear-gradient(160deg,rgba(6,182,212,.16),rgba(99,102,241,.07));
+    border:1px solid rgba(6,182,212,.3);box-shadow:0 14px 38px rgba(0,0,0,.5);
+    touch-action:none;overscroll-behavior:none}
+  .grid{position:absolute;inset:var(--gap);display:grid;gap:var(--gap);
+    grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr)}
+  .cell{border-radius:24%;background:rgba(255,255,255,.035);box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+  .cell.sel{background:rgba(34,211,238,.22);box-shadow:inset 0 0 0 2px rgba(34,211,238,.95),0 0 16px rgba(34,211,238,.5)}
+  .cell.cur{box-shadow:inset 0 0 0 2px rgba(250,204,21,.85),0 0 14px rgba(250,204,21,.4)}
+  .gems{position:absolute;inset:var(--gap)}
+  .gem{position:absolute;left:0;top:0;width:calc((100% - 7*var(--gap))/8);height:calc((100% - 7*var(--gap))/8);
+    display:flex;align-items:center;justify-content:center;border-radius:24%;cursor:pointer;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+    transform:translate(calc(var(--c)*(100% + var(--gap))),calc(var(--r)*(100% + var(--gap))));
+    transition:transform .19s cubic-bezier(.25,.9,.35,1.15),opacity .14s linear;
+    will-change:transform;touch-action:none}
+  .gem.nofx{transition:none!important}
+  .gem>i{font-style:normal;line-height:1;font-size:min(7.4vw,42px);font-size:min(7.4cqw,42px);
+    font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif;
+    filter:drop-shadow(0 2px 3px rgba(0,0,0,.55))}
+  .gem.t0{background:rgba(56,189,248,.18);border-color:rgba(56,189,248,.5);box-shadow:0 0 10px rgba(56,189,248,.25) inset}
+  .gem.t1{background:rgba(251,113,133,.18);border-color:rgba(251,113,133,.5);box-shadow:0 0 10px rgba(251,113,133,.25) inset}
+  .gem.t2{background:rgba(74,222,128,.18);border-color:rgba(74,222,128,.5);box-shadow:0 0 10px rgba(74,222,128,.25) inset}
+  .gem.t3{background:rgba(251,191,36,.18);border-color:rgba(251,191,36,.5);box-shadow:0 0 10px rgba(251,191,36,.25) inset}
+  .gem.t4{background:rgba(192,132,252,.18);border-color:rgba(192,132,252,.5);box-shadow:0 0 10px rgba(192,132,252,.25) inset}
+  .gem.t5{background:rgba(226,232,240,.16);border-color:rgba(226,232,240,.45);box-shadow:0 0 10px rgba(226,232,240,.22) inset}
+  .gem.sel{outline:2px solid rgba(34,211,238,.95);outline-offset:-2px;z-index:3}
+  .gem.sel>i{animation:selp .7s ease-in-out infinite alternate}
+  @keyframes selp{from{transform:scale(1)}to{transform:scale(1.14)}}
+  .gem.boom{opacity:0;z-index:2}
+  .gem.boom>i{animation:boom .15s ease-in both}
+  @keyframes boom{from{transform:scale(1) rotate(0)}to{transform:scale(1.5) rotate(18deg);opacity:.2}}
+  .gem.in>i{animation:gin .26s ease-out both;animation-delay:calc((var(--r) + var(--c))*16ms)}
+  @keyframes gin{from{transform:scale(.2);opacity:.2}to{transform:scale(1);opacity:1}}
+  .board.shake{animation:shk .3s ease}
+  .board.nope{animation:shk .2s ease}
+  @keyframes shk{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+  .pts{position:absolute;left:0;top:0;z-index:6;width:calc((100% - 7*var(--gap))/8);height:calc((100% - 7*var(--gap))/8);
+    display:flex;align-items:center;justify-content:center;pointer-events:none;white-space:nowrap;
+    font-weight:800;font-size:min(5vw,24px);color:#fde68a;
+    text-shadow:0 0 10px rgba(250,204,21,.95),0 2px 6px rgba(0,0,0,.7);
+    transform:translate(calc(var(--c)*(100% + var(--gap))),calc(var(--r)*(100% + var(--gap))));
+    animation:rise .8s ease-out both}
+  @keyframes rise{0%{opacity:0;margin-top:8px}20%{opacity:1}100%{opacity:0;margin-top:-28px}}
+  .banner{position:absolute;left:-20%;right:-20%;top:38%;z-index:6;text-align:center;pointer-events:none;
+    font-weight:900;font-size:min(9cqw,40px);color:#fff;letter-spacing:1px;
+    text-shadow:0 0 16px rgba(34,211,238,.95),0 0 34px rgba(99,102,241,.8);
+    animation:bpop .85s ease-out both}
+  @keyframes bpop{0%{opacity:0;transform:scale(.5)}30%{opacity:1;transform:scale(1.08)}70%{opacity:1}100%{opacity:0;transform:scale(1.24)}}
+  .overlay{position:absolute;inset:0;border-radius:18px;background:rgba(5,12,22,.9);z-index:9;
+    display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;text-align:center}
+  .overlay.on{display:flex}
+  .overlay h2{margin:0;font-size:clamp(22px,6vw,30px);color:#fff}
+  .overlay p{margin:0;font-size:13px;color:#a5e9ff;line-height:1.7}
+  .foot{display:flex;gap:8px}
+  .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#dbf8ff;
+    border-radius:11px;padding:11px;cursor:pointer;font:inherit;font-size:14px;min-height:44px;
+    touch-action:manipulation}
+  .btn.primary{background:linear-gradient(135deg,#06b6d4,#6366f1);border-color:transparent;color:#fff;font-weight:700}
+  .btn:active,.btn.pressed{transform:scale(.98)}
+  .btn[hidden]{display:none}
+  @media (max-width:520px){.board{width:min(100%,calc(100vh - 236px))}.hud{font-size:11.5px}
+    .stat{padding:4px 8px}.stat b{font-size:13px}}
+  @media (max-height:560px){.board{width:min(100%,calc(100vh - 190px))}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1 class="title">宝石三消</h1>
+    <div class="modes" role="group" aria-label="游戏模式">
+      <button class="mbtn on" data-mode="timed" type="button">60 秒</button>
+      <button class="mbtn" data-mode="endless" type="button">无限</button>
+    </div>
+  </div>
+  <div class="hud">
+    <div class="stat">分数<b id="score">0</b></div>
+    <div class="stat">最高<b id="best">0</b></div>
+    <div class="stat" id="comboStat">连击<b id="combo">×1</b></div>
+    <div class="stat">消除<b id="cleared">0</b></div>
+    <div class="stat" id="timeStat">时间<b id="time">60</b></div>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite">点两格交换，或按住拖拽 / 滑动</div>
+  <div class="board" id="board">
+    <div class="grid" id="grid" aria-hidden="true"></div>
+    <div class="gems" id="gems" role="grid" aria-label="8 行 8 列宝石棋盘"></div>
+    <div class="overlay" id="overlay" aria-hidden="true">
+      <h2 id="ovTitle">时间到</h2>
+      <p id="ovText"></p>
+      <button class="btn primary" id="ovBtn" type="button">再来一局</button>
+    </div>
+  </div>
+  <div class="foot">
+    <button class="btn" id="endBtn" type="button" hidden>结束本局</button>
+    <button class="btn primary" id="restart" type="button">重新开始</button>
+  </div>
+</div>
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------ 配置 */
+  var N = 8;          /* 棋盘 8x8 */
+  var KIND = 6;       /* 6 种宝石 */
+  var BASE = 10;      /* 每消一颗的基础分 */
+  var TIMED = 60;     /* 限时模式秒数 */
+  var BEST_KEY = 'match3:best';
+
+  var GEMS = [
+    { ch: '💎', name: '蓝宝石' },
+    { ch: '🔥', name: '红宝石' },
+    { ch: '🍀', name: '翡翠' },
+    { ch: '⚡', name: '琥珀' },
+    { ch: '🌸', name: '紫晶' },
+    { ch: '⭐', name: '星辰' }
+  ];
+
+  /* --------------------------------------------------------------- DOM 句柄 */
+  var boardEl = document.getElementById('board');
+  var gridEl = document.getElementById('grid');
+  var gemsEl = document.getElementById('gems');
+  var scoreEl = document.getElementById('score');
+  var bestEl = document.getElementById('best');
+  var comboEl = document.getElementById('combo');
+  var comboStat = document.getElementById('comboStat');
+  var clearedEl = document.getElementById('cleared');
+  var timeStat = document.getElementById('timeStat');
+  var timeEl = document.getElementById('time');
+  var statusEl = document.getElementById('status');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovText = document.getElementById('ovText');
+  var ovBtn = document.getElementById('ovBtn');
+  var endBtn = document.getElementById('endBtn');
+  var restartBtn = document.getElementById('restart');
+  var modeBtns = Array.prototype.slice.call(document.querySelectorAll('.mbtn'));
+  var cells = [];     /* 背景格子，用于选中高亮 */
+
+  /* ----------------------------------------------------------------- 状态量 */
+  var grid = [];              /* grid[r][c] = gem | null */
+  var idc = 0;
+  var score = 0, best = 0, cleared = 0, moves = 0;
+  var combo = 0, maxCombo = 0, lastCombo = 0, lastGain = 0, lastBase = 0, lastSteps = [];
+  var mode = 'timed', timeLeft = TIMED, over = false, busy = false, reshuffles = 0;
+  var seed = 0, rng = null, fixedSeed = false, daily = null, dailySent = false, nomove = false;
+  var sel = null, cur = { r: 3, c: 3 }, kbd = false, timeUp = false;
+
+  /* ------------------------------------------------------------------- 工具 */
+  function mulberry32(a) {
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  }
+  function ri(k) { return Math.floor(rng() * k) % k; }
+  function adjacent(r1, c1, r2, c2) { return Math.abs(r1 - r2) + Math.abs(c1 - c2) === 1; }
+  function store(v) {
+    try { if (v === undefined) return localStorage.getItem(BEST_KEY); localStorage.setItem(BEST_KEY, String(v)); }
+    catch (e) { return null; }
+  }
+  function readBest() { var b = parseInt(store(), 10); return isNaN(b) ? 0 : b; }
+  function gapPx() {
+    var g = parseFloat(getComputedStyle(boardEl).getPropertyValue('--gap'));
+    return isNaN(g) ? 5 : g;
+  }
+  function stride() {
+    var r = gemsEl.getBoundingClientRect();
+    var g = gapPx();
+    return { x: r.left, y: r.top, s: (r.width - (N - 1) * g) / N, g: g };
+  }
+  function showToast(text, keep) {
+    statusEl.textContent = text;
+    if (keep) return;
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () {
+      statusEl.textContent = mode === 'timed' ? '点两格交换，或按住拖拽 / 滑动' : '无限模式：尽情连消，随时可结束本局';
+    }, 2200);
+  }
+
+  /* ------------------------------------------------------------- 棋盘初始化 */
+  function buildCells() {
+    for (var i = 0; i < N * N; i++) {
+      var c = document.createElement('div');
+      c.className = 'cell';
+      c.dataset.i = String(i);
+      gridEl.appendChild(c);
+      cells.push(c);
+    }
+  }
+  function cellEl(r, c) { return cells[r * N + c]; }
+
+  function makeGem(r, c, t, startR) {
+    var g = { id: idc++, t: t, r: r, c: c };
+    var el = document.createElement('div');
+    el.className = 'gem t' + t + (startR === null ? ' in' : ' nofx');
+    el.setAttribute('role', 'gridcell');
+    el.dataset.r = String(r);
+    el.dataset.c = String(c);
+    el.style.setProperty('--r', String(startR === null ? r : startR));
+    el.style.setProperty('--c', String(c));
+    var inner = document.createElement('i');
+    inner.textContent = GEMS[t].ch;
+    el.appendChild(inner);
+    el.setAttribute('aria-label', '第' + (r + 1) + '行第' + (c + 1) + '列 ' + GEMS[t].name);
+    gemsEl.appendChild(el);
+    g.el = el;
+    return g;
+  }
+  function place(g) { grid[g.r][g.c] = g; }
+
+  /* 选一个不会和左边两格 / 上边两格同类的宝石 */
+  function pickType(r, c) {
+    for (var k = 0; k < 40; k++) {
+      var t = ri(KIND);
+      var l1 = c >= 1 ? grid[r][c - 1] : null;
+      var l2 = c >= 2 ? grid[r][c - 2] : null;
+      if (l1 && l2 && l1.t === t && l2.t === t) continue;
+      var u1 = r >= 1 ? grid[r - 1][c] : null;
+      var u2 = r >= 2 ? grid[r - 2][c] : null;
+      if (u1 && u2 && u1.t === t && u2.t === t) continue;
+      return t;
+    }
+    return ri(KIND);
+  }
+
+  /* 发牌：保证初始无三连；除非调试标记 ?nomove=1，否则还要保证有可行交换 */
+  function deal() {
+    var tries = 0, ok = false, first = true;
+    while (!ok && tries++ < 80) {
+      clearBoard();
+      for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+        /* ?nomove=1 是自测开关：首轮铺一块「无三连且无可行交换」的棋盘，用来验证自动重排 */
+        var t = (nomove && first) ? (2 * r + c) % KIND : pickType(r, c);
+        place(makeGem(r, c, t, null));
+      }
+      ok = nomove ? true : hasValidMove();
+      first = false;
+    }
+    paint();
+  }
+  function clearBoard() {
+    grid = [];
+    for (var r = 0; r < N; r++) { var row = []; for (var c = 0; c < N; c++) row.push(null); grid.push(row); }
+    gemsEl.innerHTML = '';
+  }
+
+  function paint() {
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      var g = grid[r][c];
+      if (!g) continue;
+      g.el.style.setProperty('--r', String(g.r));
+      g.el.style.setProperty('--c', String(g.c));
+      g.el.dataset.r = String(g.r);
+      g.el.dataset.c = String(g.c);
+      g.el.setAttribute('aria-label', '第' + (g.r + 1) + '行第' + (g.c + 1) + '列 ' + GEMS[g.t].name);
+    }
+    paintSel();
+  }
+  function paintSel() {
+    for (var i = 0; i < cells.length; i++) {
+      cells[i].classList.remove('sel', 'cur');
+    }
+    if (sel) cellEl(sel.r, sel.c).classList.add('sel');
+    if (kbd) cellEl(cur.r, cur.c).classList.add('cur');
+    var kids = gemsEl.children;
+    for (var k = 0; k < kids.length; k++) if (kids[k].classList.contains('gem')) kids[k].classList.remove('sel');
+    if (sel) {
+      var g = grid[sel.r][sel.c];
+      if (g) g.el.classList.add('sel');
+    }
+  }
+
+  /* --------------------------------------------------------------- 匹配判定 */
+  function sameType(r1, c1, r2, c2) {
+    var a = (r1 >= 0 && r1 < N && c1 >= 0 && c1 < N) ? grid[r1][c1] : null;
+    var b = (r2 >= 0 && r2 < N && c2 >= 0 && c2 < N) ? grid[r2][c2] : null;
+    return !!(a && b && a.t === b.t);
+  }
+  function matchAt(r, c) {
+    if (!grid[r][c]) return false;
+    var t = grid[r][c].t, i, n = 1;
+    for (i = c - 1; i >= 0 && sameType(r, i, r, c); i--) n++;
+    for (i = c + 1; i < N && sameType(r, i, r, c); i++) n++;
+    if (n >= 3) return true;
+    n = 1;
+    for (i = r - 1; i >= 0 && sameType(i, c, r, c); i--) n++;
+    for (i = r + 1; i < N && sameType(i, c, r, c); i++) n++;
+    return n >= 3;
+  }
+  function findMatches() {
+    var hit = [], seen = {}, r, c, i, n;
+    for (r = 0; r < N; r++) {
+      c = 0;
+      while (c < N) {
+        var t = grid[r][c] && grid[r][c].t;
+        if (t === undefined || t === null) { c++; continue; }
+        n = 1;
+        while (c + n < N && grid[r][c + n] && grid[r][c + n].t === t) n++;
+        if (n >= 3) for (i = 0; i < n; i++) { var k1 = r + ',' + (c + i); if (!seen[k1]) { seen[k1] = 1; hit.push({ r: r, c: c + i }); } }
+        c += n;
+      }
+    }
+    for (c = 0; c < N; c++) {
+      r = 0;
+      while (r < N) {
+        var t2 = grid[r][c] && grid[r][c].t;
+        if (t2 === undefined || t2 === null) { r++; continue; }
+        n = 1;
+        while (r + n < N && grid[r + n][c] && grid[r + n][c].t === t2) n++;
+        if (n >= 3) for (i = 0; i < n; i++) { var k2 = (r + i) + ',' + c; if (!seen[k2]) { seen[k2] = 1; hit.push({ r: r + i, c: c }); } }
+        r += n;
+      }
+    }
+    return hit;
+  }
+  function swapCells(r1, c1, r2, c2) {
+    var a = grid[r1][c1], b = grid[r2][c2];
+    grid[r1][c1] = b; grid[r2][c2] = a;
+    if (a) { a.r = r2; a.c = c2; }
+    if (b) { b.r = r1; b.c = c1; }
+  }
+  /* 是否存在至少一步能消的交换 */
+  function hasValidMove() {
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      if (c + 1 < N && swapMakes(r, c, r, c + 1)) return true;
+      if (r + 1 < N && swapMakes(r, c, r + 1, c)) return true;
+    }
+    return false;
+  }
+  function swapMakes(r1, c1, r2, c2) {
+    swapCells(r1, c1, r2, c2);
+    var ok = matchAt(r1, c1) || matchAt(r2, c2);
+    swapCells(r1, c1, r2, c2);
+    return ok;
+  }
+
+  /* ----------------------------------------------------------------- 动画层 */
+  function popup(r, c, text) {
+    var el = document.createElement('div');
+    el.className = 'pts';
+    el.textContent = text;
+    el.style.setProperty('--r', String(r));
+    el.style.setProperty('--c', String(c));
+    gemsEl.appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 820);
+  }
+  function banner(text) {
+    var el = document.createElement('div');
+    el.className = 'banner';
+    el.textContent = text;
+    gemsEl.appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 900);
+  }
+  function dropAndFill() {
+    var added = [], c, r;
+    for (c = 0; c < N; c++) {
+      var write = N - 1;
+      for (r = N - 1; r >= 0; r--) {
+        var g = grid[r][c];
+        if (!g) continue;
+        if (r !== write) { grid[write][c] = g; grid[r][c] = null; g.r = write; }
+        write--;
+      }
+      var empties = write + 1;
+      for (r = write; r >= 0; r--) {
+        var ng = makeGem(r, c, ri(KIND), r - empties);
+        place(ng);
+        added.push(ng);
+      }
+    }
+    return added;
+  }
+  function settle(added) {
+    if (!added.length) return;
+    void gemsEl.offsetHeight;
+    for (var i = 0; i < added.length; i++) {
+      var g = added[i];
+      g.el.classList.remove('nofx');
+      g.el.style.setProperty('--r', String(g.r));
+    }
+    paint();
+  }
+
+  /* ------------------------------------------------------------ 消除主循环 */
+  function resolve() {
+    busy = true;
+    combo = 0;
+    step();
+  }
+  function step() {
+    var m = findMatches();
+    if (!m.length) return finish();
+    combo++;
+    if (combo > maxCombo) maxCombo = combo;
+    var base = m.length * BASE;
+    var gain = base * combo;
+    score += gain; cleared += m.length;
+    lastCombo = combo; lastBase += base; lastGain += gain;
+    lastSteps.push({ n: m.length, combo: combo, gain: gain });
+    var anchor = m[Math.floor(m.length / 2)];
+    popup(anchor.r, anchor.c, '+' + gain + (combo > 1 ? ' ×' + combo : ''));
+    if (combo > 1) banner('COMBO ×' + combo);
+    updateHud();
+    var dead = [];
+    for (var i = 0; i < m.length; i++) {
+      var g = grid[m[i].r][m[i].c];
+      if (g && !g.dead) { g.dead = true; g.el.classList.add('boom'); dead.push(g); grid[g.r][g.c] = null; }
+    }
+    setTimeout(function () {
+      for (var k = 0; k < dead.length; k++) if (dead[k].el.parentNode) dead[k].el.parentNode.removeChild(dead[k].el);
+      var added = dropAndFill();
+      settle(added);
+      paint();
+      setTimeout(step, 205);
+    }, 150);
+  }
+  function finish() {
+    combo = 0;
+    updateHud();
+    busy = false;
+    if (over) return;
+    if (mode === 'timed' && (timeUp || timeLeft <= 0)) return endGame('time');
+    if (!hasValidMove()) reshuffle();
+  }
+
+  /* ------------------------------------------------------------ 自动重排 */
+  function reshuffle() {
+    reshuffles++;
+    busy = true;
+    showToast('没有可行交换，自动重排…', true);
+    boardEl.classList.add('shake');
+    setTimeout(function () {
+      var ok = false, guard = 0;
+      while (!ok && guard++ < 400) {
+        var r, c;
+        for (r = 0; r < N; r++) for (c = 0; c < N; c++) {
+          var g = grid[r][c];
+          if (!g) continue;
+          var t = pickType(r, c);
+          g.t = t;
+          g.el.className = 'gem t' + t;
+          g.el.firstChild.textContent = GEMS[t].ch;
+        }
+        ok = hasValidMove() && findMatches().length === 0;
+      }
+      paint();
+      boardEl.classList.remove('shake');
+      busy = false;
+      showToast('重排完成，继续加油！');
+      if (over) return;
+    }, 280);
+  }
+
+  /* -------------------------------------------------------------- 交换入口 */
+  function trySwap(r1, c1, r2, c2) {
+    if (busy || over) return false;
+    if (!grid[r1][c1] || !grid[r2][c2] || !adjacent(r1, c1, r2, c2)) return false;
+    clearSel();
+    busy = true;
+    moves++;
+    lastCombo = 0; lastBase = 0; lastGain = 0; lastSteps = [];
+    swapCells(r1, c1, r2, c2);
+    paint();
+    setTimeout(function () {
+      if (findMatches().length) { resolve(); }
+      else {
+        swapCells(r1, c1, r2, c2);      /* 不成三连：动画弹回原位 */
+        paint();
+        showToast('这样换不成三连，换个方向试试');
+        boardEl.classList.add('nope');
+        setTimeout(function () { boardEl.classList.remove('nope'); busy = false; }, 210);
+      }
+    }, 195);
+    return true;
+  }
+
+  /* ------------------------------------------------------------ 选择与点按 */
+  function clearSel() {
+    sel = null;
+    paintSel();
+  }
+  function tapCell(r, c) {
+    if (busy || over) return;
+    if (sel && sel.r === r && sel.c === c) { clearSel(); return; }
+    if (sel && adjacent(sel.r, sel.c, r, c)) { var s = sel; clearSel(); trySwap(s.r, s.c, r, c); return; }
+    sel = { r: r, c: c };
+    paintSel();
+  }
+  function cellAt(clientX, clientY) {
+    var st = stride();
+    var step = st.s + st.g;
+    var c = Math.floor((clientX - st.x) / step);
+    var r = Math.floor((clientY - st.y) / step);
+    if (r < 0 || r >= N || c < 0 || c >= N) return null;
+    return { r: r, c: c };
+  }
+  function dirTo(r, c, dx, dy) {
+    if (Math.abs(dx) >= Math.abs(dy)) return { r: r, c: c + (dx > 0 ? 1 : -1) };
+    return { r: r + (dy > 0 ? 1 : -1), c: c };
+  }
+
+  var drag = null;
+  function onDown(x, y) {
+    if (busy || over) return;
+    var p = cellAt(x, y);
+    if (!p) return;
+    drag = { r: p.r, c: p.c, x: x, y: y, done: false };
+  }
+  function onMove(x, y) {
+    if (!drag || drag.done) return;
+    var st = stride();
+    var dx = x - drag.x, dy = y - drag.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < Math.max(14, st.s * 0.34)) return;
+    drag.done = true;
+    var q = dirTo(drag.r, drag.c, dx, dy);
+    if (q.r < 0 || q.r >= N || q.c < 0 || q.c >= N) return;
+    trySwap(drag.r, drag.c, q.r, q.c);
+  }
+  function onUp(x, y) {
+    var d = drag;
+    drag = null;
+    if (!d || d.done) return;
+    var p = cellAt(x, y);
+    /* 短距离滑动到相邻格：也算一次交换尝试 */
+    if (p && !(p.r === d.r && p.c === d.c) && adjacent(d.r, d.c, p.r, p.c)) {
+      trySwap(d.r, d.c, p.r, p.c);
+      return;
+    }
+    tapCell(d.r, d.c);
+  }
+
+  if (window.PointerEvent) {
+    gemsEl.addEventListener('pointerdown', function (e) {
+      kbd = false;
+      onDown(e.clientX, e.clientY);
+    });
+    window.addEventListener('pointermove', function (e) { onMove(e.clientX, e.clientY); }, { passive: true });
+    window.addEventListener('pointerup', function (e) { onUp(e.clientX, e.clientY); });
+    window.addEventListener('pointercancel', function () { drag = null; });
+  } else {
+    /* 老浏览器兜底：触摸事件 */
+    gemsEl.addEventListener('touchstart', function (e) {
+      kbd = false;
+      if (e.touches.length !== 1) return;
+      onDown(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+    gemsEl.addEventListener('touchmove', function (e) {
+      e.preventDefault();
+      if (e.touches.length !== 1) return;
+      onMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+    gemsEl.addEventListener('touchend', function (e) {
+      var t = e.changedTouches[0];
+      onUp(t.clientX, t.clientY);
+    }, { passive: true });
+    gemsEl.addEventListener('mousedown', function (e) { kbd = false; onDown(e.clientX, e.clientY); });
+    window.addEventListener('mousemove', function (e) { onMove(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', function (e) { onUp(e.clientX, e.clientY); });
+  }
+
+  /* 键盘操作：方向键移动光标，空格 / 回车选中或与相邻格交换 */
+  document.addEventListener('keydown', function (e) {
+    var k = e.key, handled = true;
+    if (k === 'ArrowUp' || k === 'w' || k === 'W') { cur.r = Math.max(0, cur.r - 1); kbd = true; }
+    else if (k === 'ArrowDown' || k === 's' || k === 'S') { cur.r = Math.min(N - 1, cur.r + 1); kbd = true; }
+    else if (k === 'ArrowLeft' || k === 'a' || k === 'A') { cur.c = Math.max(0, cur.c - 1); kbd = true; }
+    else if (k === 'ArrowRight' || k === 'd' || k === 'D') { cur.c = Math.min(N - 1, cur.c + 1); kbd = true; }
+    else if (k === ' ' || k === 'Enter') { kbd = true; tapCell(cur.r, cur.c); }
+    else if (k === 'r' || k === 'R') { newGame(); }
+    else handled = false;
+    if (handled) { e.preventDefault(); paintSel(); }
+  });
+
+  /* -------------------------------------------------------------- HUD 刷新 */
+  function updateHud() {
+    scoreEl.textContent = String(score);
+    var b = Math.max(best, score);
+    bestEl.textContent = String(b);
+    comboEl.textContent = '×' + Math.max(1, combo);
+    comboStat.classList.toggle('hot', combo >= 2);
+    clearedEl.textContent = String(cleared);
+    if (mode === 'timed') {
+      timeEl.textContent = String(Math.ceil(Math.max(0, timeLeft)));
+      timeStat.classList.toggle('warn', timeLeft <= 10 && !over);
+      timeStat.hidden = false;
+    } else {
+      timeEl.textContent = '∞';
+      timeStat.classList.remove('warn');
+      timeStat.hidden = false;
+    }
+  }
+
+  /* ---------------------------------------------------------------- 计时器 */
+  var lastTick = Date.now();
+  setInterval(function () {
+    var now = Date.now();
+    var dt = (now - lastTick) / 1000;
+    lastTick = now;
+    if (over || mode !== 'timed') return;
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0; timeUp = true;
+      updateHud();
+      if (!busy) endGame('time');
+      return;
+    }
+    updateHud();
+  }, 200);
+
+  /* ------------------------------------------------------------ 开局 / 结束 */
+  function endGame(reason) {
+    if (over) return;
+    over = true;
+    busy = true;
+    clearSel();
+    if (score > best) { best = score; store(best); }
+    updateHud();
+    ovTitle.textContent = reason === 'time' ? '⏰ 时间到！' : '本局结束';
+    var txt = '得分 ' + score + ' · 消除 ' + cleared + ' 颗 · 最高连击 ×' + Math.max(1, maxCombo) +
+      ' · ' + (mode === 'timed' ? '限时 60 秒' : '无限模式');
+    if (score > 0 && score >= best) txt += '\n🏆 新纪录！';
+    ovText.textContent = txt;
+    ovBtn.textContent = '再来一局';
+    overlay.classList.add('on');
+    overlay.setAttribute('aria-hidden', 'false');
+    if (daily && !dailySent) {
+      dailySent = true;
+      try {
+        window.parent.postMessage({ type: 'gs:daily-done', game: 'match3', date: daily, score: score }, '*');
+      } catch (e) {}
+    }
+  }
+
+  function newGame() {
+    if (!fixedSeed) seed = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+    rng = mulberry32(seed);
+    idc = 0; score = 0; cleared = 0; moves = 0;
+    combo = 0; maxCombo = 0; lastCombo = 0; lastBase = 0; lastGain = 0; lastSteps = [];
+    over = false; busy = false; timeUp = false; reshuffles = 0;
+    sel = null; cur = { r: 3, c: 3 }; kbd = false; drag = null;
+    dailySent = false;
+    timeLeft = TIMED;
+    best = readBest();
+    overlay.classList.remove('on');
+    overlay.setAttribute('aria-hidden', 'true');
+    endBtn.hidden = mode !== 'endless';
+    for (var i = 0; i < modeBtns.length; i++) modeBtns[i].classList.toggle('on', modeBtns[i].dataset.mode === mode);
+    deal();
+    updateHud();
+    showToast(mode === 'timed' ? '点两格交换，或按住拖拽 / 滑动' : '无限模式：尽情连消，随时可结束本局', true);
+    if (!hasValidMove()) reshuffle();
+  }
+
+  /* ----------------------------------------------------------------- 事件绑 */
+  ovBtn.addEventListener('click', function () { newGame(); });
+  restartBtn.addEventListener('click', function () { newGame(); });
+  endBtn.addEventListener('click', function () { endGame('manual'); });
+  modeBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      mode = b.dataset.mode;
+      newGame();
+    });
+  });
+
+  /* --------------------------------------------------------- URL 参数与种子 */
+  var qs = new URLSearchParams(location.search);
+  var qSeed = qs.get('seed');
+  daily = qs.get('daily');
+  nomove = qs.get('nomove') === '1';
+  if (daily) { seed = hashStr('match3:' + daily); fixedSeed = true; }
+  else if (qSeed !== null && qSeed !== '' && isFinite(Number(qSeed))) {
+    seed = Math.abs(Math.floor(Number(qSeed))) >>> 0;
+    fixedSeed = true;
+  }
+
+  buildCells();
+  newGame();
+
+  /* ------------------------------------------------------------- 调试句柄 */
+  window.GAME = {
+    slug: 'match3',
+    state: function () {
+      var b = [], r, c;
+      for (r = 0; r < N; r++) { var row = []; for (c = 0; c < N; c++) row.push(grid[r][c] ? grid[r][c].t : -1); b.push(row); }
+      return {
+        over: over, score: score,
+        mode: mode, timeLeft: Math.round(timeLeft * 10) / 10,
+        moves: moves, cleared: cleared, combo: combo, maxCombo: maxCombo,
+        lastCombo: lastCombo, lastBase: lastBase, lastGain: lastGain, lastSteps: lastSteps,
+        busy: busy, best: best, reshuffles: reshuffles,
+        hasMove: hasValidMove(), seed: seed,
+        selected: sel ? { r: sel.r, c: sel.c } : null,
+        board: b
+      };
+    },
+    restart: function () { newGame(); },
+    seed: function () { return seed; },
+    /* 自测辅助：返回格子中心的视口坐标（页面自身也要用来做触点换算） */
+    cellRect: function (r, c) {
+      var st = stride();
+      return { x: st.x + c * (st.s + st.g), y: st.y + r * (st.s + st.g), w: st.s, h: st.s };
+    }
+  };
+})();
+</script>
+</body>
+</html>

@@ -237,5 +237,215 @@ export const GAMES = [
     "accent": "#a78bfa",
     "accent2": "#4f46e5",
     "license": "自研"
+  },
+  {
+    "slug": "minesweeper",
+    "title": "扫雷",
+    "subtitle": "数字提示下的排雷推理",
+    "description": "经典扫雷：数字表示周围的地雷数，靠推理找出所有安全格并插旗标雷。支持三档难度、首次点击必安全、右键或长按插旗、计时与最佳成绩记录。",
+    "category": "puzzle",
+    "game_url": "/games/minesweeper/index.html",
+    "width": 620,
+    "height": 720,
+    "orientation": "portrait",
+    "tags": [
+      "推理",
+      "经典",
+      "益智",
+      "单机"
+    ],
+    "emoji": "💣",
+    "accent": "#64748b",
+    "accent2": "#0ea5e9",
+    "license": "自研"
+  },
+  {
+    "slug": "sudoku",
+    "title": "数独",
+    "subtitle": "每行每列每宫都填满 1-9",
+    "description": "标准 9×9 数独：每行、每列、每个 3×3 宫内 1-9 各出现一次。可选难度，支持铅笔候选标记、冲突高亮、提示与撤销，通关后会记录用时。",
+    "category": "puzzle",
+    "game_url": "/games/sudoku/index.html",
+    "width": 620,
+    "height": 760,
+    "orientation": "portrait",
+    "tags": [
+      "数字",
+      "推理",
+      "益智",
+      "单机"
+    ],
+    "emoji": "🔢",
+    "accent": "#2563eb",
+    "accent2": "#7c3aed",
+    "license": "自研"
+  },
+  {
+    "slug": "sokoban",
+    "title": "推箱子",
+    "subtitle": "把箱子推到目标环上",
+    "description": "经典推箱子：你只能推不能拉，一步推错就可能卡死。内置 35 关由易到难，支持撤销、重开与选关面板，全部推到位即过关。",
+    "category": "puzzle",
+    "game_url": "/games/sokoban/index.html",
+    "width": 720,
+    "height": 680,
+    "orientation": "landscape",
+    "tags": [
+      "空间",
+      "推理",
+      "关卡",
+      "单机"
+    ],
+    "emoji": "📦",
+    "accent": "#0d9488",
+    "accent2": "#f59e0b",
+    "license": "自研"
+  },
+  {
+    "slug": "linkup",
+    "title": "连连看",
+    "subtitle": "两个相同图案，连线转弯不超过两次",
+    "description": "找出两个相同图案并用不超过两次转弯的路径连起来即可消除。带连线动画、提示、洗牌与计时模式，消完全部图案即通关。",
+    "category": "casual",
+    "game_url": "/games/linkup/index.html",
+    "width": 720,
+    "height": 700,
+    "orientation": "landscape",
+    "tags": [
+      "消除",
+      "反应",
+      "休闲",
+      "单机"
+    ],
+    "emoji": "🔗",
+    "accent": "#f472b6",
+    "accent2": "#8b5cf6",
+    "license": "自研"
+  },
+  {
+    "slug": "idiom",
+    "title": "成语猜猜",
+    "subtitle": "六次机会猜出四字成语",
+    "description": "中文版猜词游戏：每次猜一个四字成语，逐字给出「位置正确 / 字在词中但位置不对 / 不含此字」的反馈，六次内猜中即胜。每天一题，也能随时随机开局。",
+    "category": "puzzle",
+    "game_url": "/games/idiom/index.html",
+    "width": 620,
+    "height": 760,
+    "orientation": "portrait",
+    "tags": [
+      "中文",
+      "猜词",
+      "每日",
+      "单机"
+    ],
+    "emoji": "🀄",
+    "accent": "#dc2626",
+    "accent2": "#f59e0b",
+    "license": "自研"
+  },
+  {
+    "slug": "connect4",
+    "title": "四子棋",
+    "subtitle": "重力落子，先连四子者胜",
+    "description": "7 列 6 行竖式棋盘，棋子沿重力落下，横、竖、斜任意方向先连成四子即胜。可选三档 AI，也能开房间和好友联机对战。",
+    "category": "board",
+    "game_url": "/games/connect4/index.html",
+    "width": 640,
+    "height": 700,
+    "orientation": "portrait",
+    "tags": [
+      "对战",
+      "AI",
+      "联机",
+      "棋类"
+    ],
+    "emoji": "🔴",
+    "accent": "#ef4444",
+    "accent2": "#facc15",
+    "license": "自研"
+  },
+  {
+    "slug": "reversi",
+    "title": "黑白棋",
+    "subtitle": "夹住对手的棋子把它翻成自己的颜色",
+    "description": "标准奥赛罗规则：8×8 棋盘，落子必须夹住对手的棋子并翻转，无棋可下自动跳过，双方都无棋可下时按子数多寡分胜负。支持三档 AI 与联机对战。",
+    "category": "board",
+    "game_url": "/games/reversi/index.html",
+    "width": 660,
+    "height": 720,
+    "orientation": "portrait",
+    "tags": [
+      "对战",
+      "AI",
+      "联机",
+      "棋类"
+    ],
+    "emoji": "⚪",
+    "accent": "#0f766e",
+    "accent2": "#38bdf8",
+    "license": "自研"
+  },
+  {
+    "slug": "draughts",
+    "title": "国际跳棋",
+    "subtitle": "强制吃子，连吃到底",
+    "description": "8×8 国际跳棋（简化规则）：有吃子时必须吃，可以连吃一串；兵只向前走、到底线升王后可以后退吃子。支持三档 AI 与联机对战，页面内附规则说明。",
+    "category": "board",
+    "game_url": "/games/draughts/index.html",
+    "width": 700,
+    "height": 720,
+    "orientation": "landscape",
+    "tags": [
+      "对战",
+      "AI",
+      "联机",
+      "棋类"
+    ],
+    "emoji": "⚫",
+    "accent": "#b45309",
+    "accent2": "#f97316",
+    "license": "自研"
+  },
+  {
+    "slug": "match3",
+    "title": "宝石三消",
+    "subtitle": "交换相邻宝石，凑三连以上消除",
+    "description": "经典三消玩法：交换相邻两颗宝石，让三颗以上同色连成一线即可消除，消得越多连击越高。带下落补位、连击倍率、无限与限时两种模式，最高分记在本机。",
+    "category": "casual",
+    "game_url": "/games/match3/index.html",
+    "width": 660,
+    "height": 780,
+    "orientation": "portrait",
+    "tags": [
+      "消除",
+      "休闲",
+      "高分",
+      "单机"
+    ],
+    "emoji": "💎",
+    "accent": "#8b5cf6",
+    "accent2": "#22d3ee",
+    "license": "自研"
+  },
+  {
+    "slug": "solitaire",
+    "title": "纸牌接龙",
+    "subtitle": "把 52 张牌按花色收进四个牌堆",
+    "description": "经典克朗代克接龙：7 列牌堆里翻牌理牌，把 A 到 K 按花色收进四个收集区。支持抽 1 / 抽 3、拖拽与双击落位、撤销、挑战模式（抽 3 且禁撤销）与计时计分，可发固定种子的牌局。",
+    "category": "casual",
+    "game_url": "/games/solitaire/index.html",
+    "width": 1040,
+    "height": 720,
+    "orientation": "landscape",
+    "tags": [
+      "纸牌",
+      "经典",
+      "休闲",
+      "单机"
+    ],
+    "emoji": "🃏",
+    "accent": "#16a34a",
+    "accent2": "#0ea5e9",
+    "license": "自研"
   }
 ];

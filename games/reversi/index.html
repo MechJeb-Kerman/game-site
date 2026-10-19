@@ -1,0 +1,1174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>黑白棋 · 奥赛罗</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center;padding:8px;
+  background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);
+  color:#dbf8ff;font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  user-select:none;-webkit-user-select:none}
+.wrap{width:100%;height:100%;max-width:720px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;flex:none}
+h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.5px;
+  background:linear-gradient(135deg,#67e8f9,#38bdf8 55%,#a5b4fc);-webkit-background-clip:text;background-clip:text;color:transparent}
+.tip{font-size:11px;color:#67e8f9;opacity:.75;line-height:1.4}
+.main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px}
+.area{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center;position:relative}
+#board{display:block;border-radius:12px;touch-action:manipulation;cursor:pointer;
+  box-shadow:0 12px 34px rgba(0,0,0,.55),0 0 0 1px rgba(34,211,238,.28),0 0 26px rgba(6,182,212,.12)}
+.side-col{display:flex;flex-direction:column;gap:8px;flex:none}
+.hud{display:flex;gap:6px;flex-wrap:wrap;justify-content:space-between}
+.seg{display:flex;gap:4px;padding:3px;border-radius:10px;background:rgba(8,51,68,.55);border:1px solid rgba(34,211,238,.2)}
+.seg button{min-height:30px;padding:0 9px;border-radius:7px;border:0;background:transparent;color:#a5f3fc;
+  font-family:inherit;font-size:12px;cursor:pointer;touch-action:manipulation;white-space:nowrap}
+.seg button:hover{background:rgba(34,211,238,.14)}
+.seg button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#03131a;font-weight:600}
+.seg button:disabled{opacity:.35;cursor:default}
+.status{display:flex;align-items:center;gap:8px;flex:none;min-height:34px;padding:6px 10px;border-radius:10px;
+  font-size:12.5px;line-height:1.35;background:rgba(8,51,68,.5);border:1px solid rgba(34,211,238,.18)}
+.dot{flex:none;width:14px;height:14px;border-radius:50%;background:#0b1220;border:2px solid #22d3ee;
+  box-shadow:0 0 9px rgba(34,211,238,.5)}
+.dot.white{background:#eaf7ff;border-color:#7dd3fc}
+.dot.gray{background:#334155;border-color:#475569;box-shadow:none}
+.scorerow{display:flex;gap:6px;flex:none}
+.side{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 6px;border-radius:10px;
+  font-size:12px;background:rgba(8,51,68,.5);border:1px solid rgba(34,211,238,.18)}
+.side.act{border-color:#22d3ee;box-shadow:0 0 10px rgba(34,211,238,.3)}
+.side i{width:13px;height:13px;border-radius:50%;flex:none;display:block}
+.side.b i{background:radial-gradient(circle at 34% 30%,#64748b,#0b1220 72%);border:1px solid rgba(34,211,238,.6)}
+.side.w i{background:radial-gradient(circle at 34% 30%,#ffffff,#a8c6de 76%);border:1px solid rgba(34,211,238,.5)}
+.side b{font-size:16px;font-variant-numeric:tabular-nums}
+.log{flex:none;font-size:11px;color:#7dd3fc;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:15px}
+.foot{display:flex;gap:8px;flex:none}
+.btn{flex:1 1 auto;min-width:0;min-height:44px;border-radius:12px;border:1px solid rgba(34,211,238,.35);background:rgba(8,51,68,.7);
+  color:#dbf8ff;font-family:inherit;font-size:13.5px;cursor:pointer;touch-action:manipulation;
+  padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn:hover{background:rgba(8,51,68,.95)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#03131a;font-weight:600;border-color:transparent}
+.overlay{position:fixed;inset:0;z-index:9990;display:flex;align-items:center;justify-content:center;
+  background:rgba(3,10,18,.72);padding:16px}
+.overlay[hidden]{display:none}
+.card{width:min(300px,84vw);padding:20px 20px 18px;border-radius:16px;text-align:center;
+  background:linear-gradient(180deg,rgba(8,51,68,.97),rgba(4,20,30,.98));
+  border:1px solid rgba(34,211,238,.35);box-shadow:0 22px 60px rgba(0,0,0,.62)}
+.card h2{margin:0 0 6px;font-size:20px}
+.card p{margin:0 0 12px;font-size:13px;color:#a5f3fc;line-height:1.5}
+.card p.hint{font-size:11.5px;color:#7dd3fc;opacity:.85;margin-bottom:14px}
+body.npmounted .foot{padding-right:112px}
+@media (min-width:720px){
+  .wrap{max-width:960px}
+  .main{flex-direction:row;align-items:stretch}
+  .area{flex:1 1 auto}
+  .side-col{width:clamp(170px,23%,216px);justify-content:flex-start}
+  .hud{flex-direction:column}
+  .seg{justify-content:center}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>黑白棋 · 奥赛罗</h1>
+    <span class="tip">点棋盘落子 · 方向键选格 + 空格落子 · 手柄十字键同样可用</span>
+  </div>
+  <div class="main">
+    <div class="area" id="area"><canvas id="board" width="480" height="480"></canvas></div>
+    <div class="side-col">
+      <div class="hud">
+        <div class="seg" id="modeSeg">
+          <button type="button" data-mode="ai" class="on">人机</button>
+          <button type="button" data-mode="pvp">双人</button>
+          <button type="button" data-mode="online">联机</button>
+        </div>
+        <div class="seg" id="lvSeg">
+          <button type="button" data-lv="1">简单</button>
+          <button type="button" data-lv="2" class="on">普通</button>
+          <button type="button" data-lv="3">困难</button>
+        </div>
+      </div>
+      <div class="status"><span class="dot" id="turnDot"></span><span id="statusText">准备开局…</span></div>
+      <div class="scorerow">
+        <div class="side b" id="sideB"><i></i><span>黑</span><b id="cntB">2</b></div>
+        <div class="side w" id="sideW"><i></i><span>白</span><b id="cntW">2</b></div>
+        <div class="side m"><span>手数</span><b id="moveCnt">0</b></div>
+      </div>
+      <div class="log" id="log">—</div>
+      <div class="foot">
+        <button type="button" class="btn primary" id="btnReset">重新开局</button>
+        <button type="button" class="btn" id="btnUndo">悔棋</button>
+        <button type="button" class="btn" id="btnHint">提示</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="overlay" id="overlay" hidden>
+  <div class="card">
+    <h2 id="ovTitle">黑棋胜</h2>
+    <p id="ovSub">黑 40 : 白 24</p>
+    <p class="hint" id="ovHint"></p>
+    <button type="button" class="btn primary" id="again">再来一局</button>
+  </div>
+</div>
+<script>window.GAMEPAD = { mode: 'dpad' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script src="/static/js/net-play.js"></script>
+<script>
+/* 黑白棋 / 奥赛罗：8x8 棋盘、标准开局四子、完整规则（合法点提示、自动翻转、
+   无棋可下自动跳过、双方都无棋可下按子数判胜负）、悔棋、分数统计。
+   走法字符串：'r,c'（r=行 0..7 从上到下，c=列 0..7 从左到右）；无棋可下时发送 'pass'。
+   联机：NetPlay.mount + onMove 无状态应用（按 seat 映射颜色，整盘由走子列表重放得出）。 */
+(function () {
+  'use strict';
+
+  var SLUG = 'reversi';
+  var EMPTY = 0, BLACK = 1, WHITE = 2;
+  var TAU = Math.PI * 2;
+  /* 方向：8 邻域 */
+  var DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+  /* 位置权重表：四角最高，角旁（星位）为负，用于评估与走子排序 */
+  var WEIGHT = [
+    120, -20,  20,   5,   5,  20, -20, 120,
+    -20, -40,  -5,  -5,  -5,  -5, -40, -20,
+     20,  -5,  15,   3,   3,  15,  -5,  20,
+      5,  -5,   3,   3,   3,   3,  -5,   5,
+      5,  -5,   3,   3,   3,   3,  -5,   5,
+     20,  -5,  15,   3,   3,  15,  -5,  20,
+    -20, -40,  -5,  -5,  -5,  -5, -40, -20,
+    120, -20,  20,   5,   5,  20, -20, 120
+  ];
+  var DEPTHS = { 1: 2, 2: 3, 3: 4 };  /* 简单 / 普通 / 困难 = 2~4 层搜索 */
+  var AI_DELAY = 240, PASS_DELAY = 700, INF = 1000000000;
+
+  /* ---------- DOM ---------- */
+  var cv = document.getElementById('board');
+  var ctx = cv.getContext('2d');
+  var areaEl = document.getElementById('area');
+  var statusEl = document.getElementById('statusText');
+  var dotEl = document.getElementById('turnDot');
+  var cntB = document.getElementById('cntB');
+  var cntW = document.getElementById('cntW');
+  var moveEl = document.getElementById('moveCnt');
+  var sideB = document.getElementById('sideB');
+  var sideW = document.getElementById('sideW');
+  var logEl = document.getElementById('log');
+  var ovEl = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovSub = document.getElementById('ovSub');
+  var ovHint = document.getElementById('ovHint');
+  var btnUndo = document.getElementById('btnUndo');
+  var btnHint = document.getElementById('btnHint');
+  var btnReset = document.getElementById('btnReset');
+  var lvSeg = document.getElementById('lvSeg');
+  var modeSeg = document.getElementById('modeSeg');
+  var againBtn = document.getElementById('again');
+
+  /* ---------- 状态 ---------- */
+  var board = new Int8Array(64);
+  var hist = [];              /* {type:'move',p,r,c} | {type:'pass',p} */
+  var turn = BLACK;           /* 当前该谁下；0 = 终局 */
+  var over = false, result = '';
+  var mode = 'ai';            /* ai | pvp | online */
+  var level = 2;
+  var human = BLACK;          /* 人机模式：玩家执黑先手 */
+  var busy = false;           /* AI 思考中 */
+  var gen = 0;                /* 世代号：撤销/重开时让在飞的定时器失效 */
+  var aiTimer = 0, passTimer = 0, noteTimer = 0, netRaf = 0, netTimer = 0, rafId = 0;
+  var noteText = '', lastMove = null, hintCell = null, anim = null, ovMuted = false;
+  var hover = null, useCursor = false, cursor = { r: 2, c: 3 };
+  var size = 480, cell = 60;
+  var seedVal = null, dailyDate = null, dailySent = false, autoOnline = false;
+  var rng = mulberry32(20261019);
+  /* 联机 */
+  var np = null, npInfo = null, npStateName = 'idle', npSeat = -1, npMyTurn = false, npResult = '', npCode = '';
+  var myColor = 0, netMoves = [], netQueue = [], seenSeq = {}, netPasses = 0;
+
+  /* ---------- 小工具 ---------- */
+  function idx(r, c) { return r * 8 + c; }
+  function other(p) { return p === BLACK ? WHITE : BLACK; }
+  function nm(p) { return p === BLACK ? '黑棋' : (p === WHITE ? '白棋' : '—'); }
+  function sq(r, c) { return String.fromCharCode(97 + c) + (8 - r); }
+  function colorOfSeat(seat) { return seat === 0 ? BLACK : (seat === 1 ? WHITE : 0); }
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    var t = a >>> 0;
+    return function () {
+      t = (t + 0x6D2B79F5) >>> 0;
+      var x = t;
+      x = Math.imul(x ^ (x >>> 15), 1 | x);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function ease(t) { return 1 - Math.pow(1 - t, 3); }
+
+  /* ---------- 规则核心 ---------- */
+  function initBoard() {
+    board.fill(EMPTY);
+    board[idx(3, 3)] = WHITE; board[idx(3, 4)] = BLACK;
+    board[idx(4, 3)] = BLACK; board[idx(4, 4)] = WHITE;
+  }
+  /* 沿 8 个方向走：把被夹住的对方子收进 out（out 为 null 时只计数） */
+  function walk(r, c, p, out) {
+    var n = 0, opp = other(p);
+    for (var d = 0; d < 8; d++) {
+      var dr = DIRS[d][0], dc = DIRS[d][1];
+      var rr = r + dr, cc = c + dc, k = 0, start = out ? out.length : 0;
+      while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8 && board[rr * 8 + cc] === opp) {
+        if (out) out.push(rr * 8 + cc);
+        k++; rr += dr; cc += dc;
+      }
+      if (k && rr >= 0 && rr < 8 && cc >= 0 && cc < 8 && board[rr * 8 + cc] === p) n += k;
+      else if (out) out.length = start;
+    }
+    return n;
+  }
+  function flipsFor(r, c, p) {
+    var out = [];
+    if (r < 0 || r > 7 || c < 0 || c > 7 || board[idx(r, c)] !== EMPTY) return out;
+    walk(r, c, p, out);
+    return out;
+  }
+  function hasMoves(p) {
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
+      if (board[idx(r, c)] !== EMPTY) continue;
+      if (walk(r, c, p, null) > 0) return true;
+    }
+    return false;
+  }
+  function legalMoves(p) {
+    var out = [];
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
+      if (board[idx(r, c)] !== EMPTY) continue;
+      var f = flipsFor(r, c, p);
+      if (f.length) out.push({ r: r, c: c, f: f, w: WEIGHT[idx(r, c)] });
+    }
+    return out;
+  }
+  function countOf(p) {
+    var n = 0;
+    for (var i = 0; i < 64; i++) if (board[i] === p) n++;
+    return n;
+  }
+  function moveCount() {
+    var n = 0;
+    for (var i = 0; i < hist.length; i++) if (hist[i].type === 'move') n++;
+    return n;
+  }
+  function place(r, c, p, f) {
+    board[idx(r, c)] = p;
+    for (var i = 0; i < f.length; i++) board[f[i]] = p;
+  }
+  function unplace(r, c, p, f) {
+    board[idx(r, c)] = EMPTY;
+    var opp = other(p);
+    for (var i = 0; i < f.length; i++) board[f[i]] = opp;
+  }
+  /* 由「棋盘 + 最后一手」推导轮到谁、谁该跳过、是否终局（无状态、可重放） */
+  function turnInfo() {
+    var last = null;
+    for (var i = hist.length - 1; i >= 0; i--) if (hist[i].type === 'move') { last = hist[i]; break; }
+    if (!last) return { turn: BLACK, skip: 0, over: false };
+    var who = last.p, opp = other(who);
+    if (hasMoves(opp)) return { turn: opp, skip: 0, over: false };
+    if (hasMoves(who)) return { turn: who, skip: opp, over: false };
+    return { turn: 0, skip: 0, over: true };
+  }
+
+  /* ---------- AI：位置权重 + negamax(alpha-beta)，2~4 层 ---------- */
+  function genMoves(p, cap) {
+    var out = legalMoves(p);
+    if (cap && out.length > cap) {
+      out.sort(function (a, b) { return b.w - a.w; });
+      out.length = cap;
+    }
+    return out;
+  }
+  function mobCount(p) {
+    var n = 0;
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
+      if (board[idx(r, c)] !== EMPTY) continue;
+      if (walk(r, c, p, null) > 0) n++;
+    }
+    return n;
+  }
+  function evalFor(p) {
+    var s = 0, mine = 0, opp = 0, v;
+    for (var i = 0; i < 64; i++) {
+      v = board[i];
+      if (!v) continue;
+      if (v === p) { s += WEIGHT[i]; mine++; } else { s -= WEIGHT[i]; opp++; }
+    }
+    if (64 - mine - opp <= 8) return (mine - opp) * 1000;   /* 残局：直接算子数 */
+    return s + (mobCount(p) - mobCount(other(p))) * 6 + (mine - opp) * 2;
+  }
+  function nega(p, depth, alpha, beta) {
+    if (depth <= 0) return evalFor(p);
+    var mine = genMoves(p, depth >= 3 ? 12 : 0);
+    if (!mine.length) {
+      if (!hasMoves(other(p))) return evalFor(p);
+      return -nega(other(p), depth, -beta, -alpha);   /* 自己无棋可下：换手，深度不减 */
+    }
+    var best = -INF;
+    for (var i = 0; i < mine.length; i++) {
+      var m = mine[i];
+      place(m.r, m.c, p, m.f);
+      var v = -nega(other(p), depth - 1, -beta, -alpha);
+      unplace(m.r, m.c, p, m.f);
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) break;
+    }
+    return best;
+  }
+  function aiBest(p, depth) {
+    var moves = genMoves(p, 0);
+    if (!moves.length) return null;
+    var best = -INF, ties = [];
+    for (var i = 0; i < moves.length; i++) {
+      var m = moves[i];
+      place(m.r, m.c, p, m.f);
+      var v = -nega(other(p), depth - 1, -INF, INF);
+      unplace(m.r, m.c, p, m.f);
+      if (v > best + 1e-6) { best = v; ties = [m]; }
+      else if (v > best - 1e-6) ties.push(m);
+    }
+    /* 同分用种子化 PRNG 打破平手：同一 seed 整局完全可复现 */
+    var pick = ties.length > 1 ? ties[Math.floor(rng() * ties.length) % ties.length] : ties[0];
+    return { r: pick.r, c: pick.c };
+  }
+
+  /* ---------- 落子 / 轮次 / 终局 ---------- */
+  function setAnim(r, c, flips) {
+    var set = {};
+    for (var i = 0; i < flips.length; i++) set[flips[i]] = 1;
+    anim = { t0: performance.now(), placed: { r: r, c: c }, flipSet: set };
+    startAnim();
+  }
+  function animP() { return anim ? Math.min(1, (performance.now() - anim.t0) / 320) : 1; }
+  function startAnim() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(function step() {
+      rafId = 0;
+      if (anim && animP() >= 1) anim = null;
+      draw();
+      if (anim) rafId = requestAnimationFrame(step);
+    });
+  }
+  function applyMove(r, c, p) {
+    var f = flipsFor(r, c, p);
+    if (!f.length) return false;
+    place(r, c, p, f);
+    hist.push({ type: 'move', p: p, r: r, c: c });
+    lastMove = { r: r, c: c };
+    hintCell = null;
+    setAnim(r, c, f);
+    refresh(true);
+    return true;
+  }
+  function refresh(announce) {
+    if (mode === 'online') ovMuted = false;
+    var t = turnInfo();
+    turn = t.turn;
+    if (t.skip && announce) {
+      var lastE = hist.length ? hist[hist.length - 1] : null;
+      if (!(lastE && lastE.type === 'pass' && lastE.p === t.skip)) hist.push({ type: 'pass', p: t.skip });
+      note(nm(t.skip) + '无子可下，自动跳过');
+    }
+    if (t.over) finish();
+    else {
+      over = false; result = '';
+      if (!ovMuted) ovEl.hidden = true;
+    }
+    updateAll();
+    pump();
+    maybeAutoPass();
+  }
+  function countResult() {
+    var b = countOf(BLACK), w = countOf(WHITE);
+    return b > w ? 'black' : (w > b ? 'white' : 'draw');
+  }
+  function finish() {
+    if (over) return;
+    over = true; turn = 0; busy = false;
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = 0; }
+    result = countResult();
+    showResultOverlay();
+    maybeDaily();
+  }
+  function resultLine() {
+    var b = countOf(BLACK), w = countOf(WHITE);
+    return '黑 ' + b + ' : 白 ' + w + ' · ' + (result === 'draw' ? '平局' : (result === 'black' ? '黑棋胜' : '白棋胜'));
+  }
+  function showResultOverlay() {
+    if (ovMuted) return;
+    var b = countOf(BLACK), w = countOf(WHITE);
+    var r = npResult || result;
+    var title, hint;
+    if (mode === 'online' && (npSeat === 0 || npSeat === 1)) {
+      var iWin = (npSeat === 0 && r === 'host') || (npSeat === 1 && r === 'guest');
+      if (r === 'draw') title = '平局';
+      else title = iWin ? '你赢了！' : '你输了';
+      hint = '点右下角「联机对战」面板的「再来一局」开新局';
+    } else {
+      title = (r === 'draw') ? '平局' : (r === 'black' ? '黑棋胜' : '白棋胜');
+      hint = (mode === 'ai') ? '点「重新开局」再和电脑下一盘' : '点「重新开局」继续对局';
+    }
+    ovTitle.textContent = title;
+    ovSub.textContent = '黑 ' + b + ' : 白 ' + w;
+    ovHint.textContent = hint;
+    ovEl.hidden = false;
+  }
+  function maybeDaily() {
+    if (!dailyDate || dailySent) return;
+    if (mode !== 'ai' || result === 'draw' || result === 'white') return;
+    if (countOf(human) <= countOf(other(human))) return;
+    dailySent = true;
+    try {
+      window.parent.postMessage({ type: 'gs:daily-done', game: SLUG, date: dailyDate, score: countOf(human) }, '*');
+    } catch (e) {}
+  }
+
+  /* ---------- AI 调度 ---------- */
+  function pump() {
+    if (mode !== 'ai' || over || mode === 'online') return;
+    var ai = other(human);
+    if (turn !== ai || aiTimer) return;
+    busy = true;
+    updateStatus();
+    var myGen = gen;
+    aiTimer = setTimeout(function () {
+      aiTimer = 0;
+      if (myGen !== gen || mode !== 'ai' || over || turn !== ai) { busy = false; updateAll(); return; }
+      var mv = null;
+      try { mv = aiBest(ai, DEPTHS[level] || 3); } catch (e) { mv = null; }
+      if (myGen !== gen) return;
+      busy = false;
+      if (mv) applyMove(mv.r, mv.c, ai);
+      else { refresh(false); }
+      updateAll();
+    }, AI_DELAY);
+  }
+
+  /* ---------- 悔棋 ---------- */
+  function replayHist(n, keep) {
+    var snapshot = hist.slice();
+    initBoard();
+    hist.length = 0;
+    for (var i = 0; i < n && i < snapshot.length; i++) {
+      var e = snapshot[i];
+      if (e.type !== 'move') { hist.push(e); continue; }
+      var f = flipsFor(e.r, e.c, e.p);
+      if (!f.length) continue;
+      place(e.r, e.c, e.p, f);
+      hist.push(e);
+    }
+    if (keep) for (var j = n; j < snapshot.length; j++) hist.push(snapshot[j]);
+    lastMove = null;
+    for (var k = hist.length - 1; k >= 0; k--) {
+      if (hist[k].type === 'move') { lastMove = { r: hist[k].r, c: hist[k].c }; break; }
+    }
+    anim = null;
+  }
+  function undo() {
+    if (mode === 'online') { note('联机对局不能悔棋'); return; }
+    if (busy || !hist.length) return;
+    var want = (mode === 'ai') ? human : 0, n = -1;
+    for (var i = hist.length - 1; i >= 0; i--) {
+      var e = hist[i];
+      if (e.type !== 'move') continue;
+      if (want && e.p !== want) continue;
+      n = i; break;
+    }
+    if (n < 0) { note('没有可悔的棋'); return; }
+    gen++;
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = 0; }
+    replayHist(n);
+    over = false; result = ''; hintCell = null;
+    ovEl.hidden = true;
+    note('已悔棋，轮到' + nm(turn === 0 ? BLACK : turn));
+    refresh(false);
+  }
+
+  /* ---------- 绘制 ---------- */
+  function canPlayHere() {
+    if (over) return false;
+    if (mode === 'online') return npStateName === 'playing' && npMyTurn && !!myColor;
+    if (mode === 'ai') return !busy && turn === human;
+    return turn === BLACK || turn === WHITE;
+  }
+  function drawDisc(cx, cy, rad, p, opt) {
+    opt = opt || {};
+    var rx = rad, ry = rad;
+    if (opt.flip != null) {
+      var k = Math.abs(Math.cos(Math.PI * opt.flip));
+      rx = Math.max(rad * 0.10, rad * k);
+      ry = rad * (0.72 + 0.28 * k);
+    }
+    if (opt.scale != null) { rx *= opt.scale; ry *= opt.scale; }
+    ctx.save();
+    if (opt.alpha != null) ctx.globalAlpha = opt.alpha;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU);
+    var g = ctx.createRadialGradient(cx - rad * 0.3, cy - rad * 0.34, rad * 0.1, cx, cy, rad * 1.05);
+    if (p === BLACK) { g.addColorStop(0, '#5d6d81'); g.addColorStop(0.45, '#22303f'); g.addColorStop(1, '#050a10'); }
+    else { g.addColorStop(0, '#ffffff'); g.addColorStop(0.55, '#e2f2ff'); g.addColorStop(1, '#9fbdd8'); }
+    ctx.fillStyle = g;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = rad * 0.45;
+    ctx.shadowOffsetY = rad * 0.14;
+    ctx.fill();
+    ctx.shadowColor = 'rgba(0,0,0,0)'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.lineWidth = Math.max(1, rad * 0.08);
+    ctx.strokeStyle = (p === BLACK) ? 'rgba(34,211,238,0.5)' : 'rgba(14,165,233,0.42)';
+    ctx.stroke();
+    ctx.restore();
+  }
+  function draw() {
+    var S = size, cl = cell, i, r, c;
+    ctx.clearRect(0, 0, S, S);
+    var bg = ctx.createLinearGradient(0, 0, S, S);
+    bg.addColorStop(0, '#0a3d47'); bg.addColorStop(0.55, '#072b35'); bg.addColorStop(1, '#05202a');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, S, S);
+    for (r = 0; r < 8; r++) for (c = 0; c < 8; c++) {
+      ctx.fillStyle = ((r + c) & 1) ? 'rgba(6,182,212,0.05)' : 'rgba(8,145,178,0.11)';
+      ctx.fillRect(c * cl, r * cl, cl, cl);
+    }
+    ctx.strokeStyle = 'rgba(34,211,238,0.16)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (i = 0; i <= 8; i++) {
+      var p = Math.round(i * cl) + 0.5;
+      ctx.moveTo(p, 0); ctx.lineTo(p, S);
+      ctx.moveTo(0, p); ctx.lineTo(S, p);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(34,211,238,0.42)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, S - 2, S - 2);
+
+    var showDots = canPlayHere();
+    if (showDots) {
+      var ms = legalMoves(turn);
+      for (i = 0; i < ms.length; i++) {
+        var mx = (ms[i].c + 0.5) * cl, my = (ms[i].r + 0.5) * cl;
+        var isHint = hintCell && hintCell.r === ms[i].r && hintCell.c === ms[i].c;
+        if (isHint) {
+          ctx.beginPath(); ctx.arc(mx, my, cl * 0.31, 0, TAU);
+          ctx.strokeStyle = 'rgba(250,204,21,0.85)'; ctx.lineWidth = 2; ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(mx, my, cl * (isHint ? 0.12 : 0.1), 0, TAU);
+        ctx.fillStyle = isHint ? 'rgba(250,204,21,0.95)' : 'rgba(34,211,238,0.6)';
+        ctx.fill();
+      }
+    }
+    var pr = animP();
+    for (i = 0; i < 64; i++) {
+      var v = board[i];
+      if (!v) continue;
+      r = (i / 8) | 0; c = i % 8;
+      var cx = (c + 0.5) * cl, cy = (r + 0.5) * cl, opt = null;
+      if (anim && pr < 1) {
+        if (anim.placed && anim.placed.r === r && anim.placed.c === c) opt = { scale: 0.55 + 0.45 * ease(pr) };
+        else if (anim.flipSet && anim.flipSet[i]) opt = { flip: pr };
+      }
+      drawDisc(cx, cy, cl * 0.42, v, opt);
+      if (lastMove && lastMove.r === r && lastMove.c === c) {
+        ctx.beginPath(); ctx.arc(cx, cy, cl * 0.075, 0, TAU);
+        ctx.fillStyle = (v === BLACK) ? 'rgba(34,211,238,0.95)' : 'rgba(8,47,73,0.9)';
+        ctx.fill();
+      }
+    }
+    if (hover && showDots && flipsFor(hover.r, hover.c, turn).length) {
+      drawDisc((hover.c + 0.5) * cl, (hover.r + 0.5) * cl, cl * 0.42, turn, { alpha: 0.32 });
+    }
+    if (useCursor && showDots) {
+      ctx.strokeStyle = 'rgba(250,204,21,0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cursor.c * cl + 2, cursor.r * cl + 2, cl - 4, cl - 4);
+    }
+  }
+  var lastAreaW = 0, lastAreaH = 0;
+  function layout() {
+    var aw = areaEl.clientWidth, ah = areaEl.clientHeight;
+    if (!aw || !ah) { aw = Math.max(200, Math.min(window.innerWidth - 24, 420)); ah = aw; }
+    var s = Math.max(160, Math.min(aw, ah));
+    var sz = Math.floor(s / 8) * 8;
+    if (sz < 160) sz = 160;
+    if (sz !== size || cv.width !== Math.round(sz * Math.min(window.devicePixelRatio || 1, 2))) {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      size = sz; cell = sz / 8;
+      cv.width = Math.round(sz * dpr);
+      cv.height = Math.round(sz * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cv.style.width = sz + 'px';
+      cv.style.height = sz + 'px';
+    }
+    lastAreaW = aw; lastAreaH = ah;
+    draw();
+  }
+
+  /* ---------- 界面文本 ---------- */
+  function note(t) {
+    noteText = t;
+    updateStatus();
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(function () { noteText = ''; updateStatus(); }, 1800);
+  }
+  function statusLine() {
+    if (mode === 'online') {
+      if (!np || npStateName === 'idle' || npStateName === 'closed') return '点右下角「联机对战」创建或加入房间';
+      if (npStateName === 'waiting') return '等待对手加入…' + (npCode ? '（房号 ' + npCode + '）' : '');
+      if (over || npStateName === 'done') return '本局结束 · ' + resultLine();
+      if (!myColor) return '观战中 · 黑 ' + countOf(BLACK) + ' : 白 ' + countOf(WHITE);
+      if (!npMyTurn) return '等待对手落子…';
+      if (hasMoves(myColor)) return '轮到你落子（' + nm(myColor) + '）· 可下 ' + legalMoves(myColor).length + ' 处';
+      return '你无子可下，自动跳过…';
+    }
+    if (over) return resultLine() + ' · 点「重新开局」再来一局';
+    if (mode === 'ai' && busy) return '电脑思考中…';
+    var n = legalMoves(turn).length;
+    return '轮到' + nm(turn) + (mode === 'ai' && turn === human ? '（你）' : '') + '落子 · 可下 ' + n + ' 处';
+  }
+  function dotClass() {
+    if (over) return ' gray';
+    if (mode === 'online') {
+      if (!np || npStateName === 'idle' || npStateName === 'closed' || npStateName === 'waiting' || npStateName === 'done') return ' gray';
+      return (npMyTurn ? myColor : other(myColor || BLACK)) === WHITE ? ' white' : '';
+    }
+    if (mode === 'ai' && busy) return ' white';
+    return turn === WHITE ? ' white' : '';
+  }
+  function updateStatus() {
+    statusEl.textContent = noteText || statusLine();
+    dotEl.className = 'dot' + dotClass();
+  }
+  function updateScore() {
+    cntB.textContent = String(countOf(BLACK));
+    cntW.textContent = String(countOf(WHITE));
+    moveEl.textContent = String(moveCount());
+    var actB, actW;
+    if (mode === 'online') { actB = !over && npMyTurn && myColor === BLACK; actW = !over && npMyTurn && myColor === WHITE; }
+    else { actB = !over && turn === BLACK; actW = !over && turn === WHITE; }
+    sideB.className = 'side b' + (actB ? ' act' : '');
+    sideW.className = 'side w' + (actW ? ' act' : '');
+  }
+  function updateButtons() {
+    btnUndo.disabled = (mode === 'online') || busy || !hist.length;
+    btnHint.disabled = over || busy || (mode === 'online' && (npStateName !== 'playing' || !npMyTurn || !myColor));
+    var bs = lvSeg.querySelectorAll('button');
+    for (var i = 0; i < bs.length; i++) bs[i].disabled = (mode === 'online');
+  }
+  function logLine() {
+    if (!hist.length) return '—';
+    var parts = [];
+    for (var i = 0; i < hist.length; i++) {
+      var e = hist[i];
+      if (e.type === 'pass') parts.push((e.p === BLACK ? '●' : '○') + '跳过');
+      else parts.push((e.p === BLACK ? '●' : '○') + sq(e.r, e.c));
+    }
+    return parts.slice(-14).join(' ');
+  }
+  function updateAll() {
+    updateStatus(); updateScore(); updateButtons();
+    logEl.textContent = logLine();
+    draw();
+  }
+
+  /* ---------- 交互 ---------- */
+  function tryPlay(r, c) {
+    if (r < 0 || r > 7 || c < 0 || c > 7) return;
+    useCursor = true;
+    cursor = { r: r, c: c };
+    if (over) { note('本局已结束，点「重新开局」'); return; }
+    if (mode === 'online') {
+      if (!np) { note('联机未就绪'); return; }
+      if (npStateName !== 'playing') { note('先在右下角「联机对战」创建或加入房间'); return; }
+      if (!npMyTurn) { note('等待对手落子…'); return; }
+      if (!myColor) { note('你在观战，不能落子'); return; }
+      if (!flipsFor(r, c, myColor).length) { note('这里不能落子'); return; }
+      var pr = projectResult(r, c, myColor);
+      np.send(r + ',' + c, pr.over ? pr.result : undefined);
+      return;
+    }
+    if (busy) { note('电脑思考中…'); return; }
+    if (mode === 'ai' && turn !== human) { note('等电脑落子'); return; }
+    if (!flipsFor(r, c, turn).length) { note('这里不能落子'); return; }
+    if (!applyMove(r, c, turn)) note('这里不能落子');
+  }
+  function hint() {
+    if (over || busy) return;
+    var p = (mode === 'online') ? myColor : turn;
+    if (!p) return;
+    if (mode === 'ai' && p !== human) return;
+    var moves = legalMoves(p);
+    if (!moves.length) { note('当前无棋可下'); return; }
+    var mv = null;
+    try { mv = aiBest(p, 2); } catch (e) { mv = null; }
+    if (!mv) mv = moves[0];
+    hintCell = { r: mv.r, c: mv.c };
+    useCursor = true;
+    cursor = { r: mv.r, c: mv.c };
+    note('提示：' + sq(mv.r, mv.c) + ' 可以落子');
+    draw();
+  }
+  function newGame() {
+    gen++;
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = 0; }
+    if (passTimer) { clearTimeout(passTimer); passTimer = 0; }
+    busy = false; over = false; result = ''; noteText = '';
+    hist.length = 0;
+    initBoard();
+    anim = null; lastMove = null; hintCell = null; hover = null;
+    noteTimer = 0;
+    turn = BLACK;
+    cursor = { r: 2, c: 3 };
+    dailySent = false;
+    if (mode !== 'online') {
+      netMoves.length = 0; netQueue.length = 0; seenSeq = {}; netPasses = 0;
+      ovMuted = false;
+      ovEl.hidden = true;
+    } else {
+      /* 联机：服务端是权威，只重置本地视图（不清走子列表，避免与服务器失步） */
+      ovMuted = true;
+      ovEl.hidden = true;
+      replayNet(null);
+    }
+    updateAll();
+    pump();
+    maybeAutoPass();
+  }
+  function setMode(m) {
+    if (m !== 'ai' && m !== 'pvp' && m !== 'online') m = 'ai';
+    var same = (m === mode);
+    if (same && m === 'online') { ensureNP(); if (np) np.open(); ovMuted = false; refresh(false); return; }
+    mode = m;
+    gen++;
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = 0; }
+    if (passTimer) { clearTimeout(passTimer); passTimer = 0; }
+    busy = false;
+    var bs = modeSeg.querySelectorAll('button');
+    for (var i = 0; i < bs.length; i++) {
+      bs[i].className = (bs[i].getAttribute('data-mode') === m) ? 'on' : '';
+    }
+    if (m === 'online') {
+      document.body.classList.add('npmounted');
+      ensureNP();
+      ovMuted = false;
+      replayNet(null);
+      refresh(false);
+      if (np) np.open();
+    } else {
+      if (np) { try { np.close(); } catch (e) {} }
+      document.body.classList.remove('npmounted');
+      human = BLACK;
+      newGame();
+    }
+    requestAnimationFrame(layout);
+  }
+
+  /* ---------- 联机（net-play.js） ---------- */
+  function parseMove(s) {
+    s = String(s == null ? '' : s).trim().toLowerCase();
+    if (s === 'pass' || s === 'skip' || s === '-') return { pass: true };
+    var m = /^([0-7])\s*,\s*([0-7])$/.exec(s);
+    if (m) return { r: parseInt(m[1], 10), c: parseInt(m[2], 10) };
+    m = /^([a-h])\s*([1-8])$/.exec(s);
+    if (m) return { r: 8 - parseInt(m[2], 10), c: m[1].charCodeAt(0) - 97 };
+    return null;
+  }
+  function normResult(r) {
+    if (!r) return '';
+    if (typeof r === 'string') {
+      var s = r.toLowerCase();
+      if (s === 'host' || s === 'guest' || s === 'draw') return s;
+    }
+    if (typeof r === 'object') {
+      var w = r.winner || r.result || r.win;
+      if (typeof w === 'string') {
+        var t = w.toLowerCase();
+        if (t === 'host' || t === 'guest' || t === 'draw') return t;
+      }
+      if (r.draw === true) return 'draw';
+    }
+    return '';
+  }
+  function projectResult(r, c, p) {
+    var f = flipsFor(r, c, p);
+    if (!f.length) return { over: false, result: '' };
+    var save = board.slice();
+    place(r, c, p, f);
+    var b = countOf(BLACK), w = countOf(WHITE);
+    var done = !hasMoves(BLACK) && !hasMoves(WHITE);
+    board.set(save);
+    if (!done) return { over: false, result: '' };
+    return { over: true, result: b > w ? 'host' : (w > b ? 'guest' : 'draw') };
+  }
+  function replayNet(animOne) {
+    initBoard();
+    hist.length = 0;
+    lastMove = null;
+    for (var i = 0; i < netMoves.length; i++) {
+      var mv = netMoves[i];
+      var p = colorOfSeat(mv.seat);
+      if (!p) continue;
+      var f = flipsFor(mv.r, mv.c, p);
+      if (!f.length) continue;
+      place(mv.r, mv.c, p, f);
+      hist.push({ type: 'move', p: p, r: mv.r, c: mv.c });
+      if (i === netMoves.length - 1) {
+        lastMove = { r: mv.r, c: mv.c };
+        if (animOne) setAnim(mv.r, mv.c, f);
+      }
+    }
+    if (!animOne) anim = null;
+  }
+  function drainNet() {
+    var added = 0, moved = false, passes = 0;
+    for (var i = 0; i < netQueue.length; i++) {
+      var q = netQueue[i];
+      var m = parseMove(q.move);
+      if (!m) continue;
+      if (m.pass) { passes++; netPasses++; moved = true; continue; }
+      netMoves.push({ seat: q.seat, r: m.r, c: m.c });
+      added++; moved = true;
+    }
+    netQueue.length = 0;
+    if (!moved) return;
+    ovMuted = false;
+    replayNet(added === 1 ? true : false);
+    if (passes) note(nm(colorOfSeat(netMoves.length ? lastSeat() : 0)) + '无子可下，跳过');
+    refresh(true);
+  }
+  function lastSeat() {
+    return netMoves.length ? netMoves[netMoves.length - 1].seat : 0;
+  }
+  function scheduleNet() {
+    if (netRaf || netTimer) return;
+    netRaf = requestAnimationFrame(function () {
+      netRaf = 0;
+      if (netTimer) { clearTimeout(netTimer); netTimer = 0; }
+      drainNet();
+    });
+    netTimer = setTimeout(function () {
+      netTimer = 0;
+      if (netRaf) { cancelAnimationFrame(netRaf); netRaf = 0; }
+      drainNet();
+    }, 150);
+  }
+  function onNetMove(e) {
+    if (!e || e.move == null) return;
+    if (typeof e.seq === 'number') {
+      if (seenSeq[e.seq]) return;
+      seenSeq[e.seq] = 1;
+    }
+    netQueue.push({ seq: e.seq, seat: (typeof e.seat === 'number' ? e.seat : 0), move: String(e.move) });
+    scheduleNet();
+  }
+  function onNetStatus(info) {
+    if (!info) return;
+    npInfo = info;
+    npStateName = info.state || 'idle';
+    npSeat = (typeof info.seat === 'number' && info.seat >= 0) ? info.seat : -1;
+    npMyTurn = !!info.myTurn;
+    npResult = normResult(info.result) || npResult;
+    npCode = info.code ? String(info.code) : '';
+    myColor = colorOfSeat(npSeat);
+    updateAll();
+    maybeAutoPass();
+  }
+  function onNetReset() {
+    netMoves.length = 0; netQueue.length = 0; seenSeq = {}; netPasses = 0;
+    gen++;
+    if (passTimer) { clearTimeout(passTimer); passTimer = 0; }
+    over = false; result = ''; busy = false; ovMuted = false;
+    npResult = '';
+    hist.length = 0;
+    initBoard();
+    turn = BLACK; lastMove = null; anim = null; hintCell = null;
+    ovEl.hidden = true;
+    note('新的一局开始');
+    refresh(false);
+  }
+  function onNetEnd(info) {
+    var r = normResult(info && info.result) || normResult(npInfo && npInfo.result);
+    if (r) npResult = r;
+    npStateName = 'done';
+    var t = turnInfo();
+    if (t.over || over) {
+      over = true; turn = 0; result = countResult();
+      showResultOverlay();
+    } else {
+      showResultOverlay();
+    }
+    updateAll();
+  }
+  function maybeAutoPass() {
+    if (mode !== 'online' || !np || npStateName !== 'playing' || over) return;
+    if (!npMyTurn || !myColor || !myColor) return;
+    if (hasMoves(myColor)) return;
+    if (passTimer) return;
+    var myGen = gen;
+    passTimer = setTimeout(function () {
+      passTimer = 0;
+      if (myGen !== gen || mode !== 'online' || npStateName !== 'playing' || !npMyTurn) return;
+      if (hasMoves(myColor)) return;
+      note(nm(myColor) + '无子可下，自动跳过');
+      var res = (!hasMoves(BLACK) && !hasMoves(WHITE))
+        ? (countOf(BLACK) > countOf(WHITE) ? 'host' : (countOf(WHITE) > countOf(BLACK) ? 'guest' : 'draw'))
+        : '';
+      if (np) np.send('pass', res || undefined);
+    }, PASS_DELAY);
+  }
+  function ensureNP() {
+    if (np || !window.NetPlay || typeof window.NetPlay.mount !== 'function') return;
+    try {
+      np = window.NetPlay.mount({
+        game: SLUG,
+        onMove: onNetMove,
+        onReset: onNetReset,
+        onStatus: onNetStatus,
+        onEnd: onNetEnd,
+        onNotice: function (t) { if (t) note(String(t)); }
+      });
+    } catch (e) { np = null; }
+  }
+
+  /* ---------- 事件 ---------- */
+  function cellFromPoint(x, y) {
+    var r = cv.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    var c = Math.floor((x - r.left) * 8 / r.width);
+    var rr = Math.floor((y - r.top) * 8 / r.height);
+    if (c < 0 || c > 7 || rr < 0 || rr > 7) return null;
+    return { r: rr, c: c };
+  }
+  var lastPtrTs = 0;
+  function onDown(x, y) {
+    var pt = cellFromPoint(x, y);
+    if (!pt) return;
+    tryPlay(pt.r, pt.c);
+  }
+  function bind() {
+    if (window.PointerEvent) {
+      cv.addEventListener('pointerdown', function (ev) {
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        lastPtrTs = Date.now();
+        onDown(ev.clientX, ev.clientY);
+        if (ev.preventDefault) ev.preventDefault();
+      }, { passive: false });
+      cv.addEventListener('pointermove', function (ev) {
+        if (ev.pointerType === 'touch') return;
+        var pt = cellFromPoint(ev.clientX, ev.clientY);
+        if (!pt) { if (hover) { hover = null; draw(); } return; }
+        if (!hover || hover.r !== pt.r || hover.c !== pt.c) { hover = pt; draw(); }
+      });
+      cv.addEventListener('pointerleave', function () { if (hover) { hover = null; draw(); } });
+    } else {
+      cv.addEventListener('mousedown', function (ev) { lastPtrTs = Date.now(); onDown(ev.clientX, ev.clientY); });
+    }
+    cv.addEventListener('touchstart', function (ev) {
+      if (window.PointerEvent && Date.now() - lastPtrTs < 700) { ev.preventDefault(); return; }
+      var t = ev.changedTouches && ev.changedTouches[0];
+      if (t) onDown(t.clientX, t.clientY);
+      ev.preventDefault();
+    }, { passive: false });
+
+    document.addEventListener('keydown', function (ev) {
+      var k = ev.key;
+      if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight') {
+        useCursor = true;
+        if (k === 'ArrowUp') cursor.r = Math.max(0, cursor.r - 1);
+        if (k === 'ArrowDown') cursor.r = Math.min(7, cursor.r + 1);
+        if (k === 'ArrowLeft') cursor.c = Math.max(0, cursor.c - 1);
+        if (k === 'ArrowRight') cursor.c = Math.min(7, cursor.c + 1);
+        draw();
+        ev.preventDefault();
+        return;
+      }
+      if (k === ' ' || k === 'Enter' || k === 'Spacebar') {
+        if (!ovEl.hidden) { newGame(); ev.preventDefault(); return; }
+        useCursor = true;
+        tryPlay(cursor.r, cursor.c);
+        ev.preventDefault();
+        return;
+      }
+      if (k === 'z' || k === 'Z') { undo(); }
+    });
+
+    modeSeg.addEventListener('click', function (ev) {
+      var b = ev.target.closest ? ev.target.closest('button[data-mode]') : null;
+      if (b) setMode(b.getAttribute('data-mode'));
+    });
+    lvSeg.addEventListener('click', function (ev) {
+      var b = ev.target.closest ? ev.target.closest('button[data-lv]') : null;
+      if (!b) return;
+      level = parseInt(b.getAttribute('data-lv'), 10) || 2;
+      var bs = lvSeg.querySelectorAll('button');
+      for (var i = 0; i < bs.length; i++) {
+        bs[i].className = (parseInt(bs[i].getAttribute('data-lv'), 10) === level) ? 'on' : '';
+      }
+      note('难度：' + (level === 1 ? '简单（2 层）' : (level === 3 ? '困难（4 层）' : '普通（3 层）')));
+    });
+    btnReset.addEventListener('click', function () { newGame(); });
+    againBtn.addEventListener('click', function () { newGame(); });
+    btnUndo.addEventListener('click', function () { undo(); });
+    btnHint.addEventListener('click', function () { hint(); });
+    window.addEventListener('resize', layout);
+    window.addEventListener('orientationchange', function () { setTimeout(layout, 120); });
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(function () {
+        var w = areaEl.clientWidth, h = areaEl.clientHeight;
+        if (Math.abs(w - lastAreaW) > 1 || Math.abs(h - lastAreaH) > 1) layout();
+      });
+      ro.observe(areaEl);
+    }
+  }
+
+  /* ---------- 启动 ---------- */
+  function boot() {
+    var q = location.search || '';
+    var ms = /[?&]seed=(-?[0-9]+)/.exec(q);
+    if (ms) { var v = parseInt(ms[1], 10); if (isFinite(v)) seedVal = v | 0; }
+    var md = /[?&]daily=([0-9]{4}-[0-9]{2}-[0-9]{2})/.exec(q);
+    if (md) { dailyDate = md[1]; if (seedVal === null) seedVal = hashStr(SLUG + '-' + dailyDate); }
+    autoOnline = /[?&](room|watch|replay)=/.test(q);
+    rng = mulberry32(seedVal === null ? 20261019 : (seedVal >>> 0));
+    bind();
+    layout();
+    setTimeout(layout, 60);
+    setTimeout(layout, 320);
+    if (autoOnline) {
+      var b = modeSeg.querySelector('button[data-mode="online"]');
+      if (b) b.className = 'on';
+      setMode('online');
+    } else {
+      newGame();
+    }
+    updateAll();
+  }
+
+  /* ---------- 调试/验收句柄 ---------- */
+  window.GAME = {
+    slug: SLUG,
+    state: function () {
+      var b = countOf(BLACK), w = countOf(WHITE);
+      var mine = myColor || (mode === 'ai' ? human : BLACK);
+      return {
+        over: !!over,
+        score: countOf(mine || BLACK),   /* 我方（人机=玩家 / 联机=我的座位 / 双人=黑）子数 */
+        turn: turn,                      /* 该谁下：1 黑 2 白，0 = 终局 */
+        result: result,                  /* '' | 'black' | 'white' | 'draw' */
+        mode: mode,
+        black: b,
+        white: w,
+        moves: moveCount(),
+        legal: (turn === BLACK || turn === WHITE) && !over ? legalMoves(turn).length : 0,
+        seat: npSeat,
+        npState: npStateName,
+        myTurn: npMyTurn,
+        thinking: !!busy,
+        seed: seedVal
+      };
+    },
+    restart: function () { newGame(); },
+    seed: function () { return seedVal; }
+  };
+  window.BOARD = {
+    slug: SLUG,
+    mode: function () { return mode; },
+    setMode: function (m) { setMode(m); },
+    rect: function () {
+      var r = cv.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    },
+    moveCount: function () { return moveCount(); },
+    turnText: function () { return statusEl.textContent; },
+    over: function () { return !!over; },
+    grid: function () { return { cols: 8, rows: 8 }; },
+    clickable: function () {
+      if (over) return 0;
+      if (mode === 'online') return (npStateName === 'playing' && npMyTurn && myColor) ? myColor : 0;
+      if (mode === 'ai') return (!busy && turn === human) ? human : 0;
+      return (turn === BLACK || turn === WHITE) ? turn : 0;
+    },
+    legal: function () {
+      if (over) return [];
+      var p = (mode === 'online') ? myColor : turn;
+      if (!p) return [];
+      return legalMoves(p).map(function (m) { return { r: m.r, c: m.c }; });
+    },
+    pointAt: function (x, y) {
+      var r = cv.getBoundingClientRect();
+      return { x: r.left + (x + 0.5) * r.width / 8, y: r.top + (y + 0.5) * r.height / 8 };
+    },
+    sampleClicks: function () {
+      var p = window.BOARD.clickable();
+      if (!p) return [];
+      var ms = legalMoves(p);
+      if (!ms.length) return [];
+      ms.sort(function (a, b) { return WEIGHT[b.r * 8 + b.c] - WEIGHT[a.r * 8 + a.c]; });
+      var out = [];
+      for (var i = 0; i < ms.length && out.length < 4; i++) out.push(window.BOARD.pointAt(ms[i].c, ms[i].r));
+      return out;
+    }
+  };
+  window.__reversi = {
+    board: function () { return Array.prototype.slice.call(board); },
+    /* 自测用：直接摆一个局面（64 字符，b/w/.），lastP = 最后落子方，用于验证跳过与终局判定 */
+    load: function (s, lastP) {
+      s = String(s == null ? '' : s).replace(/[^bw.]/g, '');
+      if (s.length !== 64) return false;
+      gen++;
+      if (aiTimer) { clearTimeout(aiTimer); aiTimer = 0; }
+      busy = false; over = false; result = '';
+      hist.length = 0;
+      for (var i = 0; i < 64; i++) {
+        var ch = s.charAt(i);
+        board[i] = ch === 'b' ? BLACK : (ch === 'w' ? WHITE : EMPTY);
+      }
+      lastMove = null; anim = null; hintCell = null; ovMuted = false;
+      ovEl.hidden = true;
+      if (lastP === BLACK || lastP === WHITE) hist.push({ type: 'move', p: lastP, r: -1, c: -1 });
+      refresh(false);
+      return true;
+    },
+    counts: function () { return { black: countOf(BLACK), white: countOf(WHITE) }; },
+    turnInfo: function () { var t = turnInfo(); return { turn: t.turn, skip: t.skip, over: t.over }; },
+    legal: function (p) { return legalMoves(p || turn).map(function (m) { return m.r + ',' + m.c; }); },
+    play: function (r, c) { tryPlay(r, c); },
+    aiBest: function (p, d) { return aiBest(p || turn, d || DEPTHS[level] || 3); },
+    humanTurn: function () {
+      if (over) return false;
+      if (mode === 'ai') return turn === human && !busy;
+      return turn === BLACK || turn === WHITE;
+    },
+    autoMove: function () {
+      /* 自测用：替当前该下的一方走一手（含无棋可下时返回 'pass'） */
+      if (over) return '';
+      var p = (mode === 'online') ? myColor : turn;
+      if (!p) return '';
+      if (!hasMoves(p)) return 'pass';
+      var mv = aiBest(p, 2) || legalMoves(p)[0];
+      if (!mv) return '';
+      var s = mv.r + ',' + mv.c;
+      tryPlay(mv.r, mv.c);
+      return s;
+    }
+  };
+
+  boot();
+})();
+</script>
+</body>
+</html>

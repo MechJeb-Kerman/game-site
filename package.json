@@ -28,7 +28,9 @@
     "gen:seed": "node tools/gen-seed-data.mjs",
     "test:play": "node tools/play-api-test.mjs",
     "test:worker-play": "node tools/worker-play-test.mjs",
-    "test:boards": "node tools/board-games-test.mjs"
+    "test:boards": "node tools/board-games-test.mjs",
+    "gen:icons": "node tools/gen-icons.mjs",
+    "test:pwa": "node tools/pwa-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

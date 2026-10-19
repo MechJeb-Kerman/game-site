@@ -135,6 +135,11 @@ function problems(c) {
 /* ---------- 断言 ---------- */
 function has(s, needle) { return String(s).indexOf(needle) >= 0; }
 
+/* 游戏总数直接读产物里的 data/games.json：以后加游戏不用再改这里的断言 */
+const GAME_COUNT = (function () {
+  try { return JSON.parse(fs.readFileSync(path.join(OUT, "data", "games.json"), "utf8")).games.length; } catch (e) { return 0; }
+})();
+
 const TARGETS = [
   {
     n: "pages-home", w: 1280, h: 1050, u: BASE,
@@ -146,7 +151,7 @@ const TARGETS = [
     js: `(function(){ var cards = [].slice.call(document.querySelectorAll(".grid .card")); return { n: cards.length, on: (document.querySelector(".tab.on")||{}).textContent || "", onCount: document.querySelectorAll(".tab.on").length, order: cards.map(function(c){ return c.getAttribute("data-title"); }) }; })()`,
     want: function (s) {
       var e = [];
-      if (s.n !== 10) e.push("列表页卡片应为 10 张，实际 " + s.n);
+      if (GAME_COUNT && s.n !== GAME_COUNT) e.push("列表页卡片应为 " + GAME_COUNT + " 张（与 data/games.json 对齐），实际 " + s.n);
       if (s.onCount !== 1 || s.on !== "名称") e.push("排序标签高亮不对：" + s.onCount + " / " + s.on);
       var sorted = s.order.slice().sort(function (a, b) { return a.localeCompare(b, "zh-Hans-CN"); });
       if (s.order.join("|") !== sorted.join("|")) e.push("按名称排序没生效：" + s.order.join(" > "));

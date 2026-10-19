@@ -88,6 +88,26 @@ export function isExpired(room, now) {
   return age > TTL_PLAYING_MS;
 }
 
+/**
+ * 观战钥匙：`<房间 id>-<watch_token>`。房间里的两位玩家拿得到，用来把这一局分享给别人看；
+ * 观战只看不走，钥匙不是座位 token，露出去也拿不到落子权。
+ */
+export function watchKeyOf(room) {
+  if (!room || !room.watch_token) return '';
+  return Number(room.id) + '-' + room.watch_token;
+}
+
+/** 解析观战钥匙；格式不对返回 null（观战是公开入口，先做严格校验再查库） */
+export function parseWatchKey(key) {
+  const s = String(key || '').trim();
+  const i = s.indexOf('-');
+  if (i <= 0) return null;
+  const id = Number(s.slice(0, i));
+  const token = s.slice(i + 1);
+  if (!Number.isInteger(id) || id <= 0 || !/^[a-f0-9]{12,64}$/.test(token)) return null;
+  return { id: id, token: token };
+}
+
 /** 给客户端看的房间视图：座位号与 token 只回给本人，对手的 token 不外泄 */
 export function publicRoom(room, seat) {
   return {
@@ -101,6 +121,9 @@ export function publicRoom(room, seat) {
     rematch: Number(room.rematch || 0),
     seat: seat,
     myTurn: isMyTurn(room, seat),
+    // 已存档的棋谱 id（0 = 还没存，对局结束后才会补上）；观战钥匙只给房间里的玩家
+    replayId: Number(room.replay_id || 0),
+    watchKey: seat >= 0 ? watchKeyOf(room) : '',
     players: [
       { seat: 0, name: room.host_name || '', joined: true },
       { seat: 1, name: room.guest_name || '', joined: !!room.guest_token }

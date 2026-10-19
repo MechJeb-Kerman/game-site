@@ -15,6 +15,8 @@ import * as fguard from './src/forum-guard.js';
 // 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
 import { PORTAL_HOSTS } from './src/sites.js';
 import * as play from './src/play-store.js';
+import * as social from './src/social.js';
+import { dayKey } from './src/daily.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -85,7 +87,7 @@ const UGC_HTML_CSP = [
    论坛有两种访问形态：游戏站上的 /forum/*，以及 forum.fishport.cn 的根路径。
    后者的请求在这里被内部重写成 /forum/*，页面里的链接基址用 req.forumBase（'' 或 '/forum'），
    同一套路由与模板在两种形态下都能用；/forum/* 与全站公共前缀不受影响。 */
-const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|nav|favicon\.ico|robots\.txt|sitemap\.xml)(\/|$)/;
+const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|nav|favicon\.ico|robots\.txt|sitemap\.xml|manifest\.webmanifest|sw\.js|icons)(\/|$)/;
 
 app.use((req, res, next) => {
   const host = String(req.get('host') || '').split(':')[0].toLowerCase();
@@ -158,6 +160,8 @@ app.use((req, res, next) => {
 
 // ---------- 静态资源 ----------
 app.use('/static', express.static(PUBLIC_DIR, { maxAge: '7d', etag: true }));
+// PWA 图标：public/ 根目录没有整体挂静态，单独把 icons 目录挂出来（manifest 里声明的 4 张图）
+app.use('/icons', express.static(join(PUBLIC_DIR, 'icons'), { maxAge: '30d', etag: true }));
 // 生产环境建议把游戏放到独立域名（如 games.example.com）做沙箱隔离
 app.use('/games', express.static(GAMES_DIR, { maxAge: '1h', etag: true }));
 
@@ -317,7 +321,10 @@ app.get('/game/:slug', (req, res) => {
       favCount: data.favoriteCount(game.slug),
       thread: data.commentThread(game.slug, cpage),
       commentTotal: data.countComments(game.slug),
-      cmtNotice: CMT_NOTICE[String(req.query.report || '')] || ''
+      cmtNotice: CMT_NOTICE[String(req.query.report || '')] || '',
+      // ?watch=观战钥匙 / ?replay=棋谱 id：只是把参数透传给 iframe 里的播放器，权限校验都在 API 侧
+      watch: String(req.query.watch || ''),
+      replay: String(req.query.replay || '')
     })
   );
 });
@@ -348,6 +355,61 @@ app.get('/notice/:slug', (req, res) => {
       thread: data.noticeThread(post.id, cpage),
       commentTotal: data.countNoticeComments(post.id),
       cmtNotice: CMT_NOTICE[String(req.query.report || '')] || ''
+    })
+  );
+});
+
+/* ---------- 每日挑战 / 个人主页 / 棋谱回放 ---------- */
+
+/**
+ * 每日挑战：题目由日期哈希从已上架游戏里轮换（src/daily.js），两条线算同一个结果。
+ * 「完成」不发客户端成绩——当天那款游戏收到一次播放上报就算打卡（见 POST /api/games/:slug/play）。
+ */
+app.get('/daily', (req, res) => {
+  const day = dayKey();
+  const slug = social.dailySlug(day);
+  const stats = req.user ? social.dailyStats(req.user.id) : null;
+  res.send(
+    ui.dailyPage({
+      origin: originOf(req),
+      user: req.user,
+      day,
+      game: data.getGame(slug),
+      stats: stats
+        ? { total: stats.total, streak: stats.streak, doneToday: stats.doneToday, done: stats.done }
+        : null,
+      board: social.dailyBoard(day, 12)
+    })
+  );
+});
+
+/** 个人主页：昵称、等级、徽章与公开计数；邮箱之类只出现在 /account。 */
+app.get('/u/:name', (req, res) => {
+  const profile = social.profileByName(req.params.name);
+  if (!profile) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  res.send(
+    ui.profilePage({
+      origin: originOf(req),
+      user: req.user,
+      profile,
+      isSelf: !!(req.user && Number(req.user.id) === Number(profile.id))
+    })
+  );
+});
+
+/** 棋谱回放：对局结束时已落库（play-store.saveReplay），这里只负责渲染播放器。 */
+app.get('/replay/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const replay = Number.isInteger(id) && id > 0 ? play.replay(id) : null;
+  if (!replay) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  play.bumpReplayPlays(id);
+  res.send(
+    ui.replayPage({
+      origin: originOf(req),
+      user: req.user,
+      replay,
+      game: data.getGame(replay.game),
+      more: play.replayList({ game: replay.game, limit: 10 }).items.filter((x) => Number(x.id) !== id).slice(0, 6)
     })
   );
 });
@@ -383,6 +445,21 @@ app.get(['/favicon.ico', '/favicon.svg'], (req, res) => {
       '<text x="50" y="54" text-anchor="middle" dominant-baseline="central" font-size="62">🎮</text>' +
       '</svg>'
   );
+});
+
+// PWA：manifest 与 Service Worker。单一事实来源就是 public/ 下这两个文件，每次都从磁盘读，改完即生效
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json; charset=utf-8').setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(join(PUBLIC_DIR, 'manifest.webmanifest'));
+});
+
+app.get('/sw.js', (req, res) => {
+  // no-cache：SW 脚本必须每次回源校验，否则「改了不生效」；Service-Worker-Allowed 让 SW 能控制整站
+  res
+    .type('application/javascript; charset=utf-8')
+    .setHeader('Cache-Control', 'no-cache')
+    .setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(join(PUBLIC_DIR, 'sw.js'));
 });
 
 app.get('/robots.txt', (req, res) => {
@@ -521,7 +598,12 @@ app.post('/api/games/:slug/play', (req, res) => {
   }
   const plays = data.incrementPlay(slug);
   if (plays === null) return res.status(404).json({ error: 'not_found' });
-  res.json({ counted: true, plays });
+  // 每日挑战打卡：今天轮到的正好是这款游戏时记一笔（只有登录用户有打卡，游客只计播放次数）
+  let daily = null;
+  if (req.user) {
+    try { daily = social.markDaily(req.user.id, slug); } catch { daily = null; }
+  }
+  res.json({ counted: true, plays, daily: daily && daily.fresh ? daily.day : '' });
 });
 
 /**
@@ -603,6 +685,25 @@ app.post('/api/play/rematch', (req, res) => {
 
 app.post('/api/play/leave', (req, res) => {
   playReply(res, play.leave(Number(req.body && req.body.id), req.body && req.body.token, Date.now()));
+});
+
+// 观战：只认「房间 id + watch_token」，拿到的是公开视图（seat = -1），永远看不到玩家座位凭证
+app.post('/api/play/watch', (req, res) => {
+  const b = req.body || {};
+  playReply(res, play.watchRoom(String(b.key || ''), Number(b.since) || 0, Date.now()));
+});
+
+/**
+ * 棋谱：对局结束时由服务端落库（见 play-store 的 saveReplay），只读、公开。
+ * 回放页与游戏页的 ?replay= 播放器都读这一份，客户端不能改写棋谱。
+ */
+app.get('/api/replays/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ ok: false, error: 'bad_id' });
+  const replay = play.replay(id);
+  if (!replay) return res.status(404).json({ ok: false, error: 'not_found', hint: '棋谱不存在或已被清理' });
+  play.bumpReplayPlays(id);
+  res.json({ ok: true, replay });
 });
 
 // ---------- 账号 ----------
@@ -687,7 +788,8 @@ app.get('/account', requireLogin, (req, res) => {
       }),
       notice: String(req.query.ok || ''),
       error: String(req.query.err || ''),
-      devLink: devLinkOf(originOf(req), 'verify', req.query.t)
+      devLink: devLinkOf(originOf(req), 'verify', req.query.t),
+      profile: social.profileOf(req.user.id)
     })
   );
 });

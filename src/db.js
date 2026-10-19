@@ -310,6 +310,31 @@ export function migrate() {
       created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_play_moves_room ON play_moves(room_id, seq);
+
+    -- 第六批：观战 / 棋谱回放 / 每日挑战（第六批的功能都只用服务端可验证的数据）
+    CREATE TABLE IF NOT EXISTS play_replays (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      game       TEXT NOT NULL,
+      room_code  TEXT NOT NULL DEFAULT '',
+      host_name  TEXT NOT NULL DEFAULT '',
+      guest_name TEXT NOT NULL DEFAULT '',
+      result     TEXT NOT NULL DEFAULT '',
+      move_count INTEGER NOT NULL DEFAULT 0,
+      moves      TEXT NOT NULL DEFAULT '[]',
+      plays      INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_replays_game ON play_replays(game, id DESC);
+
+    -- 每日挑战：一天一人一条（UNIQUE 索引兜底，重复提交写不进去）
+    CREATE TABLE IF NOT EXISTS daily_results (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      day        TEXT NOT NULL,
+      user_id    INTEGER NOT NULL,
+      slug       TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_user ON daily_results(day, user_id);
   `);
 
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核
@@ -340,6 +365,10 @@ export function migrate() {
   // 论坛禁言：到点自动解除，是否禁言由 muted_until > now 判断（封禁仍走 users.banned）
   addColumn('users', 'muted_until', 'muted_until TEXT');
   addColumn('users', 'mute_reason', 'mute_reason TEXT');
+
+  // 第六批：观战凭证（房间内玩家可分享的只读钥匙）与已存档的棋谱 id
+  addColumn('play_rooms', 'watch_token', "watch_token TEXT NOT NULL DEFAULT ''");
+  addColumn('play_rooms', 'replay_id', 'replay_id INTEGER DEFAULT 0');
 }
 
 /** 幂等补索引 */

@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#050b14">
+<title>成语猜猜 · 小游戏</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);
+    color:#dbf8ff;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:min(100%,900px);margin:0 auto;padding:12px 12px 26px;display:flex;flex-direction:column;gap:9px}
+  h1{margin:2px 0 0;text-align:center;font-size:clamp(21px,5.4vw,34px);letter-spacing:.16em;
+     color:#e9feff;text-shadow:0 0 20px rgba(6,182,212,.55)}
+  .hint{margin:0;text-align:center;font-size:12.5px;line-height:1.65;color:#7fd7e8}
+  .hint b{color:#a7f3ff;font-weight:600}
+  .bar{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center}
+  .mbtn{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(6,182,212,.35);
+        background:rgba(6,182,212,.10);color:#bff2ff;font-size:13px;font-family:inherit;
+        cursor:pointer;touch-action:manipulation}
+  .mbtn.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#04202b;border-color:#67e8f9;font-weight:700}
+  .date{font-size:12px;color:#67e8f9;opacity:.85}
+  .stats{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+  .stat{flex:1 1 0;min-width:70px;max-width:130px;text-align:center;padding:6px 4px;border-radius:10px;
+        background:rgba(6,182,212,.13);border:1px solid rgba(6,182,212,.35)}
+  .stat b{display:block;font-size:17px;color:#eafcff;line-height:1.25}
+  .stat span{font-size:11px;color:#7fd7e8}
+  .board{display:grid;grid-template-rows:repeat(6,auto);gap:6px;
+         width:min(100%,420px,max(230px,calc((100vh - 330px)*0.6667)));margin:2px auto}
+  .row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .tile{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:10px;
+        font-size:clamp(19px,7.6vw,33px);font-weight:600;color:#eafcff;
+        background:rgba(6,182,212,.07);border:1.5px solid rgba(6,182,212,.26);
+        transition:background .18s,border-color .18s,color .18s}
+  .tile.filled{border-color:rgba(6,182,212,.75);background:rgba(6,182,212,.17);
+                box-shadow:0 0 14px rgba(6,182,212,.28) inset}
+  .tile.g{background:linear-gradient(160deg,#10b981,#059669);border-color:#34d399;color:#02251a}
+  .tile.y{background:linear-gradient(160deg,#f59e0b,#d97706);border-color:#fbbf24;color:#2a1802}
+  .tile.x{background:rgba(100,116,139,.34);border-color:rgba(148,163,184,.32);color:#9fb3c8}
+  @keyframes pop{0%{transform:scale(.84)}62%{transform:scale(1.07)}100%{transform:scale(1)}}
+  .tile.pop{animation:pop .3s ease both}
+  .msg{min-height:19px;text-align:center;font-size:13px;color:#67e8f9;transition:color .2s}
+  .msg.bad{color:#fca5a5}
+  .typebar{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:stretch}
+  .typebox{min-height:44px;border-radius:10px;padding:0 12px;font-size:18px;font-family:inherit;
+           background:rgba(3,18,28,.85);color:#eafcff;border:1.5px solid rgba(6,182,212,.45);outline:none;width:100%}
+  .typebox:focus{border-color:#67e8f9;box-shadow:0 0 0 2px rgba(6,182,212,.22)}
+  .typebox::placeholder{color:#4d8b9c;font-size:13px}
+  .btn{min-height:44px;padding:0 14px;border-radius:10px;border:1px solid rgba(6,182,212,.4);
+       background:rgba(6,182,212,.14);color:#e6feff;font-size:15px;font-family:inherit;
+       cursor:pointer;touch-action:manipulation}
+  .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#04202b;font-weight:700;border-color:#67e8f9}
+  .btn.pressed{filter:brightness(1.25)}
+  .panel{background:rgba(6,182,212,.07);border:1px solid rgba(6,182,212,.25);border-radius:12px;padding:8px 9px 10px}
+  .phead{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:#7fd7e8;margin:2px 0 6px}
+  .phead b{color:#a7f3ff;font-weight:600;font-size:12.5px}
+  .chars{display:grid;grid-template-columns:repeat(auto-fit,minmax(46px,1fr));gap:6px}
+  .words{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .chip{min-height:44px;display:flex;align-items:center;justify-content:center;padding:0 10px;
+        border-radius:9px;font-size:19px;font-family:inherit;letter-spacing:.06em;cursor:pointer;
+        background:rgba(14,165,233,.13);border:1px solid rgba(6,182,212,.36);color:#e6feff;touch-action:manipulation}
+  .chip.wide{font-size:16px;letter-spacing:.1em;min-height:40px}
+  .chip:active,.chip.pressed{background:rgba(6,182,212,.4)}
+  .none{font-size:12.5px;color:#5b8fa0;padding:6px 2px}
+  .tools{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+  @keyframes shake{10%,90%{transform:translateX(-3px)}30%,70%{transform:translateX(4px)}50%{transform:translateX(-2px)}}
+  .board.shake{animation:shake .34s ease}
+  .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:14px;z-index:30;
+           background:rgba(2,7,14,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  .overlay.on{display:flex}
+  .card{width:100%;max-width:min(100%,400px);max-height:92vh;overflow:auto;text-align:center;
+        background:rgba(5,17,28,.97);border:1px solid rgba(6,182,212,.42);border-radius:16px;padding:18px 16px 16px;
+        box-shadow:0 22px 60px rgba(0,0,0,.55)}
+  .card h2{margin:0 0 8px;font-size:20px;color:#a7f3ff;letter-spacing:.08em}
+  .answer{font-size:clamp(23px,7vw,32px);letter-spacing:.22em;color:#eafcff;font-weight:700;text-shadow:0 0 18px rgba(6,182,212,.5)}
+  .mean{margin:8px 0 12px;font-size:13.5px;line-height:1.7;color:#bde9f5}
+  .dist{margin:0 0 14px;display:flex;flex-direction:column;gap:3px}
+  .drow{display:grid;grid-template-columns:16px 1fr 24px;gap:6px;align-items:center;font-size:12px;color:#7fd7e8}
+  .dbar{height:12px;border-radius:6px;background:rgba(6,182,212,.14);overflow:hidden}
+  .dbar i{display:block;height:100%;background:linear-gradient(90deg,#0891b2,#22d3ee);border-radius:6px}
+  .drow.hi .dbar i{background:linear-gradient(90deg,#10b981,#34d399)}
+  .drow.hi{color:#a7f3ff;font-weight:700}
+  .tips{font-size:12px;color:#6fb3c4;margin-top:10px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>成语猜猜</h1>
+  <p class="hint">六个机会猜一句四字成语 · 用<b>中文输入法</b>键入四字后按回车，或点下方<b>候选字 / 候选成语</b>拼出来<br>绿 = 字与位置都对 · 黄 = 字在答案里但位置不对 · 灰 = 答案里没有这个字</p>
+
+  <div class="bar">
+    <button class="mbtn on" id="mDaily" type="button" data-act="mode" data-val="daily">每日一题</button>
+    <button class="mbtn" id="mEndless" type="button" data-act="mode" data-val="endless">无限模式</button>
+    <span class="date" id="dateTag"></span>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b id="sLeft">6</b><span>剩余机会</span></div>
+    <div class="stat"><b id="sScore">0</b><span>得分</span></div>
+    <div class="stat"><b id="sStreak">0</b><span>连胜</span></div>
+    <div class="stat"><b id="sRate">0%</b><span>胜率</span></div>
+  </div>
+
+  <div class="board" id="board" aria-label="猜成语棋盘"></div>
+  <div class="msg" id="msg" aria-live="polite"></div>
+
+  <div class="typebar">
+    <input id="typebox" class="typebox" type="text" inputmode="text" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"
+           placeholder="点这里，用中文输入法打四字成语" aria-label="输入四字成语">
+    <button class="btn primary" type="button" data-act="submit">提交</button>
+    <button class="btn" type="button" data-act="del">删字</button>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><b>候选字</b><span id="prefixTag">（未输入）</span></div>
+    <div class="chars" id="chars"></div>
+    <div class="phead" style="margin-top:9px"><b>候选成语</b><span id="wordTag">输入两个字后开始补全</span></div>
+    <div class="words" id="words"></div>
+  </div>
+
+  <div class="tools">
+    <button class="btn" type="button" data-act="again" id="again">重新开始</button>
+    <button class="btn" type="button" data-act="next" id="next">换一题</button>
+  </div>
+</div>
+
+<div class="overlay" id="ov">
+  <div class="card">
+    <h2 id="ovTitle">猜对了！</h2>
+    <div class="answer" id="ovWord"></div>
+    <p class="mean" id="ovMean"></p>
+    <div class="dist" id="ovDist"></div>
+    <button class="btn primary" type="button" data-act="ovbtn" id="ovBtn">再来一局</button>
+    <div class="tips" id="ovTips"></div>
+  </div>
+</div>
+
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- 成语库：写死在脚本里（不进 DOM），四字成语 + 一句释义 ---------- */
+  var BANK_TEXT = [
+'一心一意|心思、意念专一，没有别的考虑。',
+'三心二意|犹豫不决，意志不坚定。',
+'十全十美|各方面都很完美，毫无缺陷。',
+'七上八下|形容心里慌乱不安。',
+'五光十色|形容色彩鲜艳，花样繁多。',
+'四面八方|指周围各个方向。',
+'九牛一毛|比喻极大数量中微不足道的一点。',
+'千军万马|形容雄壮的队伍或声势浩大。',
+'百发百中|形容射箭或射击技术高超，也比喻料事准确。',
+'半途而废|做事做到一半就停下来，不能坚持到底。',
+'井井有条|形容条理分明，丝毫不乱。',
+'画蛇添足|比喻做了多余的事，反而不好。',
+'守株待兔|比喻死守经验，不知变通，妄想不劳而获。',
+'掩耳盗铃|比喻自己欺骗自己。',
+'刻舟求剑|比喻拘泥成例，不知随情况变化。',
+'亡羊补牢|比喻出了差错后及时补救。',
+'拔苗助长|比喻违反规律，急于求成，反而坏事。',
+'自相矛盾|比喻自己说话做事前后抵触。',
+'滥竽充数|比喻没有真才实学的人混在行家里。',
+'螳臂当车|比喻力量弱小却硬要抵挡强大的力量。',
+'杯弓蛇影|比喻疑神疑鬼，自相惊扰。',
+'惊弓之鸟|比喻受过惊吓，遇到一点动静就惶恐不安。',
+'如鱼得水|比喻得到和自己非常相投的人或环境。',
+'狐假虎威|比喻依仗别人的势力欺压人。',
+'鹬蚌相争|比喻双方相持不下，让第三者得利。',
+'叶公好龙|比喻表面爱好某事物，实际并不真爱。',
+'南辕北辙|比喻行动和目的正好相反。',
+'邯郸学步|比喻模仿别人不成，反而丢了原有的本领。',
+'东施效颦|比喻盲目模仿，效果适得其反。',
+'愚公移山|比喻只要有毅力，就能克服困难。',
+'精卫填海|比喻意志坚决，不畏艰难。',
+'卧薪尝胆|形容人刻苦自励，发奋图强。',
+'负荆请罪|表示向人主动认错赔罪。',
+'完璧归赵|比喻把原物完好地归还本人。',
+'纸上谈兵|比喻空谈理论，不能解决实际问题。',
+'四面楚歌|比喻陷入四面受敌、孤立无援的境地。',
+'破釜沉舟|比喻下定决心，不留退路。',
+'背水一战|比喻处在绝境中，为求出路而决一死战。',
+'望梅止渴|比喻用空想来安慰自己。',
+'画龙点睛|比喻在关键处点明要旨，使内容更生动。',
+'举一反三|从一件事类推而知道其他许多事。',
+'温故知新|温习旧知识，能得到新的体会。',
+'学而不厌|学习总感到不满足，形容好学。',
+'切磋琢磨|比喻互相商量研究，取长补短。',
+'悬梁刺股|形容学习刻苦。',
+'凿壁偷光|形容家贫而读书刻苦。',
+'囊萤映雪|形容家境贫寒仍读书刻苦。',
+'闻鸡起舞|比喻有志向的人及时奋起。',
+'手不释卷|形容勤奋好学，书本不离手。',
+'废寝忘食|形容专心努力，顾不上睡觉吃饭。',
+'全神贯注|全部精神集中在一点上。',
+'专心致志|一心一意，集中精神。',
+'聚精会神|集中精神，集中注意力。',
+'目不转睛|形容注意力集中，看得出神。',
+'心不在焉|心思不在这里，指思想不集中。',
+'三言两语|形容话说得很少。',
+'千言万语|形容有很多话要说。',
+'滔滔不绝|形容话很多，说起来没个完。',
+'口若悬河|形容能说会道，说起来滔滔不绝。',
+'出口成章|说出话来就是一篇文章，形容文思敏捷。',
+'妙语连珠|形容说话风趣，连续不断。',
+'沉默寡言|形容人性格沉静，很少说话。',
+'哑口无言|形容理屈词穷，无话可说。',
+'无言以对|指没有话来回答。',
+'语无伦次|话讲得乱七八糟，没有条理。',
+'花言巧语|指虚假而动听的话。',
+'甜言蜜语|像蜜糖一样甜的话，指讨人欢喜的话。',
+'忠言逆耳|诚恳劝告的话，往往让人听起来不舒服。',
+'言而有信|说话算数，讲信用。',
+'一诺千金|形容说话算数，极有信用。',
+'一言九鼎|形容说的话分量大，起决定作用。',
+'一言为定|一句话说定了，不再更改。',
+'三思而行|反复考虑之后再去做。',
+'深思熟虑|反复深入地考虑。',
+'老谋深算|形容人办事精明老练。',
+'足智多谋|形容人善于料事和用计。',
+'神机妙算|形容善于估计复杂情势、决定策略。',
+'未雨绸缪|比喻事先做好准备。',
+'有备无患|事先有准备，就可以免除祸患。',
+'防微杜渐|在错误或坏事萌芽时及时制止。',
+'居安思危|处在安定环境中，要想到可能出现的危难。',
+'临危不惧|遇到危难毫不畏惧。',
+'泰然自若|形容镇定，不慌不忙。',
+'从容不迫|非常镇静，不慌不忙。',
+'镇定自若|指面对变故时依然冷静。',
+'惊慌失措|吓得慌了手脚，不知怎么办才好。',
+'手忙脚乱|形容做事慌张而没有条理。',
+'迫不及待|急迫得不能再等待。',
+'争先恐后|争着向前，唯恐落后。',
+'络绎不绝|形容行人车马来来往往，接连不断。',
+'川流不息|形容行人、车马像水流一样连续不断。',
+'人山人海|形容人聚集得非常多。',
+'人声鼎沸|形容人群的声音吵吵嚷嚷，像水在锅里沸腾。',
+'鸦雀无声|形容非常静，一点声音都没有。',
+'门可罗雀|形容门庭冷落，宾客稀少。',
+'座无虚席|座位没有空着的，形容出席的人很多。',
+'高朋满座|形容宾客很多。',
+'宾至如归|形容招待客人热情周到。',
+'不速之客|指没有邀请而自己来的客人。',
+'一鸣惊人|比喻平时默默无闻，一下子做出惊人的成绩。',
+'脱颖而出|比喻人的才能全部显露出来。',
+'出类拔萃|形容才能出众，超出同类。',
+'名列前茅|指名次排在前面。',
+'首屈一指|表示位居第一。',
+'独一无二|没有相同的，也没有可以相比的。',
+'无与伦比|没有能比得上的。',
+'登峰造极|比喻学问、技艺等达到最高境界。',
+'炉火纯青|比喻功夫达到纯熟完美的境界。',
+'精益求精|已经很好了，还要求更好。',
+'锦上添花|比喻好上加好，美上添美。',
+'雪中送炭|比喻在别人急需时给以帮助。',
+'助人为乐|把帮助别人当作快乐的事。',
+'舍己为人|舍弃自己的利益去帮助别人。',
+'大公无私|一心为公，没有私心。',
+'光明磊落|形容心地坦白，公正无私。',
+'两袖清风|比喻为官清廉。',
+'一尘不染|形容非常清洁，也比喻人的品格高尚。',
+'艰苦朴素|形容吃苦耐劳，生活俭朴。',
+'任劳任怨|做事不辞劳苦，不怕别人埋怨。',
+'兢兢业业|形容做事小心谨慎，认真踏实。',
+'一丝不苟|形容办事认真，连细小的地方也不马虎。',
+'脚踏实地|形容做事踏实认真。',
+'勤勤恳恳|形容勤劳踏实。',
+'孜孜不倦|勤奋努力，不知疲倦。',
+'持之以恒|长久地坚持下去。',
+'锲而不舍|比喻有恒心，有毅力。',
+'坚持不懈|坚持到底，毫不松懈。',
+'水滴石穿|比喻力量虽小，只要坚持不懈就能成功。',
+'日积月累|一天天一月月不断积累。',
+'积少成多|积累少量的东西，能成为巨大的数量。',
+'熟能生巧|熟练了就能找到巧办法。',
+'一鼓作气|比喻趁劲头大的时候一下子把事情做完。',
+'再接再厉|一次又一次地继续努力。',
+'百折不挠|形容意志坚强，受到多少挫折都不退缩。',
+'百炼成钢|比喻经过长期锻炼，变得非常坚强。',
+'坚忍不拔|形容意志坚强，不可动摇。',
+'勇往直前|勇敢地一直向前进。',
+'前赴后继|前面的冲上去了，后面的紧跟上来。',
+'奋不顾身|奋勇直前，不顾生命危险。',
+'视死如归|把死看得像回家一样平常，形容不怕牺牲。',
+'舍生忘死|不把个人的生死放在心上。',
+'临阵磨枪|到了快要上阵时才磨枪，比喻事到临头才准备。',
+'兵贵神速|用兵贵在行动特别迅速。',
+'出其不意|趁对方没有意料到就采取行动。',
+'攻其不备|趁敌人没有防备时进攻。',
+'声东击西|造成要攻打东边的声势，实际攻打西边。',
+'调虎离山|设法使老虎离开山冈，比喻用计使对方离开。',
+'引蛇出洞|比喻诱使对方暴露。',
+'擒贼擒王|比喻做事要抓住关键。',
+'知己知彼|对自己和对方的情况都很了解。',
+'百战百胜|每战必胜，形容善于作战。',
+'决胜千里|形容将帅雄才大略，指挥若定。',
+'战无不胜|形容军队百战百胜，也比喻做事情都能成功。',
+'化险为夷|使危险的情况变成平安。',
+'转危为安|由危险转为平安。',
+'绝处逢生|在走投无路的情况下又有了生路。',
+'柳暗花明|比喻在困难中遇到转机。',
+'否极泰来|逆境达到极点，就会向顺境转化。',
+'苦尽甘来|艰难的日子过完，美好的日子来到了。',
+'兴高采烈|形容兴致高，情绪热烈。',
+'眉飞色舞|形容非常得意或高兴的神态。',
+'喜出望外|遇到出乎意料的好事而特别高兴。',
+'欢天喜地|形容非常高兴。',
+'心花怒放|形容极其高兴。',
+'喜笑颜开|形容心里高兴，满面笑容。',
+'笑逐颜开|形容笑容满面，十分高兴。',
+'手舞足蹈|形容高兴到了极点。',
+'兴致勃勃|形容兴头很足。',
+'无忧无虑|没有一点忧愁和顾虑。',
+'心旷神怡|心情舒畅，精神愉快。',
+'赏心悦目|指看到美好的景色而心情愉快。',
+'悠然自得|形容神态悠闲、心情舒适。',
+'心平气和|心情平静，态度温和。',
+'眉开眼笑|形容高兴愉快的样子。',
+'唉声叹气|因伤感、烦闷或痛苦而发出叹息的声音。',
+'愁眉苦脸|形容愁苦的神色。',
+'闷闷不乐|心事重重，心里不快活。',
+'忧心忡忡|形容心事重重，非常忧愁。',
+'心急如焚|心里急得像火烧一样。',
+'心急火燎|心里急得像火烧一样，非常着急。',
+'坐立不安|形容心情紧张、烦躁的样子。',
+'提心吊胆|形容十分担心或害怕。',
+'心惊胆战|形容非常害怕。',
+'魂飞魄散|吓得连魂魄都离开人体飞散了。',
+'大惊失色|非常害怕，脸色都变了。',
+'目瞪口呆|形容因吃惊或害怕而发愣的样子。',
+'瞠目结舌|瞪着眼睛说不出话来，形容受窘或惊呆的样子。',
+'面红耳赤|形容因激动或羞愧而脸色发红。',
+'喜极而泣|高兴到了极点而流下眼泪。',
+'悲喜交加|悲伤和喜悦的心情交织在一起。',
+'百感交集|各种感触交织在一起。',
+'感慨万千|因外界事物变化很大而引起许多感想。',
+'触景生情|受到眼前景物的触动，引起联想和感情。',
+'睹物思人|看见离别的人留下的东西，就想起这个人。',
+'恋恋不舍|形容非常留恋，舍不得离开。',
+'依依不舍|形容舍不得离开。',
+'流连忘返|留恋不愿离开，形容对美好景致的迷恋。',
+'回味无穷|比喻事后越想越觉得意味深长。',
+'念念不忘|牢记于心，时刻不忘。',
+'山清水秀|形容风景优美。',
+'鸟语花香|形容春天的美好景象。',
+'春暖花开|形容春天温暖、百花盛开的美景。',
+'花红柳绿|形容明媚的春天景象。',
+'绿树成荫|形容树木枝叶茂密，遮蔽了阳光。',
+'枝繁叶茂|形容枝叶繁密茂盛。',
+'硕果累累|形容果实很多，也比喻成绩显著。',
+'秋高气爽|形容秋天天空晴朗，空气清新。',
+'冰天雪地|形容冰雪漫天盖地，非常寒冷。',
+'大雪纷飞|形容雪下得很大。',
+'寒风刺骨|形容天气非常寒冷。',
+'骄阳似火|形容太阳很毒，天气炎热。',
+'烈日炎炎|形容夏天阳光强烈。',
+'倾盆大雨|形容雨大势急。',
+'风雨交加|形容天气恶劣，也比喻处境艰难。',
+'电闪雷鸣|闪电飞光，雷声轰鸣，形容雷雨交加。',
+'风和日丽|形容天气晴朗暖和。',
+'晴空万里|形容天空晴朗，没有一丝云彩。',
+'云消雾散|比喻事物消失得干干净净。',
+'烟消云散|比喻事物消失得无影无踪。',
+'光阴似箭|形容时间过得极快。',
+'日月如梭|形容时间过得很快。',
+'白驹过隙|比喻时间过得极快。',
+'转瞬即逝|形容转眼之间就消失了。',
+'弹指之间|比喻时间极为短暂。',
+'一朝一夕|形容很短的时间。',
+'天长地久|形容时间悠久，也形容永远不变。',
+'日新月异|形容发展变化快，不断出现新事物。',
+'翻天覆地|形容变化巨大而彻底。',
+'沧海桑田|比喻世事变化很大。',
+'焕然一新|形容出现了崭新的面貌。',
+'面目一新|形容改变得与原来完全不同。',
+'与日俱增|随着时间一天天地增长。',
+'相得益彰|指互相帮助、互相补充，更能显出各自的好处。',
+'相辅相成|指两件事物互相配合，互相补充。',
+'相提并论|把不同的人或事不加区别地放在一起谈论。',
+'同日而语|指相提并论，多用于否定。',
+'不言而喻|不用说就可以明白。',
+'显而易见|形容事情或道理很明显，容易看清楚。',
+'一目了然|一眼就看得很清楚。',
+'淋漓尽致|形容文章或说话表达得非常充分、透彻。',
+'恰到好处|指说话做事正好达到最合适的程度。',
+'恰如其分|指办事或说话正合分寸。',
+'不折不扣|一点不打折扣，表示完全、十足。',
+'名副其实|名声或名义和实际相符。',
+'名不虚传|传出的名声不是虚假的，确实很好。',
+'货真价实|货物不是冒牌的，价钱也是实在的。',
+'实事求是|指按照事物的实际情况办事。',
+'有条不紊|形容做事有条理，一点不乱。',
+'井然有序|形容整齐有条理的样子。',
+'整整齐齐|形容有秩序，不凌乱。',
+'参差不齐|形容水平不一或很不整齐。',
+'错落有致|形容布局虽然参差，却极有情趣。',
+'五花八门|比喻事物花样繁多或变化多端。',
+'形形色色|形容事物种类繁多，各式各样。',
+'应有尽有|应该有的全都有了，形容一切齐备。',
+'一应俱全|一切都很齐全。',
+'包罗万象|形容内容丰富多彩，应有尽有。',
+'丰富多彩|形容内容丰富，花色繁多。',
+'摩肩接踵|形容人多拥挤。',
+'熙熙攘攘|形容人来人往，非常热闹。',
+'门庭若市|形容来的人很多，非常热闹。',
+'无人问津|比喻没有人来探问、尝试或购买。',
+'置之不理|放在一边，不理不睬。',
+'漠不关心|形容对人或事物冷淡，一点也不关心。',
+'无动于衷|心里一点不受感动，一点也不动心。',
+'熟视无睹|看惯了却像没看见一样，形容漫不经心。',
+'视而不见|看见了当作没看见。',
+'充耳不闻|塞住耳朵不听，形容不愿听取意见。',
+'一视同仁|指对人同样看待，不分厚薄。',
+'以德报怨|用恩德回报别人对自己的怨恨。',
+'恩将仇报|拿仇恨回报所受的恩惠。',
+'忘恩负义|忘记别人对自己的好处，反而做对不起别人的事。',
+'知恩图报|受了别人的恩惠，想着报答。',
+'感恩戴德|感激别人的恩德。',
+'情深义重|指情感深远、恩义厚重。',
+'情同手足|形容交情很深，如同兄弟。',
+'形影不离|形容彼此关系亲密，经常在一起。',
+'亲密无间|形容关系非常亲密，没有一点隔阂。',
+'志同道合|志向相同，意见相合。',
+'情投意合|形容双方思想感情融洽，合得来。',
+'同心协力|团结一致，共同努力。',
+'齐心协力|形容认识一致，共同努力。',
+'众志成城|比喻大家团结一致，就能克服困难。',
+'众望所归|大家一致期望的，指得到群众的信任。',
+'人心所向|指人民群众所拥护、向往的。',
+'一呼百应|形容号召力大，响应的人很多。',
+'兴师动众|指大规模出兵，后指动用很多人力。',
+'全力以赴|把全部力量都投入进去。',
+'竭尽全力|用尽全部力量。',
+'尽力而为|用全部的力量去做。',
+'量力而行|按照自己力量的大小去做，不要勉强。',
+'力不从心|心里想做，可是能力够不上。',
+'无能为力|用不上力量，指没有能力或力不能及。',
+'爱莫能助|虽然心中关切同情，却没有力量帮助。',
+'无济于事|对事情没有什么帮助或益处。',
+'杯水车薪|比喻力量太小，解决不了问题。',
+'沧海一粟|比喻非常渺小。',
+'微不足道|意义、价值等小得不值得一提。',
+'举足轻重|指处于重要地位，一举一动都足以影响全局。',
+'一知半解|知道得不全面，理解得也不透彻。',
+'囫囵吞枣|比喻读书等不加分析地笼统接受。',
+'生吞活剥|比喻生硬地接受或搬用别人的经验、方法。',
+'融会贯通|指融合多方面的道理而得到全面透彻的领悟。',
+'博大精深|形容思想和学识广博高深。',
+'学富五车|形容读书多，学识丰富。',
+'才华横溢|形容人的才华充分显露出来。',
+'才高八斗|形容人的文才非常高。',
+'下笔成章|形容文思敏捷，写文章很快。',
+'妙笔生花|比喻写作能力大有进步，也形容文章出色。',
+'一字千金|形容文章或书法作品的价值极高。',
+'洛阳纸贵|比喻著作有价值，流传广。',
+'家喻户晓|每家每户都知道。',
+'妇孺皆知|妇女和小孩都知道，指某件事众所周知。',
+'名扬四海|形容名声传遍天下。',
+'举世闻名|全世界都知道，形容非常著名。',
+'举世瞩目|全世界的人都注视着。',
+'崭露头角|比喻突出地显露出才能和本领。',
+'初出茅庐|比喻刚进入社会或刚走上岗位，缺乏经验。',
+'乳臭未干|形容人幼稚无知，含贬义。',
+'少不更事|指年轻，经历的事情不多。',
+'老当益壮|年纪虽老而志气更旺盛。',
+'老骥伏枥|比喻有志气的人虽然年老，仍有雄心壮志。',
+'鹤发童颜|形容老年人气色好，有精神。',
+'白发苍苍|形容人的苍老。',
+'德高望重|指品德高尚，声望很高。',
+'年高德劭|年纪大，品德好。',
+'少年老成|指人年轻却很老练稳重。',
+'后生可畏|指年轻人有作为，令人敬畏。',
+'青出于蓝|比喻学生超过老师或后人胜过前人。',
+'良师益友|指好的老师和朋友。',
+'循循善诱|指善于有步骤地引导、教育别人。',
+'诲人不倦|教导别人而不知疲倦。',
+'因材施教|针对不同对象的具体情况施行不同的教育。',
+'潜移默化|指人的思想或性格受环境影响，不知不觉起了变化。',
+'耳濡目染|形容听得多了、见得多了，无形之中受到影响。',
+'入乡随俗|到一个地方就按照当地的风俗习惯生活。',
+'因地制宜|根据各地的具体情况，制定适宜的办法。',
+'随机应变|随着情况的变化灵活机动地应付。',
+'见机行事|看具体情况灵活办事。',
+'通权达变|指办事能适应客观情况，不拘泥于成规。',
+'墨守成规|指思想保守，守着老规矩不肯改变。',
+'因循守旧|沿袭旧规，不思革新。',
+'标新立异|提出新奇的主张，表示与众不同。',
+'独树一帜|比喻自成一家。',
+'别出心裁|指想出的办法与众不同。',
+'匠心独运|形容独特地运用巧妙的心思。',
+'独具匠心|指具有独到的灵巧心思。',
+'巧夺天工|形容技艺十分巧妙。',
+'鬼斧神工|形容建筑、雕塑等技艺精巧。',
+'天衣无缝|比喻事物周密完善，找不出毛病。',
+'完美无缺|完善美好，没有缺点。',
+'无懈可击|形容十分严密，找不到一点漏洞。',
+'滴水不漏|形容说话、办事十分周密，毫无漏洞。',
+'一针见血|比喻说话直截了当，切中要害。',
+'单刀直入|比喻说话直截了当，不绕弯子。',
+'开门见山|比喻说话或写文章直截了当谈本题。',
+'直截了当|形容说话做事干脆爽快。',
+'拐弯抹角|形容说话绕弯，不直截了当。',
+'吞吞吐吐|形容说话有顾虑，想说又不敢说的样子。',
+'支支吾吾|指说话吞吞吐吐，含混躲闪。',
+'直言不讳|说话坦率，毫无顾忌。',
+'推心置腹|比喻真心待人。',
+'开诚布公|指以诚心待人，坦白无私。',
+'肝胆相照|比喻以真心相见。',
+'表里如一|形容言行和思想完全一致。',
+'言行一致|说的和做的完全一个样。',
+'心口如一|心里想的和嘴里说的一样，形容诚实直爽。',
+'言不由衷|指说出的不是真心话。',
+'口是心非|嘴里说得很好，心里想的却是另一套。',
+'阳奉阴违|指表面上遵从，暗地里违背。',
+'两面三刀|比喻当面一套，背后一套。',
+'笑里藏刀|形容对人外表和气，内心却阴险毒辣。',
+'口蜜腹剑|形容嘴上说得很甜，肚子里却怀着害人的主意。',
+'明争暗斗|形容内部争权夺利，互相倾轧。',
+'勾心斗角|比喻用尽心机，明争暗斗。',
+'尔虞我诈|指互相欺骗，互不信任。',
+'斤斤计较|形容过分计较微小的利益或无关紧要的事。',
+'患得患失|担心得不到，得到了又担心失掉。',
+'自私自利|指只为自己打算，只顾自己利益。',
+'见利忘义|见到有利可图就不顾道义。',
+'唯利是图|只要有利可图，什么事都干。',
+'利欲熏心|贪财图利的欲望迷住了心窍。',
+'贪得无厌|贪心永远没有满足的时候。',
+'得寸进尺|比喻贪得无厌。',
+'变本加厉|指情况变得比原来更加严重。',
+'雪上加霜|比喻接连遭受灾难，损害愈加严重。',
+'火上浇油|比喻使人更加愤怒或使事态更加严重。',
+'一败涂地|形容失败到了不可收拾的地步。',
+'东山再起|指退隐后再度出任要职，也比喻失势后重新恢复地位。',
+'刻不容缓|指形势紧迫，一刻也不允许拖延。',
+'迫在眉睫|形容事情已到眼前，情势十分紧迫。',
+'水落石出|比喻事情的真相完全显露出来。',
+'顾名思义|指看到名称就联想到它的意义。',
+'若有所思|好像在思考着什么。',
+'若无其事|形容不动声色或漠不关心。',
+'小心翼翼|形容言行举动十分谨慎，丝毫不敢疏忽。',
+'战战兢兢|形容非常害怕而微微发抖的样子，也形容小心谨慎。',
+'如履薄冰|比喻行事极为谨慎，存有戒心。',
+'谨小慎微|形容待人处事非常谨慎小心。',
+'粗心大意|指做事马虎，不细心。',
+'三三两两|形容三个两个地在一起，也形容为数不多。',
+'寥寥无几|形容非常稀少，没有几个。',
+'屈指可数|形容数目很少。',
+'数不胜数|形容数量极多，很难计算。',
+'不计其数|无法计算数目，形容极多。',
+'层出不穷|指接连不断地出现，没有穷尽。',
+'接踵而至|指人们前脚跟着后脚，接连不断地来。',
+'应运而生|指适应时机而产生。',
+'司空见惯|指某事常见，不足为奇。',
+'习以为常|指某种事情经常去做，或某种现象经常看到，也就觉得很平常了。',
+'屡见不鲜|常常见到，并不新奇。',
+'前所未有|历史上从来没有过。',
+'史无前例|历史上从来没有过的事例。',
+'空前绝后|从前没有过，今后也不会再有。',
+  ].join('\n');
+
+
+  /* ---------- 1. 词库索引（只建一次，答案只存在变量里，不写进 DOM） ---------- */
+  var BANK = [], MAP = {}, FIRST = {}, NEXT = {}, WORDS = {};
+  (function buildBank() {
+    var lines = BANK_TEXT.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var s = lines[i].replace(/^\s+|\s+$/g, '');
+      if (!s) continue;
+      var p = s.indexOf('|');
+      if (p < 1) continue;
+      var w = s.slice(0, p).replace(/^\s+|\s+$/g, '');
+      var m = s.slice(p + 1).replace(/^\s+|\s+$/g, '');
+      if (!/^[\u4e00-\u9fa5]{4}$/.test(w)) continue;
+      if (Object.prototype.hasOwnProperty.call(MAP, w)) continue;
+      MAP[w] = m;
+      BANK.push({ w: w, m: m });
+    }
+    for (var k = 0; k < BANK.length; k++) {
+      var word = BANK[k].w;
+      FIRST[word.charAt(0)] = (FIRST[word.charAt(0)] || 0) + 1;
+      for (var n = 1; n <= 3; n++) {
+        var pre = word.slice(0, n), nx = word.charAt(n);
+        if (!NEXT[pre]) NEXT[pre] = {};
+        NEXT[pre][nx] = (NEXT[pre][nx] || 0) + 1;
+      }
+      for (var q = 2; q <= 4; q++) {
+        var pw = word.slice(0, q);
+        if (!WORDS[pw]) WORDS[pw] = [];
+        WORDS[pw].push(word);
+      }
+    }
+  })();
+
+  /* ---------- 2. 确定性随机：mulberry32 + FNV-1a ---------- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  }
+
+  /* ---------- 3. URL 参数：?seed=<整数> / ?daily=YYYY-MM-DD ---------- */
+  var Q = new URLSearchParams(location.search);
+  var rawSeed = Q.get('seed'), rawDaily = Q.get('daily');
+  var SEED = (rawSeed !== null && /^-?\d+$/.test(rawSeed)) ? parseInt(rawSeed, 10) : null;
+  var DATE = (rawDaily && /^\d{4}-\d{2}-\d{2}$/.test(rawDaily)) ? rawDaily : null;
+  var BASE = SEED !== null ? (SEED >>> 0)
+           : DATE ? (hashStr('idiom:' + DATE) % 2147483647)
+           : ((Math.random() * 2147483647) | 0);
+  var MAX_TRIES = 6;
+
+  function wordAt(no) {
+    var r = mulberry32(BASE), idx = 0;
+    for (var i = 0; i <= Math.max(0, no | 0); i++) idx = Math.floor(r() * BANK.length);
+    return BANK[idx];
+  }
+
+  /* ---------- 4. 状态 + 本地战绩 ---------- */
+  var KEY_STATS = 'idiom-stats', KEY_DAILY = 'idiom-daily-';
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function loadStats() {
+    var d = { played: 0, wins: 0, streak: 0, max: 0, dist: [0, 0, 0, 0, 0, 0] };
+    var raw = lsGet(KEY_STATS);
+    if (raw) {
+      try {
+        var o = JSON.parse(raw);
+        if (o && typeof o === 'object') {
+          d.played = o.played | 0; d.wins = o.wins | 0; d.streak = o.streak | 0; d.max = o.max | 0;
+          if (o.dist && o.dist.length === 6) { for (var i = 0; i < 6; i++) d.dist[i] = o.dist[i] | 0; }
+        }
+      } catch (e) {}
+    }
+    return d;
+  }
+  function loadDaily() {
+    if (!DATE) return null;
+    var raw = lsGet(KEY_DAILY + DATE);
+    if (!raw) return null;
+    try { var o = JSON.parse(raw); return (o && o.done) ? o : null; } catch (e) { return null; }
+  }
+  function saveDaily(rec) { if (DATE) lsSet(KEY_DAILY + DATE, JSON.stringify(rec)); }
+
+  var STATS = loadStats();
+  var ST = {
+    mode: DATE ? 'daily' : 'endless',
+    daily: DATE, no: 0, eno: 0,
+    over: false, won: false, score: 0, attempts: 0,
+    rows: [], guess: [], counted: false, posted: false, replay: false
+  };
+  var ANSWER = '', MEANING = '';
+
+  /* ---------- 5. DOM ---------- */
+  function $(id) { return document.getElementById(id); }
+  var boardEl = $('board'), msgEl = $('msg'), box = $('typebox'), ov = $('ov');
+  var ovTitle = $('ovTitle'), ovWord = $('ovWord'), ovMean = $('ovMean'), ovDist = $('ovDist'), ovBtn = $('ovBtn'), ovTips = $('ovTips');
+  var charsEl = $('chars'), wordsEl = $('words'), prefixTag = $('prefixTag'), wordTag = $('wordTag');
+  var sLeft = $('sLeft'), sScore = $('sScore'), sStreak = $('sStreak'), sRate = $('sRate');
+  var mDaily = $('mDaily'), mEndless = $('mEndless'), dateTag = $('dateTag');
+
+  var msgTimer = 0;
+  function toast(t, bad) {
+    msgEl.textContent = t;
+    msgEl.className = bad ? 'msg bad' : 'msg';
+    if (msgTimer) clearTimeout(msgTimer);
+    msgTimer = setTimeout(function () { msgEl.textContent = ''; msgEl.className = 'msg'; }, 2800);
+  }
+  function shake() {
+    boardEl.classList.remove('shake');
+    void boardEl.offsetWidth;
+    boardEl.classList.add('shake');
+    setTimeout(function () { boardEl.classList.remove('shake'); }, 420);
+  }
+  function hideOverlay() { ov.classList.remove('on'); }
+
+  /* ---------- 6. 渲染 ---------- */
+  function renderBoard(animRow) {
+    var html = '', r, c, ch, cls, row, extra;
+    for (r = 0; r < MAX_TRIES; r++) {
+      html += '<div class="row">';
+      row = ST.rows[r];
+      for (c = 0; c < 4; c++) {
+        if (row) { ch = row.word.charAt(c); cls = 'tile ' + row.marks[c]; }
+        else if (r === ST.rows.length && ST.guess[c]) { ch = ST.guess[c]; cls = 'tile filled'; }
+        else { ch = ''; cls = 'tile'; }
+        extra = (animRow === r) ? ' pop' : '';
+        html += '<div class="' + cls + extra + '" style="animation-delay:' + (c * 85) + 'ms">' + ch + '</div>';
+      }
+      html += '</div>';
+    }
+    boardEl.innerHTML = html;
+  }
+  function renderStats() {
+    sLeft.textContent = String(Math.max(0, MAX_TRIES - ST.attempts));
+    sScore.textContent = String(ST.score);
+    sStreak.textContent = String(STATS.streak);
+    sRate.textContent = (STATS.played ? Math.round(STATS.wins / STATS.played * 100) : 0) + '%';
+  }
+  function chipHTML(label, act, val, wide) {
+    return '<button type="button" class="chip' + (wide ? ' wide' : '') +
+           '" data-act="' + act + '" data-val="' + val + '">' + label + '</button>';
+  }
+  function byCount(d) {
+    return Object.keys(d).sort(function (a, b) { return (d[b] - d[a]) || (a < b ? -1 : 1); });
+  }
+  function renderPanel() {
+    var g = ST.guess.join(''), n = g.length, i, keys, html = '';
+    if (n === 0) {
+      prefixTag.textContent = '（未输入）· 点下面的字开头';
+      keys = byCount(FIRST).slice(0, 12);
+      for (i = 0; i < keys.length; i++) html += chipHTML(keys[i], 'ch', keys[i]);
+    } else {
+      prefixTag.textContent = '已输入「' + g + '」· 再点一个字或直接键入';
+      keys = byCount(NEXT[g] || {}).slice(0, 12);
+      if (!keys.length) html = '<div class="none">词库里没有以「' + g + '」开头的成语，点「删字」退一格</div>';
+      else for (i = 0; i < keys.length; i++) html += chipHTML(keys[i], 'ch', keys[i]);
+    }
+    charsEl.innerHTML = html;
+
+    var pool = [], used = {};
+    for (i = 0; i < ST.rows.length; i++) used[ST.rows[i].word] = 1;
+    if (n >= 2 && n <= 3) {
+      var all = WORDS[g] || [];
+      for (i = 0; i < all.length && pool.length < 6; i++) if (!used[all[i]]) pool.push(all[i]);
+    }
+    var wHTML = '';
+    for (i = 0; i < pool.length; i++) wHTML += chipHTML(pool[i], 'word', pool[i], true);
+    wordsEl.innerHTML = wHTML || '<div class="none">' + (n < 2 ? '输入两个字后开始补全成语' : '没有匹配的成语') + '</div>';
+    wordTag.textContent = pool.length ? ('前缀「' + g + '」的成语 · 点一下整句填入') : (n < 2 ? '输入两个字后开始补全' : '暂无匹配');
+  }
+  function distHTML() {
+    var html = '', max = 1, i;
+    for (i = 0; i < 6; i++) if (STATS.dist[i] > max) max = STATS.dist[i];
+    for (i = 0; i < 6; i++) {
+      var pct = Math.round(STATS.dist[i] / max * 100);
+      var hi = (ST.won && ST.attempts === i + 1) ? ' hi' : '';
+      html += '<div class="drow' + hi + '"><span>' + (i + 1) + '</span>' +
+              '<span class="dbar"><i style="width:' + pct + '%"></i></span>' +
+              '<span>' + STATS.dist[i] + '</span></div>';
+    }
+    return html;
+  }
+  function renderAll() {
+    renderBoard(-1); renderPanel(); renderStats();
+    mDaily.classList.toggle('on', ST.mode === 'daily');
+    mEndless.classList.toggle('on', ST.mode !== 'daily');
+    dateTag.textContent = DATE ? ('每日一题 · ' + DATE)
+                       : (SEED !== null ? ('练习 · seed ' + SEED) : '随机出题');
+  }
+
+  /* ---------- 7. 判定（Wordle 双遍：先绿，再黄，其余灰） ---------- */
+  function judge(g, a) {
+    var marks = ['x', 'x', 'x', 'x'], used = [false, false, false, false], i, j;
+    for (i = 0; i < 4; i++) if (g.charAt(i) === a.charAt(i)) { marks[i] = 'g'; used[i] = true; }
+    for (i = 0; i < 4; i++) {
+      if (marks[i] === 'g') continue;
+      for (j = 0; j < 4; j++) {
+        if (used[j]) continue;
+        if (g.charAt(i) === a.charAt(j)) { marks[i] = 'y'; used[j] = true; break; }
+      }
+    }
+    return marks;
+  }
+
+  /* ---------- 8. 流程 ---------- */
+  function resetRun() {
+    ST.rows = []; ST.guess = [];
+    ST.attempts = 0; ST.over = false; ST.won = false; ST.score = 0;
+  }
+  function setPuzzle(no) {
+    var it = wordAt(no);
+    ST.no = no;
+    ANSWER = it ? it.w : '';
+    MEANING = it ? it.m : '';
+  }
+  function syncURL() {
+    try {
+      var url = new URL(location.href);
+      if (ST.mode === 'daily' && DATE) url.searchParams.set('daily', DATE); else url.searchParams.delete('daily');
+      if (SEED !== null) url.searchParams.set('seed', String(SEED)); else url.searchParams.delete('seed');
+      history.replaceState(null, '', url.pathname + (url.search || '') + (url.hash || ''));
+    } catch (e) {}
+  }
+  function pushChar(ch) {
+    if (ST.over) { toast('本题已经结束，点「换一题」继续', true); return; }
+    if (!/^[\u4e00-\u9fa5]$/.test(ch)) return;
+    if (ST.guess.length >= 4) { toast('已经四个字了，按回车或点「提交」', true); shake(); return; }
+    ST.guess.push(ch);
+    renderBoard(-1); renderPanel();
+  }
+  function popChar() {
+    if (ST.over) { toast('本题已经结束', true); return; }
+    if (!ST.guess.length) { toast('还没输入字'); return; }
+    ST.guess.pop();
+    renderBoard(-1); renderPanel();
+  }
+  function setGuess(w) {
+    if (ST.over) { toast('本题已经结束', true); return; }
+    ST.guess = w.slice(0, 4).split('');
+    renderBoard(-1); renderPanel();
+  }
+  function hintText(marks) {
+    var gN = 0, yN = 0, i;
+    for (i = 0; i < 4; i++) { if (marks[i] === 'g') gN++; else if (marks[i] === 'y') yN++; }
+    return '第 ' + ST.attempts + ' 次：' + gN + ' 个字位置对、' + yN + ' 个字位置不对 · 还剩 ' + Math.max(0, MAX_TRIES - ST.attempts) + ' 次';
+  }
+  function submit() {
+    if (ST.over) { toast('本题已经结束，点「换一题」继续', true); return; }
+    var g = ST.guess.join('');
+    if (g.length !== 4) { toast('还差 ' + (4 - g.length) + ' 个字', true); shake(); return; }
+    if (!Object.prototype.hasOwnProperty.call(MAP, g)) { toast('词库里没有「' + g + '」，试试下面候选里的成语', true); shake(); return; }
+    var marks = judge(g, ANSWER);
+    ST.rows.push({ word: g, marks: marks });
+    ST.attempts++;
+    ST.guess = [];
+    renderBoard(ST.rows.length - 1); renderPanel(); renderStats();
+    if (g === ANSWER) { box.value = ''; finish(true); return; }
+    if (ST.attempts >= MAX_TRIES) { box.value = ''; finish(false); return; }
+    box.value = '';
+    toast(hintText(marks));
+    try { box.focus({ preventScroll: true }); } catch (e) { try { box.focus(); } catch (e2) {} }
+  }
+  function finish(won) {
+    if (ST.over) return;
+    ST.over = true; ST.won = !!won;
+    ST.score = ST.won ? Math.round((MAX_TRIES + 1 - ST.attempts) / MAX_TRIES * 100) : 0;
+    if (!ST.counted) {
+      ST.counted = true;
+      STATS.played++;
+      if (ST.won) {
+        STATS.wins++; STATS.streak++;
+        if (STATS.streak > STATS.max) STATS.max = STATS.streak;
+        if (ST.attempts >= 1 && ST.attempts <= MAX_TRIES) STATS.dist[ST.attempts - 1]++;
+      } else { STATS.streak = 0; }
+      lsSet(KEY_STATS, JSON.stringify(STATS));
+      if (ST.mode === 'daily' && DATE) saveDaily({ done: true, won: ST.won, tries: ST.attempts, word: ANSWER, score: ST.score });
+      if (ST.won && ST.mode === 'daily' && DATE && !ST.posted) {
+        ST.posted = true;
+        try { window.parent.postMessage({ type: 'gs:daily-done', game: 'idiom', date: DATE, score: ST.score }, '*'); } catch (e) {}
+      }
+    }
+    renderStats(); renderPanel();
+    box.disabled = true;
+    setTimeout(function () { if (ST.over) showEnd(); }, 760);
+  }
+  function showEnd() {
+    ovTitle.textContent = ST.won ? (ST.mode === 'daily' ? '今日一题 · 猜对了！' : '猜对了！') : '机会用完了';
+    ovWord.textContent = ANSWER;
+    ovMean.textContent = MEANING;
+    ovDist.innerHTML = distHTML();
+    ovTips.textContent = ST.won
+      ? ('用了 ' + ST.attempts + ' 次 · 得分 ' + ST.score + ' · 连胜 ' + STATS.streak)
+      : '答案是上面这句成语，记下来，下次遇到就是熟人了。';
+    ovBtn.textContent = ST.mode === 'daily' ? '去无限模式再来' : '下一题';
+    ov.classList.add('on');
+  }
+  function applyDailyRecord(rec) {
+    ST.over = true; ST.won = !!rec.won;
+    ST.attempts = rec.tries | 0; ST.score = rec.score | 0;
+    ST.counted = true; ST.posted = true; ST.replay = true;
+    renderAll();
+    ovTitle.textContent = '今日已完成';
+    ovWord.textContent = ANSWER;
+    ovMean.textContent = MEANING;
+    ovDist.innerHTML = distHTML();
+    ovTips.textContent = (rec.won ? '今天第 ' + (rec.tries | 0) + ' 次就猜对了' : '今天的题目已经答过了') + ' · 明天再来，或切到无限模式接着练。';
+    ovBtn.textContent = '去无限模式再来';
+    ov.classList.add('on');
+    box.disabled = true;
+  }
+  function nextPuzzle() {
+    if (ST.mode === 'daily') { toast('每日一题只有一道，切到「无限模式」可以继续练'); return; }
+    ST.eno = (ST.eno | 0) + 1;
+    setPuzzle(ST.eno);
+    resetRun();
+    ST.counted = false; ST.posted = false; ST.replay = false;
+    box.disabled = false;
+    hideOverlay(); renderAll();
+    toast('换了一道新的成语');
+  }
+  function doRestart() {
+    resetRun();
+    hideOverlay();
+    box.disabled = false;
+    renderAll();
+    toast('已重置本题：还是同一个成语，六个机会重来');
+  }
+  function setMode(m) {
+    if (m !== 'daily' && m !== 'endless') return;
+    if (m === 'daily' && !DATE) { toast('每日一题要用 ?daily=YYYY-MM-DD 打开', true); return; }
+    if (m === ST.mode) return;
+    ST.mode = m;
+    hideOverlay();
+    box.value = '';
+    box.disabled = false;
+    ST.counted = false; ST.posted = false; ST.replay = false;
+    if (m === 'daily') {
+      setPuzzle(0); resetRun(); renderAll();
+      var rec = loadDaily();
+      if (rec) applyDailyRecord(rec);
+      else { toast('回到今天的「每日一题」· ' + DATE); try { box.focus({ preventScroll: true }); } catch (e) {} }
+    } else {
+      setPuzzle(ST.eno | 0); resetRun(); renderAll();
+      toast('无限模式 · 点「换一题」换一个成语');
+    }
+    syncURL();
+  }
+  function onOvBtn() {
+    hideOverlay();
+    if (ST.mode === 'daily') { setMode('endless'); nextPuzzle(); }
+    else nextPuzzle();
+  }
+
+  /* ---------- 9. 输入：中文输入法 / 候选字 / 键盘 ---------- */
+  function harvest(text) {
+    if (!text || ST.over) return;
+    var added = 0, i, ch;
+    for (i = 0; i < text.length && ST.guess.length < 4; i++) {
+      ch = text.charAt(i);
+      if (/[\u4e00-\u9fa5]/.test(ch)) { ST.guess.push(ch); added++; }
+    }
+    if (added) { box.value = ''; renderBoard(-1); renderPanel(); }
+  }
+  box.addEventListener('input', function () { harvest(box.value); });
+  box.addEventListener('compositionend', function () { harvest(box.value); });
+
+  function handleEl(el) {
+    var act = el.getAttribute('data-act'), val = el.getAttribute('data-val') || '';
+    if (act === 'mode') setMode(val);
+    else if (act === 'ch') pushChar(val);
+    else if (act === 'word') setGuess(val);
+    else if (act === 'submit') submit();
+    else if (act === 'del') popChar();
+    else if (act === 'again') doRestart();
+    else if (act === 'next') nextPuzzle();
+    else if (act === 'ovbtn') onOvBtn();
+  }
+  function flash(el) {
+    el.classList.add('pressed');
+    setTimeout(function () { el.classList.remove('pressed'); }, 130);
+  }
+  var lastAct = 0;
+  function findAct(e) {
+    var t = e.target;
+    if (!t || !t.closest) return null;
+    return t.closest('[data-act]');
+  }
+  document.addEventListener('pointerdown', function (e) {
+    var el = findAct(e);
+    if (!el) return;
+    lastAct = Date.now();
+    if (e.cancelable) e.preventDefault();
+    flash(el);
+    handleEl(el);
+  }, { passive: false });
+  document.addEventListener('click', function (e) {
+    var el = findAct(e);
+    if (!el) return;
+    if (Date.now() - lastAct < 900) { if (e.cancelable) e.preventDefault(); return; }
+    flash(el);
+    handleEl(el);
+  });
+  document.addEventListener('keydown', function (e) {
+    var inBox = e.target === box;
+    if (e.key === 'Enter') {
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      submit();
+    } else if (e.key === 'Backspace') {
+      if (!inBox || !box.value) { e.preventDefault(); popChar(); }
+    } else if (e.key === 'Escape') {
+      hideOverlay();
+    }
+  });
+
+  /* ---------- 10. 调试句柄 ---------- */
+  window.GAME = {
+    slug: 'idiom',
+    state: function () {
+      var g = ST.guess.join('');
+      return {
+        slug: 'idiom', mode: ST.mode, daily: ST.daily, seed: SEED, baseSeed: BASE,
+        over: !!ST.over, won: !!ST.won, score: ST.score,
+        attempts: ST.attempts, maxAttempts: MAX_TRIES,
+        guess: g, prefix: g.slice(0, 2),
+        rows: ST.rows.map(function (r) { return { word: r.word, marks: r.marks.slice() }; }),
+        answer: ST.over ? ANSWER : '', meaning: ST.over ? MEANING : '',
+        streak: STATS.streak, played: STATS.played, wins: STATS.wins,
+        bankSize: BANK.length, puzzle: ST.no, replay: !!ST.replay, posted: !!ST.posted,
+        dailyDone: !!loadDaily()
+      };
+    },
+    restart: function () { doRestart(); return window.GAME.state(); },
+    seed: function () { return SEED === null ? null : SEED; }
+  };
+
+  /* ---------- 11. 启动 ---------- */
+  (function boot() {
+    if (ST.mode === 'daily') {
+      setPuzzle(0); resetRun(); renderAll();
+      var rec = loadDaily();
+      if (rec) applyDailyRecord(rec);
+      else toast('每日一题 · ' + DATE + ' · 六个机会猜一句成语');
+    } else {
+      setPuzzle(0); resetRun(); renderAll();
+      toast(SEED !== null ? ('练习模式 · seed ' + SEED) : '无限模式 · 六个机会猜一句成语');
+    }
+    syncURL();
+    var n = BANK.length;
+    if (n < 300) toast('词库只有 ' + n + ' 条，可能解析出错', true);
+  })();
+})();
+</script>
+</body>
+</html>

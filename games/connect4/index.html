@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>四子棋 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;padding:10px;
+    background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);background-attachment:fixed;
+    color:#dbf8ff;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;height:100%;max-width:660px;display:flex;flex-direction:column;gap:8px}
+  /* ---------- 标题 ---------- */
+  .title{flex:0 0 auto;margin:0;text-align:center;font-size:17px;font-weight:800;letter-spacing:.14em;
+    color:#e8fbff;text-shadow:0 0 14px rgba(34,211,238,.55)}
+  /* ---------- 顶部：模式 / 难度 / 手数 / 战绩 ---------- */
+  .hud{display:flex;align-items:center;gap:8px;font-size:13px;color:#7dd3fc;flex:0 0 auto;flex-wrap:wrap}
+  .stat{background:rgba(6,182,212,.13);border:1px solid rgba(6,182,212,.35);
+    padding:5px 10px;border-radius:10px;white-space:nowrap}
+  .stat b{color:#fff;margin-left:3px}
+  .stat.rec b{color:#a7f3d0;font-variant-numeric:tabular-nums}
+  .seg{display:flex;gap:6px}
+  .seg button,.levels button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
+    color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer;min-height:44px;min-width:44px;touch-action:manipulation}
+  .seg button.on,.levels button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);
+    border-color:transparent;color:#fff;font-weight:700}
+  .levels{margin-left:auto;display:flex;gap:6px}
+  .levels button[disabled]{opacity:.38;cursor:not-allowed}
+  /* ---------- 状态行 ---------- */
+  .status{display:flex;align-items:center;justify-content:center;gap:7px;text-align:center;
+    font-size:14px;color:#a5e9ff;min-height:20px;font-weight:600;flex:0 0 auto}
+  .status.wait{color:#fcd34d}.status.win{color:#a7f3d0}.status.lose{color:#fca5a5}
+  .dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;background:#ff4d5e;
+    box-shadow:0 0 10px currentColor;color:#ff4d5e}
+  .dot.p1{background:#ff4d5e;color:#ff4d5e}
+  .dot.p2{background:#ffd166;color:#ffd166}
+  .dot.none{background:#64748b;color:#64748b}
+  /* ---------- 棋盘 ---------- */
+  .area{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;position:relative}
+  #board{display:block;touch-action:manipulation;border-radius:14px}
+  /* ---------- 走子记录（一行，超长自己横向滚） ---------- */
+  .log{flex:0 0 auto;height:20px;overflow-x:auto;overflow-y:hidden;white-space:nowrap;
+    font:12px/20px ui-monospace,Menlo,Consolas,monospace;color:#67e8f9;opacity:.9;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);
+    border-radius:8px;padding:0 8px}
+  .log::-webkit-scrollbar{height:4px}
+  .log::-webkit-scrollbar-thumb{background:rgba(6,182,212,.5);border-radius:2px}
+  /* ---------- 底部按钮 ---------- */
+  .foot{display:flex;gap:8px;flex:0 0 auto}
+  /* 挂载了 NetPlay 之后，右下角会有一个固定悬浮按钮，给它留出位置 */
+  body.npmounted .foot{padding-right:116px}
+  .btn{flex:1 1 auto;min-width:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+    color:#dbf8ff;border-radius:11px;padding:11px 8px;cursor:pointer;font:inherit;font-size:14px;min-height:44px;touch-action:manipulation;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
+  .btn:active{transform:scale(.98)}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  /* ---------- 结算浮层 ---------- */
+  .overlay{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9990;display:flex;
+    align-items:center;justify-content:center;background:rgba(3,10,18,.74)}
+  .overlay[hidden]{display:none}
+  .card{min-width:212px;max-width:84%;padding:22px 20px;border-radius:18px;text-align:center;
+    background:linear-gradient(160deg,rgba(8,47,63,.98),rgba(5,11,20,.98));
+    border:1px solid rgba(6,182,212,.45);box-shadow:0 18px 50px rgba(0,0,0,.6)}
+  .ov-title{font-size:24px;font-weight:800;margin-bottom:6px}
+  .ov-sub{font-size:13px;color:#7dd3fc;margin-bottom:16px;line-height:1.6}
+  /* ---------- 宽画布（播放器里画面基本是横的）：棋盘独占左列整高，
+     模式 / 状态 / 记录 / 按钮收进右列 ---------- */
+  @media (min-width:640px){
+    .wrap{max-width:none;display:grid;column-gap:12px;
+      grid-template-columns:minmax(0,1fr) clamp(152px,20%,200px);
+      grid-template-rows:auto auto auto auto 1fr}
+    .area{grid-column:1;grid-row:1 / -1}
+    .title{grid-column:2;grid-row:1;text-align:left}
+    .hud{grid-column:2;grid-row:2}
+    .status{grid-column:2;grid-row:3}
+    .log{grid-column:2;grid-row:4}
+    .foot{grid-column:2;grid-row:5;align-self:start;flex-direction:column}
+    body.npmounted .foot{padding-right:0;padding-bottom:48px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">四子棋</h1>
+  <div class="hud">
+    <div class="seg">
+      <button type="button" data-mode="ai" class="on">人机</button>
+      <button type="button" data-mode="duo">双人</button>
+      <button type="button" data-mode="online">联机</button>
+    </div>
+    <div class="levels">
+      <button type="button" data-lv="easy">简单</button>
+      <button type="button" data-lv="normal" class="on">普通</button>
+      <button type="button" data-lv="hard">困难</button>
+    </div>
+    <div class="stat">手数<b id="moveNo">0</b></div>
+    <div class="stat rec">战绩<b id="record">0胜 0负 0平</b></div>
+  </div>
+  <div class="status" id="status"><span class="dot p1" id="dot"></span><span id="statusText">你先手（红棋），点棋盘落子</span></div>
+  <div class="area" id="area"><canvas id="board"></canvas></div>
+  <div class="log" id="log">走子记录：—</div>
+  <div class="foot">
+    <button class="btn primary" id="reset" type="button">重新开始</button>
+    <button class="btn" id="undo" type="button">悔棋</button>
+    <button class="btn" id="hint" type="button">提示</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="card">
+    <div class="ov-title" id="ovTitle">你赢了！</div>
+    <div class="ov-sub" id="ovSub"></div>
+    <button class="btn primary" id="again" type="button">再来一局</button>
+  </div>
+</div>
+
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script src="/static/js/net-play.js"></script>
+<script>
+/* =====================================================================
+ * 四子棋（Connect Four）—— 单人页面，7 列 x 6 行，重力落子
+ *   三种模式：人机（极小极大 + 立即胜 / 堵三启发式）/ 本地双人 / 联机（NetPlay）
+ *   联机走法编码：列号 '0'..'6'（≤ 256 字符且唯一表示一步：重力落子只由列决定）
+ *   window.GAME  = { slug, state(), restart(), seed(), layoutHash() }
+ *   window.BOARD = tools/board-games-test.mjs 依赖的只读契约
+ * ===================================================================== */
+(function () {
+  'use strict';
+
+  var COLS = 7, ROWS = 6, CELLS = COLS * ROWS;
+  var EMPTY = 0, P1 = 1, P2 = 2;              // P1 = 红（先手）, P2 = 黄
+  var SCORE_KEY = 'connect4:score';
+  var DROP_MS = 190;                          // 落子动画时长
+  var AI_P = P2;                              // 人机模式：玩家固定先手红棋，AI 执黄
+  var PULSE_MS = 2600;                        // 胜负线呼吸时长（之后停 rAF，省电）
+
+  /* ---------------- 参数：?seed= / ?daily=YYYY-MM-DD ---------------- */
+  function qs(name) {
+    var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
+  }
+  var seedParam = qs('seed'), dailyParam = qs('daily');
+  var dailyOk = /^\d{4}-\d{2}-\d{2}$/.test(dailyParam);
+  var seedNum = 0;
+  var seeded = false;                         // 只有显式给了 seed / daily 才走确定性布局
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  }
+  if (dailyOk) { seedNum = hashStr('connect4:' + dailyParam); seeded = true; }
+  else if (/^-?\d+$/.test(seedParam)) { seedNum = Math.abs(parseInt(seedParam, 10)) >>> 0; seeded = true; }
+  /* xorshift/mulberry32 —— 绝不用 Math.random 播种 */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  var rng = seeded ? mulberry32(seedNum || 1) : Math.random;
+
+  /* ---------------- DOM ---------------- */
+  var cv = document.getElementById('board'), ctx = cv.getContext('2d');
+  var area = document.getElementById('area');
+  var statusEl = document.getElementById('status'), statusText = document.getElementById('statusText');
+  var dotEl = document.getElementById('dot');
+  var moveNoEl = document.getElementById('moveNo'), recordEl = document.getElementById('record');
+  var logEl = document.getElementById('log'), overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle'), ovSub = document.getElementById('ovSub');
+  var undoBtn = document.getElementById('undo'), hintBtn = document.getElementById('hint');
+
+  /* ---------------- 状态 ---------------- */
+  var board = new Array(CELLS);               // r*COLS+c，r=0 是顶部
+  var moves = [];                             // [{c, r, p}]
+  var turn = P1, over = false, winner = 0, winCells = null;
+  var mode = 'ai', level = 'normal';
+  var lock = true;                            // 结算浮层期间锁输入
+  var gen = 0, aiTimer = 0;                   // gen：换局/悔棋让在途 AI 定时器作废
+  var anim = null;                            // 落子动画 {c, r, p, t0}
+  var pulseUntil = 0, rafOn = false;
+  var pickup = -1, pickupUntil = 0;           // 「提示」高亮的列
+  var hoverCol = -1;
+  var endHandled = false, dailySent = false;
+  var score = { win: 0, lose: 0, draw: 0 };   // 与 AI 的战绩，localStorage 'connect4:score'
+
+  function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+
+  /* ---------------- 战绩 ---------------- */
+  function loadScore() {
+    try {
+      var raw = localStorage.getItem(SCORE_KEY);
+      if (!raw) return;
+      var o = JSON.parse(raw);
+      if (o && typeof o === 'object') {
+        score.win = Math.max(0, parseInt(o.win, 10) || 0);
+        score.lose = Math.max(0, parseInt(o.lose, 10) || 0);
+        score.draw = Math.max(0, parseInt(o.draw, 10) || 0);
+      }
+    } catch (e) { /* 隐私模式 / 脏数据：忽略 */ }
+  }
+  function saveScore() {
+    try { localStorage.setItem(SCORE_KEY, JSON.stringify({ win: score.win, lose: score.lose, draw: score.draw })); }
+    catch (e) { /* 隐私模式：忽略 */ }
+  }
+  function renderRecord() {
+    recordEl.textContent = score.win + '胜 ' + score.lose + '负 ' + score.draw + '平';
+  }
+
+  /* ---------------- 棋盘基础 ---------------- */
+  function idx(c, r) { return r * COLS + c; }
+  function lowestEmpty(cells, c) {
+    for (var r = ROWS - 1; r >= 0; r--) if (!cells[idx(c, r)]) return r;
+    return -1;
+  }
+  var DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  /* 返回经过 (c,r) 的连四格子数组；没有返回 null */
+  function findWin(cells, c, r, p) {
+    for (var d = 0; d < 4; d++) {
+      var dr = DIRS[d][0], dc = DIRS[d][1], line = [[r, c]], rr, cc, i;
+      rr = r + dr; cc = c + dc;
+      while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && cells[idx(cc, rr)] === p) { line.push([rr, cc]); rr += dr; cc += dc; }
+      rr = r - dr; cc = c - dc;
+      while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && cells[idx(cc, rr)] === p) { line.unshift([rr, cc]); rr -= dr; cc -= dc; }
+      if (line.length >= 4) {
+        var at = 0;
+        for (i = 0; i < line.length; i++) if (line[i][0] === r && line[i][1] === c) at = i;
+        var s = Math.max(0, Math.min(at - 3, line.length - 4));
+        return line.slice(s, s + 4);
+      }
+    }
+    return null;
+  }
+  function columnsHeights() {
+    var out = [];
+    for (var c = 0; c < COLS; c++) {
+      var n = 0;
+      for (var r = 0; r < ROWS; r++) if (board[idx(c, r)]) n++;
+      out.push(n);
+    }
+    return out;
+  }
+
+  /* =====================================================================
+   * 走子管线：所有落子（本地 / AI / 联机 onMove）都进队列，
+   * 由一次 requestAnimationFrame 合并应用 —— 服务端首次轮询可能一次投递几十手
+   * ===================================================================== */
+  var queue = [], drainRaf = 0, drainTimer = 0;
+
+  function enqueue(c, p) {
+    queue.push({ c: c, p: p });
+    scheduleDrain();
+  }
+  function scheduleDrain() {
+    if (drainRaf || drainTimer) return;
+    var run = function () {
+      if (drainRaf) { cancelAnimationFrame(drainRaf); drainRaf = 0; }
+      if (drainTimer) { clearTimeout(drainTimer); drainTimer = 0; }
+      drain();
+    };
+    if (window.requestAnimationFrame) drainRaf = requestAnimationFrame(run);
+    drainTimer = setTimeout(run, 48);       // rAF 被节流时的兜底
+  }
+  /* 把队首这一批全部落到模型上，只有最后一手带动画 */
+  function drain() {
+    if (!queue.length) return;
+    var last = null;
+    while (queue.length) {
+      var q = queue.shift();
+      var res = commit(q.c, q.p);              // commit 返回落点 {c,r,p}，动画要用到 r
+      if (res) last = res;
+    }
+    if (!last) { syncUI(); return; }
+    anim = { c: last.c, r: last.r, p: last.p, t0: now() };
+    startLoop();
+    syncUI();
+    if (over) { onGameEnd(); return; }
+    if (mode === 'ai' && turn === AI_P) scheduleAI();
+  }
+  /* 只动模型，不重排 DOM */
+  function commit(c, p) {
+    if (c < 0 || c >= COLS) return null;
+    var r = lowestEmpty(board, c);
+    if (r < 0) return null;
+    board[idx(c, r)] = p;
+    moves.push({ c: c, r: r, p: p });
+    var line = findWin(board, c, r, p);
+    if (line) { over = true; winner = p; winCells = line; turn = 0; }
+    else if (moves.length >= CELLS) { over = true; winner = 0; winCells = null; turn = 0; }
+    else turn = 3 - p;
+    return { c: c, r: r, p: p };
+  }
+
+  /* ---------------- 一局结束 ---------------- */
+  function onGameEnd() {
+    if (endHandled) return;
+    endHandled = true;
+    pulseUntil = now() + PULSE_MS;
+    startLoop();
+    if (mode === 'ai') {
+      if (winner === P1) score.win++;
+      else if (winner === P2) score.lose++;
+      else score.draw++;
+      saveScore();
+      renderRecord();
+      if (dailyOk && winner === P1 && !dailySent) {
+        dailySent = true;
+        try {
+          window.parent.postMessage({ type: 'gs:daily-done', game: 'connect4', date: dailyParam, score: gameScore() }, '*');
+        } catch (e) { /* 非 iframe 环境 */ }
+      }
+    }
+    syncUI();
+    if (mode === 'online') return;            // 联机结果以 NetPlay 的 onEnd 为准
+    var title, sub;
+    if (mode === 'duo') {
+      title = winner === P1 ? '红方获胜' : (winner === P2 ? '黄方获胜' : '和棋');
+      sub = winner ? '四子连珠，漂亮！' : '棋盘已满，势均力敌';
+    } else {
+      title = winner === P1 ? '🎉 你赢了！' : (winner === P2 ? '你输了' : '和棋');
+      sub = winner === P1 ? '你先把四子连成一线' : (winner === P2 ? 'AI 连成了四子，再试一局' : '棋盘已满，平分秋色');
+      sub += '<br>战绩 ' + score.win + '胜 ' + score.lose + '负 ' + score.draw + '平';
+    }
+    showOverlay(title, sub);
+  }
+  function gameScore() { return over ? (winner === P1 ? 100 : (winner === P2 ? 0 : 50)) : 0; }
+  function resultStr() {
+    if (!over) return '';
+    if (!winner) return 'draw';
+    if (mode === 'online') {
+      var mine = (npSeat === 0) ? P1 : P2;
+      return winner === mine ? (npSeat === 0 ? 'host' : 'guest') : (npSeat === 0 ? 'guest' : 'host');
+    }
+    return winner === P1 ? 'p1' : 'p2';
+  }
+  function showOverlay(title, sub) {
+    ovTitle.textContent = title;
+    ovSub.innerHTML = sub;
+    overlay.hidden = false;
+    lock = true;
+  }
+  function hideOverlay() { overlay.hidden = true; lock = false; }
+
+  /* =====================================================================
+   * AI：立即胜 / 堵三启发式 + 极小极大（普通 4 层 / 困难 6 层 / 简单 1 层），alpha-beta 剪枝
+   * ===================================================================== */
+  var W_TAB = [
+    3, 4, 5, 7, 5, 4, 3,
+    4, 6, 8, 10, 8, 6, 4,
+    5, 8, 11, 13, 11, 8, 5,
+    5, 8, 11, 13, 11, 8, 5,
+    4, 6, 8, 10, 8, 6, 4,
+    3, 4, 5, 7, 5, 4, 3
+  ];
+  function winScore(n) { return n === 1 ? 1 : (n === 2 ? 14 : (n === 3 ? 300 : 0)); }
+  function evalBoard(cells, me) {
+    var opp = 3 - me, s = 0, i, r, c, mine, his, w;
+    for (i = 0; i < CELLS; i++) {
+      if (cells[i] === me) s += W_TAB[i];
+      else if (cells[i] === opp) s -= W_TAB[i] * 0.92;
+    }
+    function scan(r0, c0, dr, dc) {
+      var m = 0, o = 0, k, p;
+      for (k = 0; k < 4; k++) {
+        p = cells[idx(c0 + dc * k, r0 + dr * k)];
+        if (p === me) m++; else if (p === opp) o++;
+      }
+      if (m && o) return;
+      if (m) s += winScore(m);
+      else if (o) s -= winScore(o) * 1.06;
+    }
+    for (r = 0; r < ROWS; r++) for (c = 0; c < COLS; c++) {
+      if (c + 3 < COLS) scan(r, c, 0, 1);
+      if (r + 3 < ROWS) scan(r, c, 1, 0);
+      if (r + 3 < ROWS && c + 3 < COLS) scan(r, c, 1, 1);
+      if (r + 3 < ROWS && c - 3 >= 0) scan(r, c, 1, -1);
+    }
+    return s;
+  }
+  function orderCols(cells) {
+    var out = [];
+    for (var c = 0; c < COLS; c++) if (lowestEmpty(cells, c) >= 0) out.push(c);
+    out.sort(function (a, b) { return Math.abs(a - 3) - Math.abs(b - 3); });   // 中间列优先
+    return out;
+  }
+  /* 负极大值搜索：返回「轮到我」视角的分值 */
+  function negamax(cells, me, depth, alpha, beta) {
+    var list = orderCols(cells);
+    if (!list.length) return 0;
+    if (depth <= 0) return evalBoard(cells, me);
+    var best = -Infinity, i, c, r, v;
+    for (i = 0; i < list.length; i++) {
+      c = list[i]; r = lowestEmpty(cells, c);
+      cells[idx(c, r)] = me;
+      if (findWin(cells, c, r, me)) { cells[idx(c, r)] = EMPTY; return 1000000 - (10 - depth); }
+      v = -negamax(cells, 3 - me, depth - 1, -beta, -alpha);
+      cells[idx(c, r)] = EMPTY;
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) break;                 // alpha-beta 剪枝
+    }
+    return best;
+  }
+  /* 逐列试下：返回能立刻连四的列，没有返回 -1 */
+  function immediateWin(cells, p) {
+    for (var c = 0; c < COLS; c++) {
+      var r = lowestEmpty(cells, c);
+      if (r < 0) continue;
+      cells[idx(c, r)] = p;
+      var w = !!findWin(cells, c, r, p);
+      cells[idx(c, r)] = EMPTY;
+      if (w) return c;
+    }
+    return -1;
+  }
+  /* 对手下一手就能赢的列（必须堵） */
+  function mustBlock(cells, p) {
+    var opp = 3 - p, out = [];
+    for (var c = 0; c < COLS; c++) {
+      var r = lowestEmpty(cells, c);
+      if (r < 0) continue;
+      cells[idx(c, r)] = opp;
+      var w = !!findWin(cells, c, r, opp);
+      cells[idx(c, r)] = EMPTY;
+      if (w) out.push(c);
+    }
+    return out;
+  }
+  function aiPick(cells, me, lv) {
+    var list = orderCols(cells);
+    if (!list.length) return -1;
+    var win = immediateWin(cells, me);
+    if (win >= 0) return win;                       // 立即胜
+    var blocks = mustBlock(cells, me);
+    if (blocks.length) {
+      if (blocks.length === 1) return blocks[0];    // 唯一堵点
+      var pick = blocks[0];
+      for (var k = 1; k < blocks.length; k++) if (Math.abs(blocks[k] - 3) < Math.abs(pick - 3)) pick = blocks[k];
+      return pick;                                  // 多个堵点：挑靠中间的那个
+    }
+    if (lv === 'easy') {
+      /* 简单：只算一层 + 一点点随机，容易被做双威胁 */
+      var scored = [], i, c, r, v;
+      for (i = 0; i < list.length; i++) {
+        c = list[i]; r = lowestEmpty(cells, c);
+        cells[idx(c, r)] = me;
+        v = evalBoard(cells, me) - evalBoard(cells, 3 - me) * 0.5;
+        cells[idx(c, r)] = EMPTY;
+        scored.push({ c: c, v: v });
+      }
+      scored.sort(function (a, b) { return b.v - a.v; });
+      var top = scored.filter(function (s) { return s.v >= scored[0].v - 6; });
+      return top[Math.floor(rng() * top.length) % top.length].c;
+    }
+    var depth = (lv === 'hard') ? 6 : 4;            // 普通 4 层、困难 6 层
+    var best = -Infinity, bestCols = [], val;
+    for (i = 0; i < list.length; i++) {
+      c = list[i]; r = lowestEmpty(cells, c);
+      cells[idx(c, r)] = me;
+      val = -negamax(cells, 3 - me, depth - 1, -Infinity, Infinity);
+      cells[idx(c, r)] = EMPTY;
+      val += W_TAB[idx(c, r)] * 0.01;               // 同分时略微偏好中间列
+      if (val > best + 0.0001) { best = val; bestCols = [c]; }
+      else if (val > best - 0.0001) bestCols.push(c);
+    }
+    if (!bestCols.length) return list[0];
+    return bestCols[Math.floor(rng() * bestCols.length) % bestCols.length];
+  }
+  function scheduleAI() {
+    clearTimeout(aiTimer);
+    var my = gen;
+    aiTimer = setTimeout(function () {
+      if (my !== gen || mode !== 'ai' || over || turn !== AI_P) return;
+      var c = aiPick(board.slice(), AI_P, level);
+      if (c >= 0) enqueue(c, AI_P);
+    }, 260);
+  }
+
+  /* =====================================================================
+   * 渲染
+   * ===================================================================== */
+  var cssW = 0, cssH = 0, cell = 40, pad = 10;
+  var hueBase = 186 + (seeded ? (seedNum % 26) : 8);
+  var stars = [];
+  function seedLayout() {
+    stars = [];
+    for (var i = 0; i < 18; i++) {
+      stars.push({ x: rng(), y: rng(), r: 0.5 + rng() * 1.4, a: 0.10 + rng() * 0.20 });
+    }
+    /* 页面背景也铺一层种子星点：同一 seed 两次打开像素一致 */
+    var bg = ['radial-gradient(circle at 50% 0%,hsl(' + hueBase + ',72%,15%),#050b14 72%)'];
+    for (i = 0; i < 14; i++) {
+      var sx = (rng() * 100).toFixed(2), sy = (rng() * 100).toFixed(2), sa = (0.06 + rng() * 0.12).toFixed(3);
+      bg.push('radial-gradient(1.6px 1.6px at ' + sx + '% ' + sy + '%,rgba(125,211,252,' + sa + ') 0,rgba(125,211,252,0) 100%)');
+    }
+    try { document.body.style.backgroundImage = bg.join(','); } catch (e) { /* 忽略 */ }
+  }
+  function layoutHash() {
+    var s = 'connect4|' + COLS + 'x' + ROWS + '|' + (seeded ? ('seed:' + seedNum) : 'noseed') + '|hue:' + hueBase;
+    for (var i = 0; i < stars.length; i++) {
+      s += '|' + Math.round(stars[i].x * 1000) + ',' + Math.round(stars[i].y * 1000) + ',' + Math.round(stars[i].r * 100);
+    }
+    var h = hashStr(s);
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function cx(c) { return pad + c * cell + cell / 2; }
+  function cy(r) { return pad + r * cell + cell / 2; }
+
+  function drawPiece(x, y, rad, p, alpha) {
+    var g = ctx.createRadialGradient(x - rad * 0.34, y - rad * 0.38, rad * 0.12, x, y, rad * 1.06);
+    if (p === P1) { g.addColorStop(0, '#ffb3bb'); g.addColorStop(0.42, '#ff4d5e'); g.addColorStop(1, '#9f1030'); }
+    else { g.addColorStop(0, '#fff3c4'); g.addColorStop(0.42, '#ffd166'); g.addColorStop(1, '#b06d10'); }
+    ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = Math.max(1, rad * 0.08);
+    ctx.strokeStyle = p === P1 ? 'rgba(255,190,200,.55)' : 'rgba(255,240,190,.55)';
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  function drawHole(c, r) {
+    var x = cx(c), y = cy(r), rad = cell * 0.40;
+    var g = ctx.createRadialGradient(x, y - rad * 0.3, rad * 0.2, x, y, rad);
+    g.addColorStop(0, '#0b2130'); g.addColorStop(1, '#04101a');
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(125,211,252,.10)'; ctx.stroke();
+  }
+  function draw(time) {
+    if (!cssW || !cssH) return;
+    ctx.clearRect(0, 0, cssW, cssH);
+    /* 背景星点 */
+    for (var i = 0; i < stars.length; i++) {
+      ctx.beginPath();
+      ctx.arc(stars[i].x * cssW, stars[i].y * cssH, stars[i].r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(125,211,252,' + stars[i].a + ')';
+      ctx.fill();
+    }
+    /* 背板 */
+    var pw = cell * COLS + pad * 2, ph = cell * ROWS + pad * 2;
+    ctx.save();
+    ctx.shadowColor = 'hsla(' + hueBase + ',90%,55%,.55)';
+    ctx.shadowBlur = Math.max(10, cell * 0.5);
+    var pg = ctx.createLinearGradient(0, 0, 0, ph);
+    pg.addColorStop(0, 'hsl(' + hueBase + ',62%,20%)');
+    pg.addColorStop(1, 'hsl(' + (hueBase + 8) + ',72%,9%)');
+    roundRect(0, 0, pw, ph, Math.max(10, cell * 0.34));
+    ctx.fillStyle = pg; ctx.fill();
+    ctx.restore();
+    ctx.lineWidth = Math.max(1.5, cell * 0.05);
+    ctx.strokeStyle = 'hsla(' + hueBase + ',88%,62%,.42)';
+    roundRect(0.5, 0.5, pw - 1, ph - 1, Math.max(10, cell * 0.34));
+    ctx.stroke();
+
+    /* 落点提示（鼠标悬停列 / 提示列） */
+    if (!over && canInput()) {
+      var hintColNow = (pickup >= 0 && time < pickupUntil) ? pickup : -1;
+      var col = hintColNow >= 0 ? hintColNow : hoverCol;
+      if (col >= 0 && lowestEmpty(board, col) >= 0) {
+        var hr = lowestEmpty(board, col);
+        ctx.globalAlpha = hintColNow >= 0 ? 0.30 : 0.16;
+        drawPiece(cx(col), cy(hr), cell * 0.36, (mode === 'duo') ? turn : P1);
+        ctx.globalAlpha = 1;
+        if (hintColNow >= 0) {
+          ctx.beginPath();
+          ctx.moveTo(cx(col) - cell * 0.16, cy(0) - cell * 0.26);
+          ctx.lineTo(cx(col) + cell * 0.16, cy(0) - cell * 0.26);
+          ctx.lineTo(cx(col), cy(0) - cell * 0.02);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(167,243,208,.9)'; ctx.fill();
+        }
+      }
+    }
+
+    /* 棋子 */
+    var animP = anim ? Math.min(1, (time - anim.t0) / DROP_MS) : 1;
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var p = board[idx(c, r)];
+        if (!p) { drawHole(c, r); continue; }
+        if (anim && anim.c === c && anim.r === r && animP < 1) continue;   // 这一枚在飞
+        drawPiece(cx(c), cy(r), cell * 0.40, p);
+      }
+    }
+    /* 正在下落的那一枚：easeOutCubic，从棋盘上方掉进来 */
+    if (anim && animP < 1) {
+      var e = 1 - Math.pow(1 - animP, 3);
+      var y0 = cy(0) - cell * 1.15, y1 = cy(anim.r);
+      drawPiece(cx(anim.c), y0 + (y1 - y0) * e, cell * 0.40, anim.p);
+    }
+    /* 最后一手高亮 */
+    if (moves.length && !winCells) {
+      var last = moves[moves.length - 1];
+      var lp = 0.55 + 0.45 * Math.sin(time / 260);
+      ctx.beginPath();
+      ctx.arc(cx(last.c), cy(last.r), cell * 0.40 - Math.max(1.5, cell * 0.045), 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(2, cell * 0.07);
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.35 + 0.4 * lp).toFixed(3) + ')';
+      ctx.stroke();
+    }
+    /* 胜负线高亮 */
+    if (winCells) {
+      var pulse = time < pulseUntil ? (0.55 + 0.45 * Math.sin(time / 200)) : 1;
+      var first = winCells[0], lastW = winCells[winCells.length - 1];
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.55 + 0.35 * pulse).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(2.5, cell * 0.10);
+      ctx.shadowColor = 'rgba(125,255,220,.95)'; ctx.shadowBlur = cell * 0.55;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx(first[1]), cy(first[0]));
+      ctx.lineTo(cx(lastW[1]), cy(lastW[0]));
+      ctx.stroke();
+      for (var wi = 0; wi < winCells.length; wi++) {
+        ctx.beginPath();
+        ctx.arc(cx(winCells[wi][1]), cy(winCells[wi][0]), cell * 0.42, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(230,255,250,.92)';
+        ctx.lineWidth = Math.max(2, cell * 0.06);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  function startLoop() {
+    if (rafOn) return;
+    rafOn = true;
+    requestAnimationFrame(frame);
+  }
+  function frame() {
+    rafOn = false;
+    var t = now();
+    if (anim && t - anim.t0 > DROP_MS + 40) anim = null;
+    draw(t);
+    if (anim || (winCells && t < pulseUntil) || (pickup >= 0 && t < pickupUntil)) startLoop();
+    else if (pickup >= 0 && t >= pickupUntil) { pickup = -1; draw(t); }
+  }
+
+  /* ---------------- 尺寸自适应 ---------------- */
+  function layout() {
+    var availW = (area.clientWidth || 320) - 4;
+    var availH = (area.clientHeight || 320) - 4;
+    var k = 0.26;                                  // 边框相对格子的比例
+    var cellF = Math.min(availW / (COLS + k * 2), availH / (ROWS + k * 2));
+    cell = Math.max(14, Math.floor(cellF));
+    pad = Math.round(cell * k);
+    var w = cell * COLS + pad * 2, h = cell * ROWS + pad * 2;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cssW = w; cssH = h;
+    cv.style.width = w + 'px';
+    cv.style.height = h + 'px';
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw(now());
+  }
+
+  /* ---------------- UI 同步 ---------------- */
+  function statusOf() {
+    if (over) {
+      if (!winner) return { t: mode === 'duo' ? '和棋（棋盘已满）' : '和棋，平分秋色', cls: 'wait', dot: 'none' };
+      if (mode === 'duo') return { t: (winner === P1 ? '红方' : '黄方') + '四子连珠，获胜！', cls: 'win', dot: winner === P1 ? 'p1' : 'p2' };
+      if (mode === 'online') {
+        var mine = (npSeat === 0) ? P1 : P2;
+        return winner === mine ? { t: '你赢了！', cls: 'win', dot: winner === P1 ? 'p1' : 'p2' }
+                               : { t: '你输了', cls: 'lose', dot: winner === P1 ? 'p1' : 'p2' };
+      }
+      return winner === P1 ? { t: '你赢了！', cls: 'win', dot: 'p1' } : { t: '你输了', cls: 'lose', dot: 'p2' };
+    }
+    if (mode === 'online') {
+      if (npState === 'playing') {
+        return npMyTurn ? { t: '你的回合，点棋盘落子', cls: '', dot: (npSeat === 0 ? 'p1' : 'p2') }
+                        : { t: '等待对手落子…', cls: 'wait', dot: (npSeat === 0 ? 'p2' : 'p1') };
+      }
+      if (npState === 'waiting') return { t: '等对手加入房间 ' + (npCode || ''), cls: 'wait', dot: 'none' };
+      if (npState === 'done') return { t: '本局结束', cls: 'win', dot: 'none' };
+      return { t: '点右下角「联机对战」建房或加入', cls: 'wait', dot: 'none' };
+    }
+    if (mode === 'duo') return { t: (turn === P1 ? '红方' : '黄方') + '回合，点棋盘落子', cls: '', dot: turn === P1 ? 'p1' : 'p2' };
+    if (turn === AI_P) return { t: 'AI 思考中…', cls: 'wait', dot: 'p2' };
+    return { t: '你的回合（红棋），点棋盘落子', cls: '', dot: 'p1' };
+  }
+  function updateStatus() {
+    var s = statusOf();
+    statusText.textContent = s.t;
+    statusEl.className = 'status' + (s.cls ? ' ' + s.cls : '');
+    dotEl.className = 'dot ' + (s.dot || 'none');
+  }
+  function renderLog() {
+    if (!moves.length) { logEl.textContent = '走子记录：—'; return; }
+    var out = [];
+    for (var i = 0; i < moves.length; i++) {
+      out.push((i + 1) + (moves[i].p === P1 ? '.红' : '.黄') + '→' + 'ABCDEFG'.charAt(moves[i].c));
+    }
+    logEl.textContent = '走子记录：' + out.join(' ');
+    logEl.scrollLeft = logEl.scrollWidth;
+  }
+  function updateButtons() {
+    var canUndo = moves.length > 0 && mode !== 'online';
+    undoBtn.disabled = !canUndo;
+    hintBtn.disabled = over || mode === 'online';
+    var lv = document.querySelectorAll('.levels button');
+    for (var i = 0; i < lv.length; i++) lv[i].disabled = (mode !== 'ai');
+  }
+  function syncUI() {
+    moveNoEl.textContent = String(moves.length);
+    renderLog();
+    renderRecord();
+    updateStatus();
+    updateButtons();
+    startLoop();
+  }
+
+  /* ---------------- 输入 ---------------- */
+  function canInput() {
+    if (over || lock) return false;
+    if (mode === 'ai') return turn === P1;
+    if (mode === 'duo') return true;
+    if (mode === 'online') return !!np && npState === 'playing' && npMyTurn;
+    return false;
+  }
+  function myPiece() { return (npSeat === 0) ? P1 : P2; }   // seat 0 = 房主 = 先手 = 红（与 onMove 的 seat->颜色 映射一致）
+  function onPickCol(c) {
+    if (c < 0 || c >= COLS) return;
+    if (!canInput()) return;
+    if (mode === 'online') {
+      /* 联机：本地不落子，只算编码（顺带算这一手是否直接成四 / 下满 -> 终局声明） */
+      var r = lowestEmpty(board, c);
+      if (r < 0) return;
+      var me = myPiece();
+      board[idx(c, r)] = me;
+      var winNow = !!findWin(board, c, r, me);
+      board[idx(c, r)] = EMPTY;
+      var res = winNow ? (npSeat === 0 ? 'host' : 'guest') : ((moves.length + 1 >= CELLS) ? 'draw' : '');
+      if (np) np.send(String(c), res);
+      return;
+    }
+    enqueue(c, turn);
+  }
+  function toCol(ev) {
+    var b = cv.getBoundingClientRect();
+    if (!b.width) return -1;
+    var sx = (ev.clientX - b.left) * (cssW / b.width);
+    var sy = (ev.clientY - b.top) * (cssH / b.height);
+    if (sx < -cell * 0.6 || sy < -cell * 0.6 || sx > cssW + cell * 0.6 || sy > cssH + cell * 0.6) return -1;
+    var c = Math.floor((sx - pad) / cell);
+    return Math.max(0, Math.min(COLS - 1, c));       // 重力落子：只看列
+  }
+  function handleDown(ev) {
+    var c = toCol(ev);
+    if (c < 0) return;
+    if (ev.cancelable) { try { ev.preventDefault(); } catch (e) { /* 忽略 */ } }
+    onPickCol(c);
+  }
+  if (window.PointerEvent) {
+    cv.addEventListener('pointerdown', handleDown);
+    cv.addEventListener('pointermove', function (ev) {
+      if (mode === 'online' || over) return;
+      var c = toCol(ev);
+      if (c === hoverCol) return;
+      hoverCol = c;
+      startLoop();
+    });
+    cv.addEventListener('pointerleave', function () {
+      if (hoverCol < 0) return;
+      hoverCol = -1;
+      startLoop();
+    });
+  } else {                                            // 老浏览器：触摸 + 鼠标各自处理
+    cv.addEventListener('touchstart', function (ev) {
+      var t = ev.changedTouches && ev.changedTouches[0];
+      if (!t) return;
+      ev.preventDefault();
+      var c = toCol({ clientX: t.clientX, clientY: t.clientY });
+      if (c >= 0) onPickCol(c);
+    }, { passive: false });
+    cv.addEventListener('mousedown', handleDown);
+  }
+
+  /* ---------------- 悔棋 / 提示 ---------------- */
+  function undo() {
+    if (mode === 'online' || !moves.length) return;
+    gen++;                                          // 作废在途 AI
+    clearTimeout(aiTimer);
+    var back = 1;
+    if (mode === 'ai' && moves.length >= 2 && moves[moves.length - 1].p === AI_P) back = 2;
+    for (var i = 0; i < back && moves.length; i++) {
+      var m = moves.pop();
+      board[idx(m.c, m.r)] = EMPTY;
+    }
+    over = false; winner = 0; winCells = null; anim = null; endHandled = false;
+    queue.length = 0;
+    turn = moves.length ? (3 - moves[moves.length - 1].p) : P1;
+    hideOverlay();
+    syncUI();
+  }
+  function hint() {
+    if (mode === 'online' || over) return;
+    var c = aiPick(board.slice(), turn, 'normal');
+    if (c < 0) return;
+    pickup = c; pickupUntil = now() + 1600;
+    startLoop();
+  }
+
+  /* ---------------- 开局 / 模式 ---------------- */
+  function resetBoard() {
+    for (var i = 0; i < CELLS; i++) board[i] = EMPTY;
+    moves = []; turn = P1; over = false; winner = 0; winCells = null; anim = null;
+    endHandled = false;
+    queue.length = 0;
+    if (drainRaf) { cancelAnimationFrame(drainRaf); drainRaf = 0; }
+    if (drainTimer) { clearTimeout(drainTimer); drainTimer = 0; }
+    pickup = -1; hoverCol = -1; pulseUntil = 0;
+    hideOverlay();
+  }
+  function newGame() {
+    gen++; clearTimeout(aiTimer);
+    resetBoard();
+    syncUI();
+    draw(now());
+  }
+  function restart() {
+    if (mode === 'online') { gen++; resetBoard(); syncUI(); draw(now()); return true; }  // 联机只重置本地视图
+    newGame();
+    return true;
+  }
+  function setMode(m, opts) {
+    if (m !== 'ai' && m !== 'duo' && m !== 'online') return;
+    if (m === mode) { if (opts && opts.open && mode === 'online' && np) np.open(); return; }
+    mode = m;
+    document.body.className = (np ? 'npmounted' : '') + (m === 'online' ? ' online' : '');
+    var btns = document.querySelectorAll('.seg button');
+    for (var i = 0; i < btns.length; i++) btns[i].className = btns[i].getAttribute('data-mode') === m ? 'on' : '';
+    gen++; clearTimeout(aiTimer);
+    if (m === 'online') {
+      mountNP();
+      resetBoard();
+      syncUI();
+      draw(now());
+      if (np && !(opts && opts.quiet)) np.open();
+    } else {
+      if (np) np.close();
+      newGame();
+    }
+  }
+
+  /* =====================================================================
+   * 联机（NetPlay）：在线模式 onMove 是唯一的落子入口，无状态应用每一手
+   * ===================================================================== */
+  var np = null, npState = 'idle', npSeat = -1, npMyTurn = false, npCode = '', npResult = '';
+  function parseMove(s) {
+    if (typeof s !== 'string') return -1;
+    var m = /^\s*([0-6])(?:\s*,\s*[0-5])?\s*$/.exec(s);
+    return m ? parseInt(m[1], 10) : -1;
+  }
+  function mountNP() {
+    if (np || !window.NetPlay) return;
+    np = window.NetPlay.mount({
+      game: 'connect4',
+      onMove: function (e) {
+        var c = parseMove(e.move);
+        if (c < 0) return;
+        enqueue(c, e.seat === 0 ? P1 : P2);          // 无状态：不假设第一手、不假设谁下的
+      },
+      onReset: function (info) {
+        npSeat = info.seat;
+        npMyTurn = !!info.myTurn;
+        npState = info.state;
+        npResult = info.result || '';
+        npCode = info.code || '';
+        resetBoard();
+        syncUI();
+        draw(now());
+      },
+      onStatus: function (info) {
+        if (info.seat >= 0) npSeat = info.seat;
+        npState = info.state;
+        npMyTurn = !!info.myTurn;
+        npResult = info.result || '';
+        npCode = info.code || '';
+        updateStatus();
+        updateButtons();
+      },
+      onEnd: function (info) {
+        npState = info.state;
+        npResult = info.result || '';
+        npMyTurn = false;
+        if (info.state === 'done' && info.result) {
+          over = true;
+          endHandled = true;
+          if (!winner) winner = (info.result === 'draw') ? 0 : ((info.result === (npSeat === 0 ? 'host' : 'guest')) ? myPiece() : 3 - myPiece());
+          pulseUntil = now() + PULSE_MS;
+          startLoop();
+          var mine = myPiece();
+          var title, sub;
+          if (info.result === 'draw') { title = '和棋'; sub = '棋盘已满或双方同意'; }
+          else if (winner === mine) { title = '🎉 你赢了！'; sub = '四子连珠，漂亮'; }
+          else { title = '你输了'; sub = '对手连成了四子'; }
+          showOverlay(title, sub + '<br>想再来一局：点右下角「联机对战」面板的「再来一局」');
+        } else if (info.state === 'closed') {
+          statusText.textContent = '房间已关闭，可重新建房或加入';
+        }
+        syncUI();
+      },
+      onNotice: function () { /* 面板里已经提示了，这里不重复播报 */ }
+    });
+    document.body.className = 'npmounted' + (mode === 'online' ? ' online' : '');
+  }
+
+  /* =====================================================================
+   * 事件绑定
+   * ===================================================================== */
+  document.getElementById('reset').addEventListener('click', function () { restart(); });
+  document.getElementById('again').addEventListener('click', function () {
+    hideOverlay();
+    if (mode === 'online') { if (np) np.rematch(); return; }
+    newGame();
+  });
+  undoBtn.addEventListener('click', undo);
+  hintBtn.addEventListener('click', hint);
+  var segBtns = document.querySelectorAll('.seg button');
+  for (var bi = 0; bi < segBtns.length; bi++) {
+    segBtns[bi].addEventListener('click', function () { setMode(this.getAttribute('data-mode')); });
+  }
+  var lvBtns = document.querySelectorAll('.levels button');
+  for (var li = 0; li < lvBtns.length; li++) {
+    lvBtns[li].addEventListener('click', function () {
+      level = this.getAttribute('data-lv');
+      var all = document.querySelectorAll('.levels button');
+      for (var i = 0; i < all.length; i++) all[i].className = (all[i] === this) ? 'on' : '';
+      if (mode === 'ai') newGame();
+    });
+  }
+  window.addEventListener('resize', layout);
+  if (window.ResizeObserver) {
+    try { new ResizeObserver(function () { layout(); }).observe(area); } catch (e) { /* 老浏览器忽略 */ }
+  }
+  window.addEventListener('orientationchange', function () { setTimeout(layout, 120); });
+
+  /* =====================================================================
+   * 启动
+   * ===================================================================== */
+  loadScore();
+  renderRecord();
+  seedLayout();
+  resetBoard();
+  layout();
+  syncUI();
+  draw(now());
+  setTimeout(layout, 60);
+  setTimeout(layout, 400);
+  if (window.NetPlay) {
+    if (/[?&]room=[A-Za-z0-9]{4,8}/.test(location.search)) setMode('online');                       // 邀请链接：直接进联机并摊开面板
+    else if (/[?&](watch|replay)=/.test(location.search)) setMode('online', { quiet: true });         // 观战 / 回放：交给 NetPlay 接管，不弹面板盖住棋盘
+  }
+
+  /* ---------------- 只读探针（自测用） ---------------- */
+  window.__connect4 = {
+    info: function () {
+      return {
+        mode: mode, level: level, turn: turn, over: over, winner: winner, moves: moves.length,
+        cells: columnsHeights(), seed: seeded ? seedNum : 0, layout: layoutHash(),
+        npState: npState, npSeat: npSeat, npMyTurn: npMyTurn, npCode: npCode,
+        cell: cell, cssW: cssW, cssH: cssH, overlay: !overlay.hidden,
+        score: { win: score.win, lose: score.lose, draw: score.draw }
+      };
+    },
+    rows: function () {
+      var out = [], r, c, s;
+      for (r = 0; r < ROWS; r++) {
+        s = '';
+        for (c = 0; c < COLS; c++) s += (board[idx(c, r)] === P1 ? 'R' : (board[idx(c, r)] === P2 ? 'Y' : '.'));
+        out.push(s);
+      }
+      return out;
+    },
+    win: function () { return winCells ? winCells.slice() : null; }
+  };
+
+  /* 自动化验收只读句柄：tools/board-games-test.mjs 依赖此契约 */
+  window.BOARD = {
+    slug: 'connect4',
+    mode: function () { return mode; },
+    setMode: function (m) { setMode(m); },
+    rect: function () { var r = cv.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
+    moveCount: function () { return moves.length; },
+    turnText: function () { return statusText.textContent; },
+    over: function () { return !!over; },
+    grid: function () { return { cols: COLS, rows: ROWS }; },
+    pointAt: function (c, r) {
+      var b = cv.getBoundingClientRect();
+      var kx = b.width / (cssW || 1), ky = b.height / (cssH || 1);
+      return { x: b.left + cx(c) * kx, y: b.top + cy(r) * ky };
+    },
+    sampleClicks: function () {
+      var best = -1, bd = Infinity;
+      for (var c = 0; c < COLS; c++) {
+        if (lowestEmpty(board, c) < 0) continue;
+        var d = Math.abs(c - 3);
+        if (d < bd) { bd = d; best = c; }
+      }
+      if (best < 0) return [];
+      return [this.pointAt(best, 0)];
+    },
+    columns: columnsHeights
+  };
+
+  /* 每日挑战钩子契约 */
+  window.GAME = {
+    slug: 'connect4',
+    state: function () {
+      return {
+        slug: 'connect4', mode: mode, level: level, over: !!over,
+        score: gameScore(), turn: over ? 0 : turn, result: resultStr(),
+        winner: winner, moves: moves.length, last: moves.length ? moves[moves.length - 1] : null,
+        record: { win: score.win, lose: score.lose, draw: score.draw },
+        seed: seeded ? seedNum : 0, daily: dailyOk ? dailyParam : '', layout: layoutHash(),
+        online: { state: npState, seat: npSeat, myTurn: npMyTurn, code: npCode }
+      };
+    },
+    restart: function () { return restart(); },
+    seed: function () { return seeded ? seedNum : null; },   // 契约：无种子时返回 null
+    layoutHash: layoutHash
+  };
+})();
+</script>
+</body>
+</html>

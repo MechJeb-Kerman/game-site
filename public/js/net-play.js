@@ -25,7 +25,10 @@
  * 设计取舍：不用 WebSocket，客户端 1.2 秒轮询增量（since = 已应用的最大 seq）；
  *   send() 成功后立刻用服务端返回的 seq 应用本地那一手（本地即时反馈），
  *   轮询再拿到同一个 seq 时按 seq 去重，不会重复落子。
- * 昵称存在 localStorage('np:name')；页面带 ?room=CODE 打开会自动加入。
+ * 昵称存在 localStorage('np:name')；URL 参数有三种玩法（都由本文件自动接管，游戏页不用写代码）：
+ *   ?room=CODE   用房间码自动加入
+ *   ?watch=KEY   观战（KEY = 房间内分享出来的观战钥匙，只看不走）
+ *   ?replay=ID   看棋谱回放（从 /api/replays/ID 取整局走法，本地播放，带进度/播放/调速）
  * 关页/刷新时会用 keepalive 请求离开（房间关闭，对手能在轮询里看到），
  *   所以刷新页面等于退出这一局 —— 棋盘状态不跨页面保存。
  */
@@ -43,6 +46,7 @@
     if (SELF && SELF.src) ROOT = new URL('../../', SELF.src).pathname.replace(/\/+$/, '');
   } catch (e) { ROOT = ''; }
   var API = ROOT + '/api/play/';
+  var REPLAY_API = ROOT + '/api/replays/';
 
   function post(path, body, keepalive) {
     return fetch(API + path, {
@@ -70,7 +74,8 @@
     not_playing: '对局还没开始',
     not_your_turn: '还没轮到你',
     bad_move: '这步棋服务端没收下',
-    bad_token: '座位凭证失效了，请重新加入'
+    bad_token: '座位凭证失效了，请重新加入',
+    bad_watch: '观战钥匙无效或这一局已经结束太久'
   };
 
   function esc(s) {
@@ -115,6 +120,11 @@
       '.np-turn{color:#a7f3d0;min-height:19px}',
       '.np-msg{color:#fca5a5;min-height:18px;margin-top:6px}',
       '.np-msg.np-info{color:#93c5fd}',
+      '.np-watch-tag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font:600 11px/1.6 inherit;',
+      'color:#0b1220;background:linear-gradient(135deg,#a5f3fc,#7dd3fc)}',
+      '.np-prog{height:6px;border-radius:999px;background:rgba(148,163,184,.25);overflow:hidden;margin:8px 0 4px}',
+      '.np-prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,#0ea5e9,#6366f1);transition:width .15s}',
+      '.np-replay-info{color:#bae6fd}',
       '@media (max-width:520px){.np-panel{left:8px;right:8px;bottom:8px;width:auto}}'
     ].join('');
     document.head.appendChild(st);
@@ -146,9 +156,22 @@
       '  <div class="np-players"></div>',
       '  <div class="np-turn"></div>',
       '  <div class="np-row"><button class="np-btn" data-act="copy">复制邀请链接</button></div>',
+      '  <div class="np-row"><button class="np-btn" data-act="replay-open" hidden>看棋谱回放</button></div>',
       '  <div class="np-row"><button class="np-btn" data-act="rematch">再来一局</button>',
       '    <button class="np-btn" data-act="resign">认输</button>',
       '    <button class="np-btn" data-act="leave">离开</button></div>',
+      '</div>',
+      '<div class="np-replay" hidden>',
+      '  <div class="np-replay-info"></div>',
+      '  <div class="np-prog"><i></i></div>',
+      '  <div class="np-turn np-replay-at"></div>',
+      '  <div class="np-row"><button class="np-btn" data-act="r-first" title="回到开局">⏮</button>',
+      '    <button class="np-btn" data-act="r-prev" title="上一手">◀</button>',
+      '    <button class="np-btn np-primary" data-act="r-toggle">▶ 播放</button>',
+      '    <button class="np-btn" data-act="r-next" title="下一手">▶︎</button>',
+      '    <button class="np-btn" data-act="r-last" title="跳到终局">⏭</button></div>',
+      '  <div class="np-row"><button class="np-btn" data-act="r-speed">速度 1×</button>',
+      '    <button class="np-btn" data-act="r-copy">复制回放链接</button></div>',
       '</div>',
       '<div class="np-msg"></div>'
     ].join('');
@@ -163,6 +186,10 @@
     var elPlayers = panel.querySelector('.np-players');
     var elTurn = panel.querySelector('.np-turn');
     var elMsg = panel.querySelector('.np-msg');
+    var elReplay = panel.querySelector('.np-replay');
+    var elReplayInfo = panel.querySelector('.np-replay-info');
+    var elReplayAt = panel.querySelector('.np-replay-at');
+    var elProg = panel.querySelector('.np-prog i');
 
     var S = {
       state: 'idle',   // idle | waiting | playing | done | closed
@@ -178,7 +205,16 @@
       players: [],
       maxSeq: 0,
       busy: false,
-      timer: 0
+      timer: 0,
+      // 'play' = 自己在房间里下棋；'watch' = 观战；'replay' = 看棋谱回放
+      mode: 'play',
+      watchKey: '',
+      replay: null,
+      at: 0,
+      speed: 1,
+      playing: false,
+      playTimer: 0,
+      replayId: 0
     };
 
     try { S.name = localStorage.getItem(NAME_KEY) || ''; } catch (e) { S.name = ''; }
@@ -188,6 +224,8 @@
       return {
         state: S.state, game: S.game, name: S.name, code: S.code, seat: S.seat,
         myTurn: S.myTurn, result: S.result, rematch: S.rematch,
+        mode: S.mode, watch: S.mode === 'watch', replay: S.mode === 'replay',
+        at: S.at, total: S.replay ? S.replay.moves.length : 0, playing: S.playing,
         players: S.players.map(function (p) { return { name: p.name, joined: p.joined, me: p.seat === S.seat }; })
       };
     }
@@ -198,6 +236,7 @@
     }
 
     function render() {
+      if (S.mode === 'replay') { renderReplay(); return; }
       elCode.textContent = S.code;
       elCodeIn.value = S.code && S.state === 'idle' ? S.code : elCodeIn.value;
       elRoom.hidden = S.state === 'idle';
@@ -212,16 +251,54 @@
       var txt = '';
       if (S.state === 'waiting') txt = '等待对手加入…把房间码发给朋友';
       else if (S.state === 'playing') txt = S.myTurn ? '轮到你落子' : '等对手落子…';
-      else if (S.state === 'done') txt = S.result === 'draw' ? '和棋' : (resultMine() ? '你赢了 🎉' : '你输了');
-      else if (S.state === 'closed') txt = '房间已关闭';
+      else if (S.state === 'done') {
+        if (S.result === 'draw') txt = '和棋';
+        else if (S.mode === 'watch') txt = (playerName(S.result) || '对手') + ' 获胜';
+        else txt = resultMine() ? '你赢了 🎉' : '你输了';
+      } else if (S.state === 'closed') txt = '房间已关闭';
+      if (S.mode === 'watch') txt = txt ? '观战中 · ' + txt : '观战中';
       if (S.state === 'done' && S.rematch) {
         var mineBit = S.seat === 0 ? 1 : 2;
         txt += (S.rematch & mineBit) ? '（已准备再来一局，等对手）' : '（对手想再来一局）';
       }
       elTurn.textContent = txt;
-      panel.querySelector('[data-act="rematch"]').disabled = S.state !== 'done';
-      panel.querySelector('[data-act="resign"]').disabled = S.state === 'waiting' || S.state === 'closed';
-      pill.textContent = S.state === 'idle' ? '联机对战' : (S.state === 'waiting' ? '等待对手…' : '对局中 ' + S.code);
+      var watching = S.mode === 'watch';
+      panel.querySelector('.np-title').innerHTML = (watching ? '观战' : '联机对战') +
+        (watching ? '<span class="np-watch-tag">只看不走</span>' : '');
+      panel.querySelector('[data-act="rematch"]').disabled = S.state !== 'done' || watching;
+      panel.querySelector('[data-act="resign"]').disabled = watching || S.state === 'waiting' || S.state === 'closed';
+      panel.querySelector('[data-act="leave"]').hidden = watching;
+      panel.querySelector('[data-act="copy"]').textContent = watching ? '复制观战链接' : '复制邀请链接';
+      panel.querySelector('[data-act="join"]').disabled = watching;
+      panel.querySelector('[data-act="replay-open"]').hidden = !S.replayId;
+      pill.textContent = watching ? '观战中 ' + S.code : (S.state === 'idle' ? '联机对战' : (S.state === 'waiting' ? '等待对手…' : '对局中 ' + S.code));
+      pill.hidden = !panel.hidden;
+      if (typeof opts.onStatus === 'function') opts.onStatus(info());
+    }
+
+    /** 「host」/「guest」换成玩家名字（观战与回放都要显示谁赢了） */
+    function playerName(seatResult) {
+      if (seatResult === 'host') return (S.players[0] && S.players[0].name) || '房主';
+      if (seatResult === 'guest') return (S.players[1] && S.players[1].name) || '挑战者';
+      return '';
+    }
+
+    function renderReplay() {
+      var r = S.replay;
+      var total = r ? r.moves.length : 0;
+      elReplay.hidden = false;
+      elIdle.hidden = true;
+      elRoom.hidden = true;
+      elReplayInfo.innerHTML = r
+        ? esc(r.hostName) + ' <i style="font-style:normal;color:#64748b">vs</i> ' + esc(r.guestName) +
+          '<div class="np-player"><b>' + (r.result === 'draw' ? '和棋' : esc(r.winner || '对局结束') + ' 获胜') + '</b>' +
+          '<i>' + esc(r.game) + ' · ' + total + ' 手</i></div>'
+        : '棋谱加载中…';
+      elReplayAt.textContent = total ? '第 ' + S.at + ' / ' + total + ' 手' + (S.at >= total ? '（终局）' : '') : '';
+      elProg.style.width = (total ? Math.round((S.at / total) * 100) : 0) + '%';
+      panel.querySelector('[data-act="r-toggle"]').textContent = S.playing ? '⏸ 暂停' : '▶ 播放';
+      panel.querySelector('[data-act="r-speed"]').textContent = '速度 ' + S.speed + '×';
+      pill.textContent = total ? '棋谱回放 ' + S.at + '/' + total : '棋谱回放';
       pill.hidden = !panel.hidden;
       if (typeof opts.onStatus === 'function') opts.onStatus(info());
     }
@@ -241,8 +318,9 @@
 
     function reset(keepName) {
       stopPoll();
+      if (S.mode !== 'play') return;   // 观战/回放没有房间可退，失败提示后保持原样
       S.state = 'idle'; S.code = ''; S.id = 0; S.token = ''; S.seat = -1;
-      S.myTurn = false; S.result = ''; S.rematch = 0; S.players = []; S.maxSeq = 0;
+      S.myTurn = false; S.result = ''; S.rematch = 0; S.players = []; S.maxSeq = 0; S.replayId = 0;
       elCodeIn.value = '';
       render();
     }
@@ -253,6 +331,8 @@
     function adopt(room, seat) {
       var before = S.state;
       S.code = room.code; S.seat = seat; S.myTurn = room.myTurn;
+      S.id = Number(room.id) || S.id;
+      S.replayId = Number(room.replayId || 0);
       S.players = room.players.map(function (p, i) { return { seat: i, name: p.name, joined: p.joined }; });
       S.result = room.result || '';
       S.rematch = room.rematch || 0;
@@ -280,8 +360,26 @@
 
     function startPoll() {
       stopPoll();
+      if (S.mode === 'watch') { if (S.watchKey) S.timer = setTimeout(watchTick, POLL_MS); return; }
       if (!S.id || !S.token) return;
       S.timer = setTimeout(tick, POLL_MS);
+    }
+
+    /** 观战：和轮询同一个节奏，只是走只读接口（不占座位、不能落子） */
+    function watchTick() {
+      S.timer = 0;
+      post('watch', { key: S.watchKey, since: S.maxSeq }).then(function (r) {
+        if (r.status === 200 && r.data && r.data.room) {
+          adopt(r.data.room, -1);
+          applyMoves(r.data.moves);
+          if (S.state === 'closed' || S.state === 'done') {
+            message(S.state === 'closed' ? '这一局已经关闭' : '对局结束，可以看棋谱回放', true);
+            stopPoll();
+            return;
+          }
+        } else { fail(r, '观战失败'); return; }
+        startPoll();
+      }).catch(function () { message('网络不稳定，重试中…'); startPoll(); });
     }
 
     function tick() {
@@ -341,6 +439,90 @@
       return S.name;
     }
 
+    /* ---------- 分享 ---------- */
+    function shareUrl(title, url) {
+      if (navigator.share) { navigator.share({ title: title, url: url }).catch(function () {}); }
+      else if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(function () { message('链接已复制', true); }, function () { message('链接：' + url, true); });
+      } else message('链接：' + url, true);
+    }
+
+    /* ---------- 观战（只读轮询） ---------- */
+    function loadWatch(key) {
+      S.mode = 'watch';
+      S.watchKey = String(key || '');
+      panel.hidden = false;
+      render();
+      if (!S.watchKey) { message('观战链接不完整'); return; }
+      message('正在进入观战…', true);
+      watchTick();
+    }
+
+    /* ---------- 棋谱回放（整局一次取回，本地播放） ---------- */
+    function loadReplay(id) {
+      S.mode = 'replay';
+      panel.hidden = false;
+      render();
+      return fetch(REPLAY_API + encodeURIComponent(id), { headers: { Accept: 'application/json' } })
+        .then(function (res) { return res.json().then(function (d) { return { status: res.status, data: d }; }); })
+        .then(function (r) {
+          var rep = r.data && r.data.replay;
+          if (r.status !== 200 || !rep) { message('棋谱不存在或已过期'); return null; }
+          S.replay = {
+            id: Number(rep.id) || Number(id) || 0,
+            game: rep.game || '',
+            hostName: rep.hostName || '房主',
+            guestName: rep.guestName || '挑战者',
+            result: rep.result || '',
+            winner: rep.winner || '',
+            moves: (rep.moves || []).map(function (m, i) {
+              return { seq: Number(m.seq) || i + 1, seat: Number(m.seat) || 0, move: m.move == null ? '' : String(m.move) };
+            })
+          };
+          S.players = [{ seat: 0, name: S.replay.hostName, joined: true }, { seat: 1, name: S.replay.guestName, joined: true }];
+          S.result = S.replay.result; S.state = 'done';
+          message('');
+          seek(0);
+          return S.replay;
+        })
+        .catch(function () { message('棋谱加载失败，检查网络后重试'); return null; });
+    }
+
+    function stopPlay() { if (S.playTimer) { clearTimeout(S.playTimer); S.playTimer = 0; } S.playing = false; }
+
+    /** 跳到第 n 手：往回跳要先把棋盘复位再从头按序喂（走法必须按序应用） */
+    function seek(n) {
+      if (S.mode !== 'replay' || !S.replay) return S.at;
+      var moves = S.replay.moves;
+      n = Math.max(0, Math.min(Number(n) || 0, moves.length));
+      if (n <= S.maxSeq) {
+        S.maxSeq = 0;
+        if (typeof opts.onReset === 'function') opts.onReset(info());
+      }
+      applyMoves(moves.slice(S.maxSeq, n));
+      S.maxSeq = n; S.at = n;
+      renderReplay();
+      return n;
+    }
+
+    function step() {
+      S.playTimer = 0;
+      if (!S.replay || S.at >= S.replay.moves.length) { stopPlay(); renderReplay(); return; }
+      seek(S.at + 1);
+      if (S.playing) S.playTimer = setTimeout(step, Math.round(900 / S.speed));
+    }
+
+    function play() {
+      if (S.mode !== 'replay' || !S.replay || !S.replay.moves.length) return;
+      stopPlay();
+      if (S.at >= S.replay.moves.length) seek(0);
+      S.playing = true;
+      renderReplay();
+      S.playTimer = setTimeout(step, Math.round(900 / S.speed));
+    }
+
+    function pause() { stopPlay(); renderReplay(); }
+
     var ctl = {
       game: game,
       state: function () { return info(); },
@@ -394,6 +576,24 @@
           return d;
         });
       },
+      watch: loadWatch,
+      replay: {
+        load: loadReplay,
+        play: play,
+        pause: pause,
+        toggle: function () { if (S.playing) pause(); else play(); },
+        seek: seek,
+        next: function () { pause(); seek(S.at + 1); return S.at; },
+        prev: function () { pause(); seek(S.at - 1); return S.at; },
+        first: function () { pause(); seek(0); return S.at; },
+        last: function () { pause(); if (S.replay) seek(S.replay.moves.length); return S.at; },
+        speed: function (v) {
+          S.speed = v ? Number(v) : (S.speed >= 2 ? 0.5 : S.speed * 2);
+          renderReplay();
+          if (S.playing) { stopPlay(); play(); }
+          return S.speed;
+        }
+      },
       leave: function () {
         if (!S.id) { reset(); return Promise.resolve(null); }
         var id = S.id, token = S.token;
@@ -414,29 +614,49 @@
       else if (what === 'create') ctl.create();
       else if (what === 'join') ctl.join();
       else if (what === 'copy') {
-        var url = location.origin + location.pathname + '?room=' + S.code;
-        if (navigator.share) { navigator.share({ title: '来一局', url: url }).catch(function () {}); }
-        else if (navigator.clipboard) {
-          navigator.clipboard.writeText(url).then(function () { message('邀请链接已复制', true); }, function () { message('链接：' + url, true); });
-        } else message('链接：' + url, true);
+        if (S.mode === 'watch') shareUrl('来看这局', location.origin + location.pathname + '?watch=' + S.watchKey);
+        else shareUrl('来一局', location.origin + location.pathname + '?room=' + S.code);
+      } else if (what === 'r-first') ctl.replay.first();
+      else if (what === 'r-prev') ctl.replay.prev();
+      else if (what === 'r-toggle') ctl.replay.toggle();
+      else if (what === 'r-next') ctl.replay.next();
+      else if (what === 'r-last') ctl.replay.last();
+      else if (what === 'r-speed') ctl.replay.speed();
+      else if (what === 'r-copy') {
+        if (S.replay) shareUrl('棋谱回放', location.origin + location.pathname + '?replay=' + S.replay.id);
+      } else if (what === 'replay-open') {
+        window.open(location.origin + '/replay/' + S.replayId, '_blank');
       } else if (what === 'rematch') ctl.rematch();
       else if (what === 'resign') ctl.resign();
       else if (what === 'leave') ctl.leave();
       else if (what === 'close') ctl.close();
     });
     panel.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Enter' && ev.target === elCodeIn) { ev.preventDefault(); ctl.join(); }
+      if (ev.key === 'Enter' && ev.target === elCodeIn) { ev.preventDefault(); ctl.join(); return; }
+      if (S.mode === 'replay') {
+        if (ev.key === ' ' || ev.key === 'Spacebar') { ev.preventDefault(); ctl.replay.toggle(); }
+        else if (ev.key === 'ArrowLeft') { ev.preventDefault(); ctl.replay.prev(); }
+        else if (ev.key === 'ArrowRight') { ev.preventDefault(); ctl.replay.next(); }
+      }
     });
     pill.addEventListener('click', function () { ctl.open(); });
 
     /* 关页/刷新 = 退出这一局（对手下一次轮询会看到「对方已离开」） */
     window.addEventListener('pagehide', function () {
-      if (S.id && S.token && S.state !== 'closed') post('leave', { id: S.id, token: S.token }, true).catch(function () {});
+      if (S.mode === 'play' && S.id && S.token && S.state !== 'closed') post('leave', { id: S.id, token: S.token }, true).catch(function () {});
     });
 
-    /* URL 带房间码自动加入 */
+    /* URL 参数：?room=CODE 自动加入 / ?watch=KEY 观战 / ?replay=ID 看棋谱 */
     var m = /[?&]room=([A-Za-z0-9]{4,8})/.exec(location.search);
-    if (m && game) {
+    var mw = /[?&]watch=([\w-]{6,80})/.exec(location.search);
+    var mr = /[?&]replay=(\d{1,10})/.exec(location.search);
+    if (mw && game) {
+      panel.hidden = false;
+      loadWatch(mw[1]);
+    } else if (mr && game) {
+      panel.hidden = false;
+      loadReplay(mr[1]);
+    } else if (m && game) {
       panel.hidden = false;
       elCodeIn.value = m[1].toUpperCase();
       render();

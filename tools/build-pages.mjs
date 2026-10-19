@@ -11,7 +11,8 @@
  *   --cf      额外输出 Cloudflare Pages 的 _headers（安全头 + 缓存策略）
  *
  * 输出：首页、列表、搜索、分类、标签、每个游戏详情、404、封面 SVG、游戏本体副本、
- *       robots.txt、sitemap.xml、.nojekyll、data/games.json。
+ *       robots.txt、sitemap.xml、.nojekyll、data/games.json，以及 PWA 三件套
+ *       （manifest.webmanifest / sw.js / icons/，直接搬 public/ 下的原始文件）。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -230,6 +231,16 @@ put("static/js/net-play.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "net-pl
 const FAVICON = "<svg xmlns=" + Q + "http://www.w3.org/2000/svg" + Q + " viewBox=" + Q + "0 0 64 64" + Q + "><rect width=" + Q + "64" + Q + " height=" + Q + "64" + Q + " rx=" + Q + "22" + Q + " fill=" + Q + "#6366f1" + Q + "/><text x=" + Q + "32" + Q + " y=" + Q + "43" + Q + " font-size=" + Q + "34" + Q + " text-anchor=" + Q + "middle" + Q + ">🎮</text></svg>";
 put("favicon.svg", FAVICON);
 
+/* PWA 三件套：manifest、Service Worker、图标。
+   页面 head 里（src/views.js）无条件链了 /manifest.webmanifest 与 apple-touch-icon，
+   所以这两样必须跟着导出，否则静态托管上必然 404；根路径部署时 Service Worker 也真能用。
+   注意：public/sw.js 的内部路径全是根相对的（/、/static/、/games/…），
+   所以子路径部署（GitHub Pages 仓库站点）下 app-static.js 不会注册它 —— 见 public/js/app-static.js 的注释。 */
+const PWA_ICONS = ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon-180.png"];
+put("manifest.webmanifest", fs.readFileSync(path.join(PUBLIC_DIR, "manifest.webmanifest")));
+put("sw.js", fs.readFileSync(path.join(PUBLIC_DIR, "sw.js")));
+for (const ic of PWA_ICONS) put("icons/" + ic, fs.readFileSync(path.join(PUBLIC_DIR, "icons", ic)));
+
 const HEAD = /<head[^>]*>/i;
 for (const g of games) {
   const src = path.join(GAMES_DIR, g.slug, "index.html");
@@ -322,6 +333,17 @@ if (CF_MODE) {
     "",
     "/games/*",
     "  Cache-Control: public, max-age=3600",
+    "",
+    "# PWA：Service Worker 不许被缓存（改一版要立刻生效），manifest 短缓存，图标长缓存",
+    "/sw.js",
+    "  Cache-Control: no-cache",
+    "  Service-Worker-Allowed: /",
+    "",
+    "/manifest.webmanifest",
+    "  Cache-Control: public, max-age=3600",
+    "",
+    "/icons/*",
+    "  Cache-Control: public, max-age=2592000",
     ""
   ].join(NL));
 }
@@ -346,6 +368,13 @@ if (CF_MODE) {
   if (rels.indexOf("static/js/app-static.js") < 0) problems.push("没有产出 static/js/app-static.js");
   if (rels.indexOf("static/js/gamepad.js") < 0) problems.push("没有产出 static/js/gamepad.js（手柄支持）");
   if (rels.indexOf("static/js/net-play.js") < 0) problems.push("没有产出 static/js/net-play.js（联机对战小部件）");
+  /* PWA 三件套：页面 head（src/views.js）无条件链了 /manifest.webmanifest 与 apple-touch-icon，
+     产物里必须都有，否则静态托管上就是 404 */
+  if (rels.indexOf("manifest.webmanifest") < 0) problems.push("没有产出 manifest.webmanifest（PWA）");
+  if (rels.indexOf("sw.js") < 0) problems.push("没有产出 sw.js（PWA Service Worker）");
+  ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon-180.png"].forEach(function (ic) {
+    if (rels.indexOf("icons/" + ic) < 0) problems.push("没有产出 icons/" + ic + "（PWA 图标）");
+  });
   /* 排行榜静态页：标题栏的「排行榜」链接必须落到 rank/today.html，tabs 必须是 /rank/<kind> 静态路径 */
   if (rels.indexOf("rank/today.html") < 0) problems.push("没有产出 rank/today.html（排行榜静态页）");
   else {
@@ -355,6 +384,8 @@ if (CF_MODE) {
   }
   const idxHtml = fs.readFileSync(path.join(OUT, "index.html"), "utf8");
   if (idxHtml.indexOf(base + "rank/today.html") < 0) problems.push("首页导航的排行榜链接没有指向 " + base + "rank/today.html");
+  if (idxHtml.indexOf(base + "manifest.webmanifest") < 0) problems.push("首页 head 的 manifest 链接没有指向 " + base + "manifest.webmanifest");
+  if (idxHtml.indexOf(base + "icons/apple-touch-icon-180.png") < 0) problems.push("首页 head 的 apple-touch-icon 没有指向 " + base + "icons/apple-touch-icon-180.png");
   const gpWant = base + "static/js/gamepad.js";
   const gamePages = rels.filter(function (r) { return r.indexOf("games/") === 0 && /index[.]html$/.test(r); });
   if (!gamePages.length) problems.push("没有产出任何游戏本体页");
@@ -398,7 +429,7 @@ if (CF_MODE) {
     problems.forEach(function (p) { console.error("  - " + p); });
     process.exitCode = 1;
   } else {
-    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js、手柄脚本已随游戏页导出");
+    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js、手柄脚本与 PWA 三件套已随产物导出");
   }
 })();
 

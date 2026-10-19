@@ -729,6 +729,95 @@ async function main() {
     r.text.includes('forum.blacklist.add'), '');
   ok('论坛后台与站点后台互相有入口', admHtml.includes('/admin') && admHtml.includes('/forum/admin'), '');
 
+  /* ---------- 每日挑战 /daily ---------- */
+  // 前置：userA 在上面「封禁 / 解封」那一段里被判过封禁，服务端当场作废了它的会话
+  // （见「被封禁后原会话立即失效」），312 行解封后的那次登录没有把新 cookie 写回 jarA，
+  // 所以这里必须先补一次登录 —— 否则下面所有 jarA 请求都是匿名态，打卡不会落库。
+  r = await req('/api/auth/login', { method: 'POST', j: jarA, json: { username: nameA, password: 'pass1234' } });
+  ok('打卡前置：测试账号重新登录（原会话在封禁测试里失效了）',
+    r.status === 200 && !!(json(r.text) || {}).user, r.status + ' ' + r.text.slice(0, 120));
+  // 今天的日期按本地时区算，和 src/daily.js 的 dayKey() 同一算法
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const nowDay = new Date();
+  const today = nowDay.getFullYear() + '-' + pad2(nowDay.getMonth() + 1) + '-' + pad2(nowDay.getDate());
+  // 榜单人数藏在「🏅 今日打卡榜」那一行的 pill 里，页面显示成「N / M 人」
+  const boardPill = (html) => {
+    const m = html.match(/今日打卡榜[\s\S]{0,240}?<span class="pill">(\d+) \/ (\d+) 人<\/span>/);
+    return m ? { shown: Number(m[1]), total: Number(m[2]) } : null;
+  };
+
+  r = await req('/daily');
+  const guestDaily = r.text;
+  const dailySlug = ((guestDaily.match(/href="\/game\/([a-z0-9-]+)">开始今日挑战/) || [])[1] || '');
+  ok('游客打开每日挑战页 → 200，含「每日挑战」与今天的日期',
+    r.status === 200 && guestDaily.includes('每日挑战') && guestDaily.includes(today), r.status + ' ' + today);
+  ok('从「开始今日挑战」链接抠出今日题目 slug', /^[a-z0-9-]+$/.test(dailySlug), dailySlug || guestDaily.slice(0, 160));
+  ok('游客看到「登录后才记录打卡」的提示', guestDaily.includes('登录') && guestDaily.includes('打卡与连续天数'), '');
+  const boardBefore = boardPill(guestDaily);
+
+  // server.js:567 对「同一 IP + 同一款游戏」有 30 秒去重：撞上会回 counted:false 且不打卡（不是链路坏了），
+  // 等过窗口再打一次就行 —— 只重试一次，别把下面这个 sleep 当成常规路径。
+  const playForCheckin = async (slug) => {
+    let res = await req('/api/games/' + slug + '/play', { method: 'POST', j: jarA, json: {} });
+    let body = json(res.text) || {};
+    if (res.status === 200 && body.counted === false) {
+      console.log('       （撞上 30 秒同 IP 去重，等 31 秒后重试一次）');
+      await sleep(31000);
+      res = await req('/api/games/' + slug + '/play', { method: 'POST', j: jarA, json: {} });
+      body = json(res.text) || {};
+    }
+    return { res, body };
+  };
+
+  const hit = await playForCheckin(dailySlug);
+  ok('玩今日题目 → counted:true（登录态顺带打卡）',
+    hit.res.status === 200 && hit.body.counted === true, hit.res.status + ' ' + hit.res.text.slice(0, 160));
+  ok('打卡响应里的 daily 就是今天', hit.body.daily === today, JSON.stringify(hit.body.daily) + ' / ' + today);
+
+  r = await req('/daily', { j: jarA });
+  const mineDaily = r.text;
+  ok('登录态每日挑战页显示「✅ 今天已打卡」', r.status === 200 && mineDaily.includes('✅ 今天已打卡'), r.status);
+  ok('登录态统计里今日状态是「已打」', mineDaily.includes('已打') && mineDaily.includes('今日状态'), '');
+  const boardAfter = boardPill(mineDaily);
+  ok('今日打卡榜计数 +1（这一笔确实记进了 daily_results）',
+    !!boardBefore && !!boardAfter && boardAfter.total === boardBefore.total + 1,
+    JSON.stringify(boardBefore) + ' → ' + JSON.stringify(boardAfter));
+  // 榜只放当天最早打卡的 12 位（src/social.js dailyBoard 的 LIMIT 12）；没满时昵称必然在榜上
+  const boardHtml = mineDaily.slice(mineDaily.indexOf('🏅 今日打卡榜'));
+  ok('打卡榜上出现该账号（昵称/用户名）',
+    (!!boardAfter && boardAfter.shown >= 12) || boardHtml.includes('/u/' + nameA) || boardHtml.includes('测试甲'),
+    JSON.stringify(boardAfter) + (boardAfter && boardAfter.shown >= 12 ? '（榜已满 12 位，晚到的不上榜）' : ''));
+
+  r = await req('/sitemap.xml');
+  const allSlugs = [...new Set([...r.text.matchAll(/\/game\/([a-z0-9-]+)/g)].map((m) => m[1]))];
+  const otherSlug = allSlugs.find((s) => s !== dailySlug) || '';
+  ok('从 sitemap 里拿到「另一款非今日题目」的 slug', r.status === 200 && !!otherSlug, r.status + ' ' + otherSlug);
+  const other = await playForCheckin(otherSlug);
+  // 负对照：另一款游戏是这个 IP 下的新去重键，counted 应当是 true，但不会产生今日打卡
+  ok('玩别的游戏 → counted:true 但没有今日打卡（daily 为空串）',
+    other.res.status === 200 && other.body.counted === true && other.body.daily === '',
+    other.res.status + ' ' + other.res.text.slice(0, 160));
+
+  /* ---------- 个人主页 /u/:name ---------- */
+  r = await req('/u/' + nameA, { j: jarA });
+  const prof = r.text;
+  ok('个人主页 → 200', r.status === 200, r.status);
+  ok('主页显示昵称与等级/经验',
+    /<h1[^>]*>测试甲 <span class="pill">/.test(prof) && /Lv\.\d+ · [\d,]+ 经验/.test(prof), '');
+  ok('主页有「成就徽章」区块与「已得 / 总数」计数',
+    /成就徽章<\/h2><span class="pill">\d+ \/ \d+<\/span>/.test(prof), '');
+  const badgeHit = ['开口第一句', '今日打卡', '第一次发帖', '小收藏家', '打分员', '邮箱已验证', '老玩家', '投稿者']
+    .find((b) => prof.includes(b)) || '';
+  ok('至少显示一枚徽章名', !!badgeHit, badgeHit || prof.slice(0, 160));
+  ok('未解锁徽章带「（进度 x/y）」进度文案', /（进度 \d+\/\d+）/.test(prof), '');
+  // 已解锁的徽章 chip 只有图标 + 名字；未解锁的会带 <b>进度/需求</b>，所以反向匹配一下
+  ok('刚打过卡 → 主页「今日打卡」徽章已解锁',
+    prof.includes('今日打卡') && !/今日打卡 <b>0\/1<\/b>/.test(prof), '');
+  r = await req('/u/' + nameA.toUpperCase());
+  ok('用户名大小写不敏感（profileByName 用 COLLATE NOCASE）', r.status === 200 && r.text.includes('测试甲'), r.status);
+  r = await req('/u/ghost' + STAMP);
+  ok('不存在的用户名 → 404 页', r.status === 404 && r.text.includes('404'), r.status);
+
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   if (fail) process.exitCode = 1;

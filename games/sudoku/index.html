@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="icon" href="data:,">
+<title>数独 - 小游戏站</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    display:flex;justify-content:center;overflow:hidden;overscroll-behavior:none;
+    -webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;
+  }
+  .wrap{width:100%;max-width:720px;height:100%;display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px}
+  .head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  h1{margin:0;font-size:20px;letter-spacing:2px;
+    background:linear-gradient(135deg,#22d3ee,#0ea5e9);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .tip{margin:0;font-size:11.5px;line-height:1.5;color:#7fb6cc;flex:1 1 200px}
+  .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .hud{display:flex;gap:6px;flex-wrap:wrap;flex:1 1 auto}
+  .stat{background:rgba(6,182,212,.13);border:1px solid rgba(6,182,212,.35);padding:4px 10px;border-radius:10px;
+    font-size:12.5px;color:#a5e9ff;white-space:nowrap}
+  .stat b{color:#fff;margin-left:4px;font-variant-numeric:tabular-nums}
+  .lv{border:1px solid rgba(34,211,238,.3);background:rgba(6,182,212,.1);color:#a5e9ff;font-size:12.5px;
+    padding:6px 12px;border-radius:10px;min-height:32px;cursor:pointer;touch-action:manipulation;font-family:inherit}
+  .lv.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#031018;font-weight:700;border-color:transparent}
+  .lv[disabled]{opacity:.45;cursor:not-allowed}
+  .status{text-align:center;font-size:13px;color:#a5e9ff;min-height:20px;font-weight:600;line-height:1.35}
+  .status.warn{color:#fb7185}
+  .status.ok{color:#5eead4}
+  .stage{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;container-type:size}
+  .board{
+    width:min(100%,calc(100vh - 260px));width:min(100%,100cqh);
+    aspect-ratio:1;display:grid;grid-template-columns:repeat(9,1fr);grid-template-rows:repeat(9,1fr);
+    background:rgba(4,20,32,.72);border:2px solid rgba(34,211,238,.5);border-radius:12px;overflow:hidden;
+    box-shadow:0 12px 34px rgba(0,0,0,.5);container-type:inline-size;touch-action:manipulation;
+  }
+  .board.done{border-color:#22d3ee;box-shadow:0 0 46px rgba(34,211,238,.45),0 12px 34px rgba(0,0,0,.5);animation:boardPulse 2.6s ease-in-out infinite}
+  @keyframes boardPulse{0%,100%{box-shadow:0 0 30px rgba(34,211,238,.32),0 12px 34px rgba(0,0,0,.5)}50%{box-shadow:0 0 58px rgba(34,211,238,.6),0 12px 34px rgba(0,0,0,.5)}}
+  .cell{
+    position:relative;display:flex;align-items:center;justify-content:center;
+    font-size:min(6.4cqw,40px);line-height:1;font-weight:600;color:#7fe3ff;cursor:pointer;
+    background:rgba(8,47,73,.22);border-right:1px solid rgba(34,211,238,.16);border-bottom:1px solid rgba(34,211,238,.16);
+    transition:background .12s,color .12s;
+  }
+  .cell.br{border-right:2px solid rgba(34,211,238,.5)}
+  .cell.bb{border-bottom:2px solid rgba(34,211,238,.5)}
+  .cell.given{color:#eafcff;background:rgba(8,47,73,.6);font-weight:700}
+  .cell.peer{background:rgba(14,165,233,.14)}
+  .cell.same{background:rgba(34,211,238,.24)}
+  .cell.sel{background:rgba(34,211,238,.34);box-shadow:inset 0 0 0 2px #22d3ee;z-index:2}
+  .cell.wrong{color:#fbbf24}
+  .cell.conflict{color:#fb7185;background:rgba(244,63,94,.24)}
+  .cell.conflict.sel{box-shadow:inset 0 0 0 2px #fb7185}
+  .cell.hint{color:#f472b6}
+  .cell .v{pointer-events:none}
+  .cell .n{position:absolute;inset:1px;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);
+    font-size:min(2.15cqw,13px);font-weight:500;color:#7dd3fc;pointer-events:none}
+  .cell .n i{display:flex;align-items:center;justify-content:center;visibility:hidden;font-style:normal}
+  .cell .n i.on{visibility:visible}
+  .board.done .cell{animation:cellPop 1.4s ease-out both;animation-delay:calc(var(--i,0) * 13ms);color:#eafcff}
+  @keyframes cellPop{
+    0%{background:rgba(34,211,238,.62);box-shadow:inset 0 0 0 2px #22d3ee;transform:scale(.92)}
+    60%{background:rgba(34,211,238,.3);box-shadow:inset 0 0 0 1px rgba(34,211,238,.5)}
+    100%{background:rgba(34,211,238,.14)}
+  }
+  .pad{display:flex;flex-direction:column;gap:6px}
+  .nums{display:grid;grid-template-columns:repeat(9,1fr);gap:5px}
+  .key{min-height:44px;font-family:inherit;font-size:clamp(15px,4vw,20px);font-weight:700;color:#dbf8ff;
+    background:linear-gradient(180deg,rgba(8,47,73,.95),rgba(5,20,32,.95));border:1px solid rgba(34,211,238,.35);
+    border-radius:10px;cursor:pointer;touch-action:manipulation;transition:transform .08s,background .12s}
+  .key.pressed,.key:active{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#031018}
+  .tools{display:flex;gap:5px;flex-wrap:wrap}
+  .btn{flex:1 1 88px;min-height:42px;font-family:inherit;font-size:13.5px;font-weight:600;color:#dbf8ff;
+    background:rgba(6,182,212,.12);border:1px solid rgba(34,211,238,.32);border-radius:10px;cursor:pointer;
+    touch-action:manipulation;transition:transform .08s,background .12s}
+  .btn.pressed,.btn:active{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#031018}
+  .btn.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#031018;border-color:transparent}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  #again{background:linear-gradient(135deg,#06b6d4,#0ea5e9);color:#031018;border-color:transparent;font-weight:700}
+  @media (max-height:700px){
+    .wrap{gap:6px;padding:8px 10px 10px}
+    h1{font-size:17px}
+    .tip{display:none}
+    .key{min-height:40px}
+    .btn{min-height:38px}
+    .status{font-size:12px}
+  }
+  @media (max-height:540px){
+    .key{min-height:36px;font-size:15px}
+    .btn{min-height:34px;font-size:12.5px}
+    .stat{padding:3px 8px;font-size:11.5px}
+    .lv{padding:5px 9px;min-height:28px;font-size:11.5px}
+    .status{min-height:16px;font-size:11.5px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>数独</h1>
+    <p class="tip">点格子选中 → 屏幕数字键或键盘 1-9 填数 · Backspace 清除 · P 铅笔候选 · U 撤销 · H 提示 · R 重开</p>
+  </div>
+  <div class="bar">
+    <div class="hud">
+      <span class="stat">用时<b id="sTime">00:00</b></span>
+      <span class="stat">空格<b id="sBlank">40</b></span>
+      <span class="stat">提示<b id="sHint">3</b></span>
+      <span class="stat" id="sLevel">简单</span>
+    </div>
+    <div class="hud" id="levels"></div>
+  </div>
+  <div class="status" id="status">点一个格子开始</div>
+  <div class="stage"><div class="board" id="board" role="grid" aria-label="数独棋盘"></div></div>
+  <div class="pad">
+    <div class="nums" id="nums"></div>
+    <div class="tools">
+      <button class="btn" id="btnNote" type="button">铅笔 关</button>
+      <button class="btn" id="btnUndo" type="button">撤销</button>
+      <button class="btn" id="btnHint" type="button">提示 3</button>
+      <button class="btn" id="btnClear" type="button">清除</button>
+      <button class="btn" id="again" type="button">重新开始</button>
+    </div>
+  </div>
+</div>
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ===================== 常量与工具 ===================== */
+  var LEVELS = { easy: { name: '简单', holes: 40 }, medium: { name: '中等', holes: 48 }, hard: { name: '困难', holes: 54 } };
+  var LEVEL_KEYS = ['easy', 'medium', 'hard'];
+
+  /* 确定性 PRNG（mulberry32）：所有题面只由它生成，不用 Math.random */
+  function mulberry32(a) {
+    a = a >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), 1 | t);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffle(arr, rand) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(rand() * (i + 1));
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  }
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  /* ===================== 数独核心 ===================== */
+  function canPlace(g, pos, n) {
+    var r = (pos / 9) | 0, c = pos % 9, br = r - (r % 3), bc = c - (c % 3), i, y, x;
+    for (i = 0; i < 9; i++) { if (g[r * 9 + i] === n) return false; if (g[i * 9 + c] === n) return false; }
+    for (y = 0; y < 3; y++) for (x = 0; x < 3; x++) if (g[(br + y) * 9 + bc + x] === n) return false;
+    return true;
+  }
+  /* 随机化回溯生成一个完整终盘 */
+  function fillGrid(g, pos, rand) {
+    if (pos === 81) return true;
+    var nums = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9], rand);
+    for (var i = 0; i < 9; i++) {
+      var n = nums[i];
+      if (canPlace(g, pos, n)) {
+        g[pos] = n;
+        if (fillGrid(g, pos + 1, rand)) return true;
+        g[pos] = 0;
+      }
+    }
+    return false;
+  }
+  /* 回溯计数解数，最多数到 limit（>1 即说明不唯一） */
+  function countSolutions(grid, limit) {
+    limit = limit || 2;
+    var g = grid.slice(), count = 0;
+    function cands(pos) {
+      var used = 0, r = (pos / 9) | 0, c = pos % 9, br = r - (r % 3), bc = c - (c % 3), i, y, x, v, out = [];
+      for (i = 0; i < 9; i++) {
+        v = g[r * 9 + i]; if (v) used |= 1 << v;
+        v = g[i * 9 + c]; if (v) used |= 1 << v;
+      }
+      for (y = 0; y < 3; y++) for (x = 0; x < 3; x++) { v = g[(br + y) * 9 + bc + x]; if (v) used |= 1 << v; }
+      for (var n = 1; n <= 9; n++) if (!(used & (1 << n))) out.push(n);
+      return out;
+    }
+    function rec() {
+      if (count >= limit) return;
+      var best = -1, bestC = null, bestLen = 10, p, cs;
+      for (p = 0; p < 81; p++) {                    /* MRV：先试候选最少的格子 */
+        if (g[p]) continue;
+        cs = cands(p);
+        if (cs.length < bestLen) { best = p; bestC = cs; bestLen = cs.length; if (bestLen === 0) break; }
+      }
+      if (best === -1) { count++; return; }
+      if (bestLen === 0) return;
+      for (var i = 0; i < bestC.length; i++) {
+        g[best] = bestC[i];
+        rec();
+        g[best] = 0;
+        if (count >= limit) return;
+      }
+    }
+    rec();
+    return count;
+  }
+  /* 生成唯一解题面：随机挖洞，挖完用 countSolutions 验证唯一，不唯一就填回去 */
+  function makePuzzle(seed, holes) {
+    var rand = mulberry32(seed), best = null;
+    for (var attempt = 0; attempt < 40; attempt++) {
+      var sol = new Array(81);
+      for (var z = 0; z < 81; z++) sol[z] = 0;
+      fillGrid(sol, 0, rand);
+      var g = sol.slice(), order = [], i;
+      for (i = 0; i < 81; i++) order.push(i);
+      shuffle(order, rand);
+      var dug = 0;
+      for (var k = 0; k < order.length; k++) {
+        i = order[k];
+        var keep = g[i];
+        g[i] = 0;
+        if (countSolutions(g, 2) !== 1) g[i] = keep; else dug++;
+        if (dug >= holes) break;
+      }
+      if (!best || dug > best.dug) best = { puzzle: g.slice(), solution: sol, dug: dug };
+      if (dug >= holes) break;                      /* 换题重试：只有达到目标空格数才收工 */
+    }
+    return best;
+  }
+
+  /* ===================== 状态 ===================== */
+  var S = {
+    level: 'easy', seed: 0, daily: null,
+    puzzle: [], sol: [], val: [], notes: [],
+    sel: -1, over: false, noteMode: false,
+    hintsLeft: 3, hintsUsed: 0, moves: 0,
+    hist: [], started: false, t0: 0, elapsed: 0, timerId: 0, sent: false,
+    conflict: {}, wrong: {}, hinted: {}, conflictN: 0, wrongN: 0
+  };
+
+  var board = document.getElementById('board');
+  var statusEl = document.getElementById('status');
+  var sTime = document.getElementById('sTime');
+  var sBlank = document.getElementById('sBlank');
+  var sHint = document.getElementById('sHint');
+  var sLevel = document.getElementById('sLevel');
+  var numsEl = document.getElementById('nums');
+  var levelsEl = document.getElementById('levels');
+  var btnNote = document.getElementById('btnNote');
+  var btnHint = document.getElementById('btnHint');
+  var btnClear = document.getElementById('btnClear');
+  var btnUndo = document.getElementById('btnUndo');
+  var again = document.getElementById('again');
+  var cells = [], flashId = 0;
+
+  /* ===================== 建 DOM ===================== */
+  (function build() {
+    var i, frag = document.createDocumentFragment();
+    for (i = 0; i < 81; i++) {
+      var el = document.createElement('div');
+      el.className = 'cell';
+      el.dataset.i = String(i);
+      el.setAttribute('role', 'gridcell');
+      el.style.setProperty('--i', i % 9 + Math.floor(i / 9));
+      var v = document.createElement('span'); v.className = 'v';
+      var n = document.createElement('span'); n.className = 'n';
+      for (var k = 1; k <= 9; k++) { var it = document.createElement('i'); it.textContent = String(k); n.appendChild(it); }
+      el.appendChild(v); el.appendChild(n);
+      frag.appendChild(el);
+      cells.push(el);
+    }
+    board.appendChild(frag);
+
+    var nf = document.createDocumentFragment();
+    for (i = 1; i <= 9; i++) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'key'; b.dataset.n = String(i); b.textContent = String(i);
+      b.setAttribute('aria-label', '填入 ' + i);
+      nf.appendChild(b);
+    }
+    numsEl.appendChild(nf);
+
+    var lf = document.createDocumentFragment();
+    LEVEL_KEYS.forEach(function (key) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'lv'; b.dataset.lv = key; b.textContent = LEVELS[key].name;
+      lf.appendChild(b);
+    });
+    levelsEl.appendChild(lf);
+  })();
+
+  /* ===================== 渲染 ===================== */
+  function boxOf(i) { return ((i / 27) | 0) * 3 + (((i % 9) / 3) | 0); }
+  function filledCount() {
+    var n = 0;
+    for (var i = 0; i < 81; i++) if (S.val[i]) n++;
+    return n;
+  }
+  function fmtTime(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var m = Math.floor(s / 60);
+    return (m < 10 ? '0' : '') + m + ':' + ((s % 60) < 10 ? '0' : '') + (s % 60);
+  }
+  function analyze() {
+    var conf = {}, wrong = {}, r, c, br, bc, i, v, n, unitIdx;
+    function scan(unit) {
+      var byVal = {}, k, idx;
+      for (k = 0; k < unit.length; k++) { idx = unit[k]; v = S.val[idx]; if (!v) continue; (byVal[v] = byVal[v] || []).push(idx); }
+      for (var key in byVal) if (byVal[key].length > 1) for (k = 0; k < byVal[key].length; k++) conf[byVal[key][k]] = 1;
+    }
+    for (r = 0; r < 9; r++) { var row = []; for (c = 0; c < 9; c++) row.push(r * 9 + c); scan(row); }
+    for (c = 0; c < 9; c++) { var col = []; for (r = 0; r < 9; r++) col.push(r * 9 + c); scan(col); }
+    for (br = 0; br < 3; br++) for (bc = 0; bc < 3; bc++) {
+      var box = [];
+      for (var y = 0; y < 3; y++) for (var x = 0; x < 3; x++) box.push((br * 3 + y) * 9 + bc * 3 + x);
+      scan(box);
+    }
+    for (i = 0; i < 81; i++) if (S.val[i] && S.puzzle[i] === 0 && S.val[i] !== S.sol[i]) wrong[i] = 1;
+    S.conflict = conf; S.wrong = wrong;
+    S.conflictN = (function () { var t = 0; for (var k in conf) t++; return t; })();
+    S.wrongN = (function () { var t = 0; for (var k in wrong) t++; return t; })();
+  }
+  function render() {
+    var selV = S.sel >= 0 ? S.val[S.sel] : 0;
+    var selR = S.sel >= 0 ? (S.sel / 9) | 0 : -1, selC = S.sel >= 0 ? S.sel % 9 : -1, selB = S.sel >= 0 ? boxOf(S.sel) : -1;
+    for (var i = 0; i < 81; i++) {
+      var el = cells[i], v = S.val[i], r = (i / 9) | 0, c = i % 9;
+      var cls = 'cell';
+      if (c === 2 || c === 5) cls += ' br';
+      if (r === 2 || r === 5) cls += ' bb';
+      if (S.puzzle[i] !== 0) cls += ' given';
+      if (S.hinted[i] && S.puzzle[i] === 0) cls += ' hint';
+      if (S.wrong[i]) cls += ' wrong';
+      if (S.conflict[i]) cls += ' conflict';
+      if (S.sel === i) cls += ' sel';
+      else if (S.sel >= 0 && (r === selR || c === selC || boxOf(i) === selB)) cls += ' peer';
+      if (S.sel !== i && selV && v === selV) cls += ' same';
+      if (S.puzzle[i] === 0 && !v && S.notes[i] && S.noteMode) cls += ' pmode';
+      if (el.className !== cls) el.className = cls;
+      var vEl = el.firstChild;
+      var txt = v ? String(v) : '';
+      if (vEl.textContent !== txt) vEl.textContent = txt;
+      var nEl = el.lastChild;
+      for (var k = 1; k <= 9; k++) {
+        var on = (!v && S.notes[i] && (S.notes[i] & (1 << k))) ? 'on' : '';
+        var it = nEl.childNodes[k - 1];
+        if (it.className !== on) it.className = on;
+      }
+    }
+  }
+  function updateHud() {
+    sTime.textContent = fmtTime(S.elapsed);
+    sBlank.textContent = String(81 - filledCount());
+    sHint.textContent = String(S.hintsLeft);
+    var lv = LEVELS[S.level];
+    sLevel.textContent = lv.name + (S.daily ? ' · 每日' : '');
+    btnHint.textContent = '提示 ' + S.hintsLeft;
+    btnHint.disabled = S.hintsLeft <= 0 || S.over;
+    btnNote.textContent = '铅笔 ' + (S.noteMode ? '开' : '关');
+    btnNote.className = 'btn' + (S.noteMode ? ' on' : '');
+    btnUndo.disabled = S.hist.length === 0 || S.over;
+    for (var i = 0; i < levelsEl.children.length; i++) {
+      var b = levelsEl.children[i];
+      b.className = 'lv' + (b.dataset.lv === S.level ? ' on' : '');
+      b.disabled = !!S.daily;
+    }
+  }
+  function syncStatus() {
+    if (flashId) return;
+    if (S.over) {
+      statusEl.className = 'status ok';
+      statusEl.textContent = '🎉 完成！用时 ' + fmtTime(S.elapsed) + ' · ' + LEVELS[S.level].name +
+        ' · 提示 ' + S.hintsUsed + ' 次' + (S.daily ? '（每日 ' + S.daily + ' 已提交）' : '');
+      return;
+    }
+    if (S.conflictN > 0) {
+      statusEl.className = 'status warn';
+      statusEl.textContent = '⚠ ' + S.conflictN + ' 处冲突（同行/列/宫重复）';
+      return;
+    }
+    if (S.wrongN > 0) {
+      statusEl.className = 'status warn';
+      statusEl.textContent = '⚠ 有 ' + S.wrongN + ' 个数字不对（琥珀色）';
+      return;
+    }
+    statusEl.className = 'status';
+    if (S.noteMode) { statusEl.textContent = '铅笔模式：点数字标记候选，再点一次取消'; return; }
+    if (S.sel >= 0) { statusEl.textContent = '已选中 ' + (((S.sel / 9) | 0) + 1) + ' 行 ' + (S.sel % 9 + 1) + ' 列 · 用数字键填数'; return; }
+    statusEl.textContent = '点一个格子开始';
+  }
+  function flash(msg, kind) {
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
+    statusEl.textContent = msg;
+    var my = ++flashId;
+    setTimeout(function () { if (my === flashId) { flashId = 0; syncStatus(); } }, 1500);
+  }
+  function paint() { render(); updateHud(); syncStatus(); }
+
+  /* ===================== 计时 ===================== */
+  function tick() { S.elapsed = Date.now() - S.t0; sTime.textContent = fmtTime(S.elapsed); }
+  function startTimer() {
+    if (S.started || S.over) return;
+    S.started = true;
+    S.t0 = Date.now() - S.elapsed;
+    if (!S.timerId) S.timerId = setInterval(tick, 200);
+  }
+  function stopTimer() {
+    if (S.timerId) { clearInterval(S.timerId); S.timerId = 0; }
+    if (S.started) S.elapsed = Date.now() - S.t0;
+  }
+
+  /* ===================== 开局 ===================== */
+  function randomSeed() { return (Date.now() ^ Math.imul(seedNonce++, 0x9E3779B9)) >>> 0; }
+  var seedNonce = 1;
+
+  function start(seed, level, daily) {
+    stopTimer();
+    var gen = makePuzzle(seed >>> 0, LEVELS[level].holes);
+    S.level = level; S.seed = seed >>> 0; S.daily = daily || null;
+    S.puzzle = gen.puzzle; S.sol = gen.solution;
+    S.val = gen.puzzle.slice();
+    S.notes = new Array(81);
+    for (var i = 0; i < 81; i++) S.notes[i] = 0;
+    S.hinted = {}; S.hist = []; S.sel = -1; S.over = false;
+    S.hintsLeft = 3; S.hintsUsed = 0; S.noteMode = false; S.moves = 0;
+    S.started = false; S.elapsed = 0; S.sent = false;
+    S.conflict = {}; S.wrong = {}; S.conflictN = 0; S.wrongN = 0;
+    board.classList.remove('done');
+    analyze();
+    paint();
+    syncStatus();
+  }
+  function restart() { start(S.seed, S.level, S.daily); flash('已重新开始这局'); }
+  function newPuzzle(level) { start(randomSeed(), level, null); flash('新题：' + LEVELS[level].name + ' · ' + LEVELS[level].holes + ' 空'); }
+
+  /* ===================== 动作 ===================== */
+  function snapshot() {
+    S.hist.push({ val: S.val.slice(), notes: S.notes.slice(), hintsLeft: S.hintsLeft, hintsUsed: S.hintsUsed, hinted: Object.assign({}, S.hinted) });
+    if (S.hist.length > 300) S.hist.shift();
+  }
+  function select(i) {
+    if (S.over) return;
+    S.sel = i;
+    paint();
+  }
+  function peersOf(i) {
+    var out = {}, r = (i / 9) | 0, c = i % 9, br = r - (r % 3), bc = c - (c % 3), k, y, x;
+    for (k = 0; k < 9; k++) { out[r * 9 + k] = 1; out[k * 9 + c] = 1; }
+    for (y = 0; y < 3; y++) for (x = 0; x < 3; x++) out[(br + y) * 9 + bc + x] = 1;
+    delete out[i];
+    return out;
+  }
+  function input(n) {
+    if (S.over) { flash('这局已经完成啦，点「重新开始」再来一局'); return; }
+    if (S.sel < 0) { flash('先在棋盘上点一个格子'); return; }
+    var i = S.sel;
+    if (S.puzzle[i] !== 0) { flash('题目给定的数字不能修改'); return; }
+    snapshot();
+    if (S.noteMode) {
+      if (S.val[i]) { S.val[i] = 0; S.hinted[i] = 0; S.notes[i] = 0; }
+      S.notes[i] = (S.notes[i] ^ (1 << n)) & 0x3FE;
+    } else {
+      if (S.val[i] === n) { S.val[i] = 0; }
+      else {
+        S.val[i] = n; S.notes[i] = 0; S.hinted[i] = 0; S.moves++;
+        var p = peersOf(i), k;
+        for (k in p) S.notes[k] = S.notes[k] & ~(1 << n);   /* 落数后顺手清掉同行列宫的该候选 */
+      }
+    }
+    startTimer(); analyze(); paint(); checkWin();
+  }
+  function clearCell(silent) {
+    if (S.over) return;
+    if (S.sel < 0) { if (!silent) flash('先在棋盘上点一个格子'); return; }
+    var i = S.sel;
+    if (S.puzzle[i] !== 0) { if (!silent) flash('题目给定的数字不能清除'); return; }
+    if (!S.val[i] && !S.notes[i]) return;
+    snapshot();
+    S.val[i] = 0; S.notes[i] = 0; S.hinted[i] = 0;
+    startTimer(); analyze(); paint();
+  }
+  function undo() {
+    if (S.over) { flash('这局已经完成啦'); return; }
+    if (!S.hist.length) { flash('没有可撤销的操作'); return; }
+    var h = S.hist.pop();
+    S.val = h.val; S.notes = h.notes; S.hintsLeft = h.hintsLeft; S.hintsUsed = h.hintsUsed; S.hinted = h.hinted;
+    analyze(); paint();
+    flash('已撤销一步');
+  }
+  function toggleNote(force) {
+    S.noteMode = (typeof force === 'boolean') ? force : !S.noteMode;
+    paint();
+    flash(S.noteMode ? '铅笔模式开：填的是候选数' : '铅笔模式关：填的是数字');
+  }
+  function hint() {
+    if (S.over) { flash('这局已经完成啦'); return; }
+    if (S.hintsLeft <= 0) { flash('3 次提示已经用完'); return; }
+    var i = -1, k, p;
+    if (S.sel >= 0 && S.puzzle[S.sel] === 0 && S.val[S.sel] !== S.sol[S.sel]) i = S.sel;
+    else {
+      var from = S.sel >= 0 ? S.sel : 0;
+      for (k = 0; k < 81; k++) {
+        p = (from + k) % 81;
+        if (S.puzzle[p] === 0 && S.val[p] !== S.sol[p]) { i = p; break; }
+      }
+    }
+    if (i < 0) { flash('已经全部填对了'); return; }
+    snapshot();
+    S.val[i] = S.sol[i]; S.notes[i] = 0; S.hinted[i] = 1; S.sel = i;
+    S.hintsLeft--; S.hintsUsed++;
+    startTimer(); analyze(); paint(); checkWin();
+    if (!S.over) flash('提示：这个格子是 ' + S.val[i] + '（还剩 ' + S.hintsLeft + ' 次）', 'ok');
+  }
+  function checkWin() {
+    if (S.over) return;
+    if (filledCount() !== 81 || S.conflictN > 0) return;
+    S.over = true;
+    stopTimer();
+    board.classList.add('done');
+    paint();
+    if (S.daily) postDaily();
+  }
+  function postDaily() {
+    if (S.sent) return;
+    S.sent = true;
+    var msg = { type: 'gs:daily-done', game: 'sudoku', date: S.daily, score: Math.round(S.elapsed / 1000) };
+    try { window.parent.postMessage(msg, '*'); } catch (e) {}
+  }
+
+  /* ===================== 输入：鼠标 / 触摸 / 键盘 ===================== */
+  function cellFrom(target) {
+    var el = target;
+    while (el && el !== board) { if (el.classList && el.classList.contains('cell')) return parseInt(el.dataset.i, 10); el = el.parentNode; }
+    return -1;
+  }
+  var usePointer = !!window.PointerEvent;
+  function boardDown(e) {
+    var i = cellFrom(e.target);
+    if (i < 0) return;
+    select(i);
+    if (e.cancelable && e.type === 'touchstart') e.preventDefault();
+  }
+  if (usePointer) board.addEventListener('pointerdown', boardDown, { passive: true });
+  else {
+    board.addEventListener('touchstart', boardDown, { passive: false });
+    board.addEventListener('mousedown', boardDown, { passive: true });
+  }
+  numsEl.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.key') : null;
+    if (!b) return;
+    input(parseInt(b.dataset.n, 10));
+  });
+  levelsEl.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.lv') : null;
+    if (!b || b.disabled) return;
+    if (S.daily) { flash('每日挑战题型固定为中等'); return; }
+    if (b.dataset.lv === S.level) newPuzzle(S.level);
+    else newPuzzle(b.dataset.lv);
+  });
+  btnNote.addEventListener('click', function () { toggleNote(); });
+  btnUndo.addEventListener('click', undo);
+  btnHint.addEventListener('click', hint);
+  btnClear.addEventListener('click', function () { clearCell(false); });
+  again.addEventListener('click', restart);
+
+  function moveSel(dr, dc) {
+    var r = S.sel < 0 ? 0 : (S.sel / 9) | 0, c = S.sel < 0 ? 0 : S.sel % 9;
+    r = (r + dr + 9) % 9; c = (c + dc + 9) % 9;
+    select(r * 9 + c);
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.altKey || e.metaKey) return;
+    var k = e.key;
+    if (e.ctrlKey) { if (k === 'z' || k === 'Z') { e.preventDefault(); undo(); } return; }
+    if (k >= '1' && k <= '9') { e.preventDefault(); input(parseInt(k, 10)); return; }
+    switch (k) {
+      case 'Backspace': case 'Delete': case '0': case 'Clear': e.preventDefault(); clearCell(false); return;
+      case 'ArrowUp': case 'w': case 'W': e.preventDefault(); moveSel(-1, 0); return;
+      case 'ArrowDown': case 's': case 'S': e.preventDefault(); moveSel(1, 0); return;
+      case 'ArrowLeft': case 'a': case 'A': e.preventDefault(); moveSel(0, -1); return;
+      case 'ArrowRight': case 'd': case 'D': e.preventDefault(); moveSel(0, 1); return;
+      case 'u': case 'U': e.preventDefault(); undo(); return;
+      case 'h': case 'H': e.preventDefault(); hint(); return;
+      case 'p': case 'P': case 'n': case 'N': e.preventDefault(); toggleNote(); return;
+      case 'r': case 'R': e.preventDefault(); restart(); return;
+      case 'Escape': e.preventDefault(); S.sel = -1; paint(); return;
+    }
+  });
+
+  /* 手柄补充：shim 在 pointer 模式下只认 A/B（都等价于光标点击）与 Start，
+     X 完全没用到——这里自己轮询 X 切换铅笔模式，B 在选中格可清除时直接清除。 */
+  var padPrev = { 1: false, 2: false };
+  function pollPad() {
+    requestAnimationFrame(pollPad);
+    var pads = null;
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : null; } catch (err) { pads = null; }
+    if (!pads) return;
+    for (var i = 0; i < pads.length; i++) {
+      var p = pads[i];
+      if (!p || !p.buttons) continue;
+      var x = !!(p.buttons[2] && p.buttons[2].pressed);
+      var b = !!(p.buttons[1] && p.buttons[1].pressed);
+      if (x && !padPrev[2]) toggleNote();
+      if (b && !padPrev[1]) {
+        var s = S.sel;
+        if (s >= 0 && S.puzzle[s] === 0 && (S.val[s] || S.notes[s])) clearCell(true);
+      }
+      padPrev[2] = x; padPrev[1] = b;
+    }
+  }
+  if (navigator.getGamepads) requestAnimationFrame(pollPad);
+
+  /* ===================== 启动 ===================== */
+  function readParams() {
+    var q = {};
+    var s = location.search.replace(/^\?/, '');
+    if (s) s.split('&').forEach(function (kv) {
+      if (!kv) return;
+      var p = kv.split('=');
+      try { q[decodeURIComponent(p[0])] = decodeURIComponent((p[1] || '').replace(/\+/g, ' ')); } catch (e) {}
+    });
+    return q;
+  }
+  var params = (function () { try { return new URLSearchParams(location.search); } catch (e) { return null; } })();
+  function param(name) {
+    if (params && params.get) return params.get(name);
+    var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : null;
+  }
+  var dailyRaw = param('daily');
+  var daily = (dailyRaw && /^\d{4}-\d{2}-\d{2}$/.test(dailyRaw.trim())) ? dailyRaw.trim() : null;
+  var seedRaw = param('seed');
+  var lvRaw = (param('level') || '').trim().toLowerCase();
+  var lvAlias = { '1': 'easy', '2': 'medium', '3': 'hard', '简单': 'easy', '中等': 'medium', '困难': 'hard', 'easy': 'easy', 'medium': 'medium', 'hard': 'hard', 'normal': 'medium' };
+  var initLevel = lvAlias[lvRaw] || 'easy';
+  var initSeed;
+  if (daily) initSeed = hashStr(daily);                      /* 每日挑战：日期 hash 派生，全球同日同题 */
+  else if (seedRaw !== null && /^-?\d+$/.test(seedRaw.trim())) initSeed = parseInt(seedRaw.trim(), 10) >>> 0;
+  else initSeed = randomSeed();
+  if (daily) initLevel = 'medium';
+
+  start(initSeed, initLevel, daily);
+  if (daily) flash('每日挑战 ' + daily + '（中等 · 全球同题）', 'ok');
+
+  window.GAME = {
+    slug: 'sudoku',
+    state: function () {
+      return {
+        over: S.over,
+        score: Math.round(S.elapsed / 1000),
+        elapsedMs: S.elapsed,
+        filled: filledCount(),
+        blanks: 81 - filledCount(),
+        level: S.level,
+        levelName: LEVELS[S.level].name,
+        selected: S.sel,
+        noteMode: S.noteMode,
+        hintsLeft: S.hintsLeft,
+        hintsUsed: S.hintsUsed,
+        conflicts: S.conflictN,
+        wrong: S.wrongN,
+        moves: S.moves,
+        daily: S.daily,
+        seed: S.seed,
+        solved: S.over
+      };
+    },
+    restart: restart,
+    seed: function () { return S.seed; }
+  };
+  /* 自测/调试用句柄（不属于交付契约） */
+  window.SUDOKU = {
+    puzzle: function () { return S.puzzle.slice(); },
+    solution: function () { return S.sol.slice(); },
+    values: function () { return S.val.slice(); },
+    notes: function () { return S.notes.slice(); },
+    selectCell: select,
+    setCell: function (i, v) { S.sel = i; input(v); },
+    clearCell: function () { clearCell(true); },
+    hint: hint,
+    undo: undo,
+    toggleNote: toggleNote,
+    newPuzzle: newPuzzle,
+    restart: restart,
+    countSolutions: countSolutions,
+    makePuzzle: makePuzzle,
+    levelOf: function () { return S.level; },
+    filledCount: filledCount
+  };
+})();
+</script>
+<script>
+/* 按下反馈：合成点击/部分浏览器不触发 :active，显式加类保证可见反馈 */
+(function () {
+  var cur = null;
+  function clear() { if (cur) { cur.classList.remove('pressed'); cur = null; } }
+  document.addEventListener('pointerdown', function (e) {
+    clear();
+    var el = e.target;
+    el = (el && el.closest) ? el.closest('button') : null;
+    if (!el) return;
+    try { if (navigator.vibrate) navigator.vibrate(8); } catch (err) {}
+    el.classList.add('pressed'); cur = el;
+  }, { passive: true });
+  document.addEventListener('pointerup', clear, true);
+  document.addEventListener('pointercancel', clear, true);
+})();
+</script>
+</body>
+</html>

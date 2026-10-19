@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>纸牌接龙 - 趣玩小游戏</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+  html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+  body{display:flex;align-items:center;justify-content:center;padding:10px;
+    background:radial-gradient(circle at 50% 0%,#0b2a3f,#050b14 72%);color:#dbf8ff;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
+  .wrap{width:100%;max-width:1040px;height:100%;display:flex;flex-direction:column;gap:8px}
+  .hud{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:#7dd3fc}
+  .brand{font-weight:800;font-size:14px;color:#e8fbff;text-shadow:0 0 14px rgba(34,211,238,.6);white-space:nowrap}
+  .stat{background:rgba(6,182,212,.13);border:1px solid rgba(6,182,212,.35);padding:5px 10px;border-radius:9px;white-space:nowrap}
+  .stat b{color:#fff;margin-left:4px;font-variant-numeric:tabular-nums}
+  .modes{margin-left:auto;display:flex;gap:6px}
+  .modes button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#bfe9ff;
+    border-radius:9px;padding:6px 11px;font:inherit;font-size:12.5px;cursor:pointer;min-height:36px;touch-action:manipulation}
+  .modes button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;color:#04141c;font-weight:700}
+  .modes button:active{transform:scale(.97)}
+  .tip{font-size:12px;color:#67e8f9;opacity:.85;line-height:1.5}
+  .board{--cw:80px;--ch:116px;--gap:8px;flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--gap);
+    touch-action:none;position:relative}
+  .top{display:grid;grid-template-columns:repeat(7,var(--cw));gap:var(--gap);height:var(--ch)}
+  .table{flex:1;min-height:0;display:grid;grid-template-columns:repeat(7,var(--cw));gap:var(--gap)}
+  .slot{position:relative;border-radius:calc(var(--cw)*.11)}
+  .slot.col{height:100%}
+  .slot:focus-visible{outline:2px solid #facc15;outline-offset:2px}
+  .slot.bad{animation:shake .3s ease}
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+  .ghost{position:absolute;left:0;top:0;width:var(--cw);height:var(--ch);border-radius:calc(var(--cw)*.11);
+    border:1.5px dashed rgba(56,189,248,.32);background:rgba(6,182,212,.05);
+    display:flex;align-items:center;justify-content:center;font-size:calc(var(--cw)*.42);color:rgba(125,211,252,.3)}
+  .ghost.recycle{color:rgba(250,204,21,.62);border-color:rgba(250,204,21,.4);font-size:calc(var(--cw)*.52)}
+  .card{position:absolute;left:0;top:0;width:var(--cw);height:var(--ch);border-radius:calc(var(--cw)*.11);
+    background:linear-gradient(160deg,#ffffff,#e2ecf7);color:#132434;border:1px solid rgba(255,255,255,.85);
+    box-shadow:0 2px 5px rgba(0,0,0,.5);overflow:hidden}
+  .card.red{color:#e11d48}
+  .card .rk{position:absolute;left:7%;top:3%;font-size:calc(var(--cw)*.36);font-weight:800;line-height:1;letter-spacing:-.02em}
+  .card .rk.ten{font-size:calc(var(--cw)*.28)}
+  .card .su{position:absolute;left:8.5%;top:calc(3% + var(--cw)*.37);font-size:calc(var(--cw)*.27);line-height:1}
+  .card .big{position:absolute;right:3%;bottom:0;font-size:calc(var(--cw)*.62);line-height:1.06;opacity:.32}
+  .card.back{background:
+    repeating-linear-gradient(45deg,rgba(34,211,238,.16) 0 4px,rgba(34,211,238,0) 4px 8px),
+    linear-gradient(150deg,#0a3a55,#0c6b86 55%,#08303f);
+    border-color:rgba(34,211,238,.45);box-shadow:0 2px 5px rgba(0,0,0,.5),inset 0 0 18px rgba(34,211,238,.18)}
+  .card.sel{box-shadow:0 0 0 2px #22d3ee,0 0 16px rgba(34,211,238,.8);transform:translateY(-2px)}
+  .card.cur{outline:2px solid #facc15;outline-offset:-2px}
+  .card.ghosted{visibility:hidden}
+  .badge{position:absolute;right:3px;top:3px;background:rgba(3,10,18,.8);color:#7dd3fc;border:1px solid rgba(34,211,238,.5);
+    border-radius:7px;font-size:calc(var(--cw)*.2);padding:0 4px;line-height:1.5;font-variant-numeric:tabular-nums}
+  .foot{display:flex;gap:8px}
+  .btn{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#dbf8ff;
+    border-radius:11px;padding:10px;cursor:pointer;font:inherit;font-size:13.5px;min-height:44px;touch-action:manipulation}
+  .btn.primary{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;font-weight:700;color:#04141c}
+  .btn:active{transform:scale(.98)}
+  .btn:disabled{opacity:.38;cursor:default}
+  .btn.pulse{animation:bpulse .32s ease 3}
+  @keyframes bpulse{50%{box-shadow:0 0 0 3px rgba(250,204,21,.5)}}
+  .drag{position:fixed;left:0;top:0;pointer-events:none;z-index:90;display:none}
+  .drag.on{display:block}
+  .drag .card{box-shadow:0 12px 26px rgba(0,0,0,.62)}
+  .toast{position:fixed;left:50%;bottom:74px;transform:translateX(-50%) translateY(8px);opacity:0;transition:.2s;
+    background:rgba(4,20,30,.94);border:1px solid rgba(34,211,238,.45);color:#c9f2ff;padding:8px 14px;border-radius:10px;
+    font-size:12.5px;pointer-events:none;z-index:70;max-width:88vw;text-align:center}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+    background:radial-gradient(circle at 50% 42%,rgba(8,34,54,.88),rgba(3,7,14,.95));z-index:80;text-align:center;padding:20px;overflow:hidden}
+  .ov.on{display:flex;animation:fadein .35s ease}
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  .ov h2{margin:0;font-size:26px;color:#fff;text-shadow:0 0 22px rgba(34,211,238,.85)}
+  .ov p{margin:0;color:#8fdcf5;font-size:14px;line-height:1.8}
+  .ov .bigicon{font-size:52px;animation:pop .7s ease infinite alternate}
+  @keyframes pop{from{transform:scale(1) rotate(-4deg)}to{transform:scale(1.12) rotate(4deg)}}
+  .ov .row{display:flex;gap:10px;margin-top:6px}
+  .ov .row .btn{flex:0 0 auto;padding:11px 20px}
+  .cf{position:absolute;top:-6%;width:8px;height:13px;border-radius:2px;animation:fall linear infinite}
+  @keyframes fall{to{transform:translateY(116vh) rotate(760deg)}}
+  .board.win .card{box-shadow:0 0 14px rgba(250,204,21,.85),0 2px 5px rgba(0,0,0,.5)}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  @media (max-width:560px){
+    .brand{font-size:13px}.tip{font-size:11.5px}.stat{padding:4px 8px}
+    .modes{margin-left:0;width:100%}.modes button{flex:1}
+  }
+  @media (pointer:coarse){ .modes button{min-height:44px} }
+  @media (max-height:600px){ .tip{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <span class="brand">🃏 纸牌接龙</span>
+    <div class="stat">得分<b id="score">0</b></div>
+    <div class="stat">用时<b id="time">00:00</b></div>
+    <div class="stat">步数<b id="moves">0</b></div>
+    <div class="modes" id="modes">
+      <button data-mode="1" type="button">抽 1 张</button>
+      <button data-mode="3" type="button">抽 3 张</button>
+      <button data-mode="challenge" type="button">挑战·不撤销</button>
+    </div>
+  </div>
+  <div class="tip" id="tip">拖动牌到目标位置，或点选一张牌再点目标落位 · 双击（双击/双击）自动收进收集区 · 快捷键 U 撤销 / N 抽牌 / R 重开</div>
+  <div class="board" id="board">
+    <div class="top">
+      <div class="slot" id="stock" data-zone="stock" role="button" tabindex="0" aria-label="抽牌堆"></div>
+      <div class="slot" id="waste" data-zone="waste" role="button" tabindex="0" aria-label="弃牌堆"></div>
+      <div class="spacer" aria-hidden="true"></div>
+      <div class="slot" data-zone="found0" role="button" tabindex="0" aria-label="收集区 黑桃"></div>
+      <div class="slot" data-zone="found1" role="button" tabindex="0" aria-label="收集区 红桃"></div>
+      <div class="slot" data-zone="found2" role="button" tabindex="0" aria-label="收集区 方块"></div>
+      <div class="slot" data-zone="found3" role="button" tabindex="0" aria-label="收集区 梅花"></div>
+    </div>
+    <div class="table">
+      <div class="slot col" data-zone="col0" role="button" tabindex="0" aria-label="第 1 列"></div>
+      <div class="slot col" data-zone="col1" role="button" tabindex="0" aria-label="第 2 列"></div>
+      <div class="slot col" data-zone="col2" role="button" tabindex="0" aria-label="第 3 列"></div>
+      <div class="slot col" data-zone="col3" role="button" tabindex="0" aria-label="第 4 列"></div>
+      <div class="slot col" data-zone="col4" role="button" tabindex="0" aria-label="第 5 列"></div>
+      <div class="slot col" data-zone="col5" role="button" tabindex="0" aria-label="第 6 列"></div>
+      <div class="slot col" data-zone="col6" role="button" tabindex="0" aria-label="第 7 列"></div>
+    </div>
+  </div>
+  <div class="foot">
+    <button class="btn" id="undo" type="button">↶ 撤销</button>
+    <button class="btn" id="newdeal" type="button">🎲 发新牌</button>
+    <button class="btn primary" id="reset" type="button">重新开始</button>
+  </div>
+</div>
+<div class="drag" id="drag" aria-hidden="true"></div>
+<div class="ov" id="win" aria-hidden="true">
+  <div class="bigicon">🃏</div>
+  <h2>恭喜通关！</h2>
+  <p id="winStat">得分 0 · 用时 00:00 · 步数 0</p>
+  <div class="row">
+    <button class="btn primary" id="winAgain" type="button">再来一局</button>
+    <button class="btn" id="winClose" type="button">看看牌面</button>
+  </div>
+</div>
+<div class="toast" id="toast" aria-hidden="true"></div>
+<div class="sr" id="live" aria-live="polite"></div>
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ================= 常量与工具 ================= */
+  var SUITS = ['S', 'H', 'D', 'C'];                 /* 收集区顺序：黑桃 红桃 方块 梅花 */
+  var SUIT_CH = { S: '♠', H: '♥', D: '♦', C: '♣' };
+  var SUIT_CN = { S: '黑桃', H: '红桃', D: '方块', C: '梅花' };
+  var RANK_TXT = ['', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  var ZONES = ['stock', 'waste', 'found0', 'found1', 'found2', 'found3',
+               'col0', 'col1', 'col2', 'col3', 'col4', 'col5', 'col6'];
+
+  function isRed(s) { return s === 'H' || s === 'D'; }
+  function cid(c) { return c.s + c.r; }
+  function cardName(c) { return SUIT_CN[c.s] + RANK_TXT[c.r]; }
+  function $(id) { return document.getElementById(id); }
+
+  /* 确定性 PRNG：同一 seed 必须发出完全一样的牌 */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  }
+  function param(k) { try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; } }
+  function randomSeed() { return ((Date.now() >>> 0) ^ ((Math.random() * 0xFFFFFFFF) >>> 0)) >>> 0; }
+  function fmtTime(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var m = Math.floor(s / 60);
+    return (m < 10 ? '0' : '') + m + ':' + ((s % 60) < 10 ? '0' : '') + (s % 60);
+  }
+
+  /* ================= 状态 ================= */
+  var S = {
+    stock: [], waste: [], found: [[], [], [], []], cols: [[], [], [], [], [], [], []],
+    score: 0, moves: 0, over: false, sel: null, mode: '1', kcur: {},
+    history: [], redeals: 0, seed: 0, daily: null, dealSig: '',
+    running: false, t0: 0, elapsed: 0
+  };
+  var LAY = { cw: 80, ch: 116, gap: 8, offU: 30, offD: 16 };
+  var MODE_NAME = { '1': '抽 1 张', '3': '抽 3 张', 'challenge': '挑战（抽 3 · 不能撤销）' };
+
+  var board = $('board'), dragLayer = $('drag'), liveEl = $('live'), toastEl = $('toast');
+  var stockEl = $('stock'), wasteEl = $('waste'), winEl = $('win');
+  var scoreEl = $('score'), timeEl = $('time'), movesEl = $('moves');
+  var undoBtn = $('undo'), resetBtn = $('reset'), newBtn = $('newdeal');
+  var foundEls = [], colEls = [];
+  (function () {
+    for (var i = 0; i < 4; i++) foundEls.push(board.querySelector('.slot[data-zone="found' + i + '"]'));
+    for (var j = 0; j < 7; j++) colEls.push(board.querySelector('.slot[data-zone="col' + j + '"]'));
+  })();
+
+  /* ================= 模型存取 ================= */
+  function zoneArr(zone) {
+    if (zone === 'stock') return S.stock;
+    if (zone === 'waste') return S.waste;
+    if (zone.indexOf('found') === 0) return S.found[+zone.slice(5)];
+    if (zone.indexOf('col') === 0) return S.cols[+zone.slice(3)];
+    return null;
+  }
+  function cardById(id) {
+    var f = findCard(id);
+    return f ? zoneArr(f.zone)[f.idx] : null;
+  }
+  function findCard(id) {
+    var z, i, arr;
+    for (var k = 0; k < ZONES.length; k++) {
+      z = ZONES[k];
+      if (z === 'stock') continue;                 /* 抽牌堆里的牌不可见、不可操作 */
+      arr = zoneArr(z);
+      for (i = 0; i < arr.length; i++) if (cid(arr[i]) === id) return { zone: z, idx: i };
+    }
+    return null;
+  }
+  function cp(arr) { return arr.map(function (c) { return { r: c.r, s: c.s, up: c.up }; }); }
+  function snapshot() {
+    return {
+      stock: cp(S.stock), waste: cp(S.waste),
+      found: [cp(S.found[0]), cp(S.found[1]), cp(S.found[2]), cp(S.found[3])],
+      cols: [cp(S.cols[0]), cp(S.cols[1]), cp(S.cols[2]), cp(S.cols[3]), cp(S.cols[4]), cp(S.cols[5]), cp(S.cols[6])],
+      score: S.score, moves: S.moves, redeals: S.redeals
+    };
+  }
+  function pushHistory() {
+    if (S.mode === 'challenge') return;            /* 挑战模式禁撤销 */
+    S.history.push(snapshot());
+    if (S.history.length > 400) S.history.shift();
+  }
+
+  /* ================= 发牌 ================= */
+  function newDeal(seed) {
+    S.seed = seed >>> 0;
+    var rng = mulberry32(S.seed);
+    var deck = [], i, j, t;
+    for (i = 0; i < 4; i++) for (j = 1; j <= 13; j++) deck.push({ r: j, s: SUITS[i], up: false });
+    for (i = deck.length - 1; i > 0; i--) {
+      j = Math.floor(rng() * (i + 1));
+      t = deck[i]; deck[i] = deck[j]; deck[j] = t;
+    }
+    S.cols = [[], [], [], [], [], [], []];
+    for (var c = 0; c < 7; c++) {
+      for (var k = 0; k <= c; k++) {
+        var card = deck.pop();
+        card.up = (k === c);                       /* 每列最后一张翻开 */
+        S.cols[c].push(card);
+      }
+    }
+    S.stock = deck;                                /* 剩 24 张做抽牌堆，数组末尾是堆顶 */
+    S.waste = [];
+    S.found = [[], [], [], []];
+    S.history = []; S.score = 0; S.moves = 0; S.redeals = 0;
+    S.over = false; S.sel = null; S.kcur = {};
+    S.running = false; S.t0 = 0; S.elapsed = 0;
+    S.dealSig = S.cols.map(function (col) { return col.map(cid).join(''); }).join('|') + '#' + S.stock.map(cid).join('');
+  }
+
+  function start(seed, mode) {
+    S.mode = mode || '1';
+    newDeal(seed);
+    winEl.classList.remove('on');
+    winEl.setAttribute('aria-hidden', 'true');
+    board.classList.remove('win');
+    syncModes();
+    setTip();
+    render();
+  }
+  function restart() { start(S.seed, S.mode); say('已重新开始本局（同一副牌）'); }
+  function newShuffle() { start(randomSeed(), S.mode); say('重新洗牌发牌'); }
+
+  /* ================= 计时 ================= */
+  function startTimer() { if (!S.running && !S.over) { S.running = true; S.t0 = Date.now(); } }
+  function elapsedMs() { return S.running ? S.elapsed + (Date.now() - S.t0) : S.elapsed; }
+
+  /* ================= 文案 / 播报 ================= */
+  var toastT = 0;
+  function say(msg) {
+    liveEl.textContent = msg;
+    toastEl.textContent = msg;
+    toastEl.classList.add('on');
+    if (toastT) clearTimeout(toastT);
+    toastT = setTimeout(function () { toastEl.classList.remove('on'); toastT = 0; }, 1800);
+  }
+  function setTip() {
+    $('tip').textContent = '拖动牌到目标位置，或点选一张牌再点目标落位 · 双击自动收进收集区 · 当前模式：' + MODE_NAME[S.mode];
+  }
+  function badZone(zone) {
+    var el = board.querySelector('.slot[data-zone="' + zone + '"]');
+    if (!el) return;
+    el.classList.remove('bad');
+    void el.offsetWidth;
+    el.classList.add('bad');
+    setTimeout(function () { el.classList.remove('bad'); }, 320);
+  }
+
+  /* ================= 规则 ================= */
+  function canDropToFound(card, fi) {
+    return SUITS[fi] === card.s && S.found[fi].length === card.r - 1;
+  }
+  function canDropToCol(card, ci) {
+    var col = S.cols[ci];
+    if (!col.length) return card.r === 13;         /* K 只能进空列 */
+    var top = col[col.length - 1];
+    return !!top.up && top.r === card.r + 1 && isRed(top.s) !== isRed(card.s);
+  }
+  function canDrop(card, zone) {
+    if (zone.indexOf('found') === 0) return canDropToFound(card, +zone.slice(5));
+    if (zone.indexOf('col') === 0) return canDropToCol(card, +zone.slice(3));
+    return false;
+  }
+  /* 从 zone 里取 id 这张牌（含它下面连续的正面牌）作为一次可移动的组 */
+  function groupFrom(zone, id) {
+    var arr = zoneArr(zone);
+    if (!arr || !arr.length) return null;
+    var idx = -1, i;
+    for (i = 0; i < arr.length; i++) if (cid(arr[i]) === id) { idx = i; break; }
+    if (idx < 0 || !arr[idx].up) return null;
+    if (zone.indexOf('col') === 0) {
+      var out = [];
+      for (i = idx; i < arr.length; i++) { if (!arr[i].up) return null; out.push(cid(arr[i])); }
+      return out;
+    }
+    if (idx !== arr.length - 1) return null;       /* 弃牌堆 / 收集区只能动最上面那张 */
+    return [id];
+  }
+
+  /* 真正落位：ids 必须是从同一处取出、连续的一组 */
+  function doMove(ids, toZone) {
+    var from = findCard(ids[0]);
+    if (!from) return false;
+    var src = zoneArr(from.zone);
+    /* 校验连续性，防止中间跨越牌背 */
+    for (var i = 0; i < ids.length; i++) {
+      if (from.idx + i >= src.length || cid(src[from.idx + i]) !== ids[i]) return false;
+    }
+    var cards = [];
+    for (var j = 0; j < ids.length; j++) cards.push(src[from.idx + j]);
+    if (!canDrop(cards[0], toZone)) return false;
+    if (toZone.indexOf('found') === 0 && ids.length > 1) return false;
+
+    pushHistory();
+    src.splice(from.idx, ids.length);
+    var flipped = false;
+    if (from.zone.indexOf('col') === 0) {
+      var col = S.cols[+from.zone.slice(3)];
+      if (col.length && !col[col.length - 1].up) { col[col.length - 1].up = true; flipped = true; }
+    }
+    var dst = zoneArr(toZone);
+    for (var k = 0; k < cards.length; k++) { cards[k].up = true; dst.push(cards[k]); }
+
+    var fromKind = from.zone.indexOf('found') === 0 ? 'found' : (from.zone === 'waste' ? 'waste' : 'col');
+    var toKind = toZone.indexOf('found') === 0 ? 'found' : 'col';
+    var d = 0;
+    if (toKind === 'found') d += 10;
+    else if (fromKind === 'waste') d += 5;
+    if (fromKind === 'found') d -= 15;
+    if (flipped) d += 5;
+    S.score = Math.max(0, S.score + d);            /* 扣分不落到负数 */
+    S.moves++;
+    startTimer();
+    S.sel = null;
+    render();
+    if (toKind === 'found') say(cardName(cards[0]) + ' 收进收集区' + (d ? '（' + (d > 0 ? '+' : '') + d + ' 分）' : ''));
+    else say(cardName(cards[0]) + (ids.length > 1 ? ' 等 ' + ids.length + ' 张' : '') + ' 移到' + zoneLabel(toZone));
+    checkWin();
+    return true;
+  }
+  function zoneLabel(zone) {
+    if (zone.indexOf('col') === 0) return '第 ' + (+zone.slice(3) + 1) + ' 列';
+    if (zone.indexOf('found') === 0) return SUIT_CN[SUITS[+zone.slice(5)]] + '收集区';
+    if (zone === 'waste') return '弃牌堆';
+    return '抽牌堆';
+  }
+  function attemptMove(ids, toZone) {
+    if (!ids || !ids.length) return false;
+    var from = findCard(ids[0]);
+    if (!from || from.zone === toZone) return false;
+    var first = cardById(ids[0]);
+    if (!first) return false;
+    if (toZone.indexOf('found') === 0 && ids.length > 1) { badZone(toZone); say('收集区一次只能收一张牌'); return false; }
+    if (!canDrop(first, toZone)) { badZone(toZone); say(cardName(first) + ' 放不进' + zoneLabel(toZone)); return false; }
+    return doMove(ids, toZone);
+  }
+
+  /* 抽牌 / 洗回 */
+  function drawFrom() {
+    if (S.over) return;
+    if (S.stock.length) {
+      pushHistory();                               /* 抽牌也要进撤销历史 */
+      var n = S.mode === '1' ? 1 : 3, got = 0;
+      for (var i = 0; i < n && S.stock.length; i++) {
+        var c = S.stock.pop();
+        c.up = true;
+        S.waste.push(c);
+        got++;
+      }
+      S.moves++;
+      startTimer();
+      S.sel = null;
+      render();
+      var top = S.waste[S.waste.length - 1];
+      say('抽了 ' + got + ' 张，弃牌堆顶是 ' + cardName(top));
+      return;
+    }
+    if (S.waste.length) {
+      pushHistory();
+      S.redeals++;
+      S.stock = S.waste.slice().reverse();         /* 整叠翻过来：最早抽到的成为新堆顶 */
+      S.waste = [];
+      for (var k = 0; k < S.stock.length; k++) S.stock[k].up = false;
+      S.score = Math.max(0, S.score - 20);
+      S.moves++;
+      startTimer();
+      S.sel = null;
+      render();
+      say('弃牌堆翻回抽牌堆（第 ' + S.redeals + ' 次，-20 分）');
+      return;
+    }
+    say('抽牌堆和弃牌堆都空了');
+  }
+
+  /* 撤销 */
+  function undo() {
+    if (S.over) return;
+    if (S.mode === 'challenge') {
+      badZone('stock'); undoBtn.classList.add('pulse');
+      setTimeout(function () { undoBtn.classList.remove('pulse'); }, 700);
+      say('挑战模式不能撤销');
+      return;
+    }
+    if (!S.history.length) { say('没有可以撤销的步骤了'); return; }
+    var h = S.history.pop();
+    S.stock = h.stock; S.waste = h.waste; S.found = h.found; S.cols = h.cols;
+    S.score = h.score; S.moves = h.moves; if (typeof h.redeals === 'number') S.redeals = h.redeals; S.sel = null; S.kcur = {};
+    winEl.classList.remove('on');
+    winEl.setAttribute('aria-hidden', 'true');
+    board.classList.remove('win');
+    render();
+    say('已撤销上一步');
+  }
+
+  /* 双击自动上收集区 */
+  function autoToFoundation(zone, id) {
+    var arr = zoneArr(zone);
+    if (!arr || !arr.length) return false;
+    var top = arr[arr.length - 1];
+    if (cid(top) !== id || !top.up) return false;
+    var fi = SUITS.indexOf(top.s);
+    if (!canDropToFound(top, fi)) { say(cardName(top) + ' 还不能收进收集区'); return false; }
+    return doMove([id], 'found' + fi);
+  }
+
+  /* ================= 胜利 ================= */
+  function isWon() {
+    for (var i = 0; i < 4; i++) if (S.found[i].length !== 13) return false;
+    return true;
+  }
+  function checkWin() {
+    if (S.over || !isWon()) return;
+    S.over = true;
+    S.sel = null;
+    S.elapsed = elapsedMs();
+    S.running = false;
+    board.classList.add('win');
+    render();
+    showWin();
+    say('恭喜通关！得分 ' + S.score + '，用时 ' + fmtTime(S.elapsed));
+    if (S.daily) {
+      try {
+        window.parent.postMessage({ type: 'gs:daily-done', game: 'solitaire', date: S.daily, score: S.score }, '*');
+      } catch (e) {}
+    }
+  }
+  function showWin() {
+    $('winStat').innerHTML = '得分 <b>' + S.score + '</b> · 用时 <b>' + fmtTime(S.elapsed) + '</b> · 步数 <b>' + S.moves + '</b>' +
+      (S.daily ? '<br>每日挑战 ' + S.daily : '');
+    var colors = ['#22d3ee', '#f472b6', '#facc15', '#4ade80', '#a78bfa', '#fb923c'];
+    winEl.querySelectorAll('.cf').forEach(function (e) { e.remove(); });
+    for (var i = 0; i < 32; i++) {
+      var s = document.createElement('span');
+      s.className = 'cf';
+      s.style.left = (Math.random() * 100) + '%';
+      s.style.background = colors[i % colors.length];
+      s.style.animationDuration = (2.2 + Math.random() * 1.8).toFixed(2) + 's';
+      s.style.animationDelay = (Math.random() * 1.6).toFixed(2) + 's';
+      s.style.opacity = (0.55 + Math.random() * 0.45).toFixed(2);
+      winEl.appendChild(s);
+    }
+    winEl.classList.add('on');
+    winEl.setAttribute('aria-hidden', 'false');
+  }
+
+  /* ================= 渲染 ================= */
+  function layout() {
+    var bw = board.clientWidth, bh = board.clientHeight;
+    if (!bw || !bh) return;
+    var gap = Math.max(4, Math.min(10, Math.round(bw / 150)));
+    var cw = Math.floor((bw - 6 * gap) / 7);
+    var maxByH = Math.floor(((bh - gap) * 0.36) / 1.45);
+    cw = Math.max(28, Math.min(cw, Math.max(28, maxByH)));
+    var ch = Math.round(cw * 1.45);
+    LAY.cw = cw; LAY.ch = ch; LAY.gap = gap;
+    var root = document.documentElement.style;
+    root.setProperty('--cw', cw + 'px');
+    root.setProperty('--ch', ch + 'px');
+    board.style.setProperty('--cw', cw + 'px');
+    board.style.setProperty('--ch', ch + 'px');
+    board.style.setProperty('--gap', gap + 'px');
+
+    /* 桌面牌堆的间距：列里牌多时压缩，保证整列放得下 */
+    var tableH = bh - ch - gap - 4;
+    var baseD = Math.round(ch * 0.16), baseU = Math.round(ch * 0.30);
+    var need = 0;
+    for (var i = 0; i < 7; i++) {
+      var col = S.cols[i], dn = 0, up = 0;
+      for (var k = 0; k < col.length; k++) { if (col[k].up) up++; else dn++; }
+      var n = ch + dn * baseD + Math.max(0, up - 1) * baseU;
+      if (n > need) need = n;
+    }
+    var scale = 1;
+    if (need > tableH && need > ch) scale = Math.max(0.16, (tableH - ch) / (need - ch));
+    LAY.offD = Math.max(4, Math.round(baseD * scale));
+    LAY.offU = Math.max(9, Math.round(baseU * scale));
+  }
+
+  function cardNode(card, o) {
+    o = o || {};
+    var el = document.createElement('div');
+    el.className = 'card';
+    if (!card.up) {
+      el.classList.add('back');
+      el.setAttribute('aria-hidden', 'true');
+    } else {
+      if (isRed(card.s)) el.classList.add('red');
+      el.dataset.id = cid(card);
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', cardName(card) + (o.sel ? '，已选中' : ''));
+      var rk = document.createElement('span');
+      rk.className = 'rk' + (card.r === 10 ? ' ten' : '');
+      rk.textContent = RANK_TXT[card.r];
+      var su = document.createElement('span');
+      su.className = 'su'; su.textContent = SUIT_CH[card.s];
+      var big = document.createElement('span');
+      big.className = 'big'; big.textContent = SUIT_CH[card.s];
+      el.appendChild(rk); el.appendChild(su); el.appendChild(big);
+      if (o.sel) el.classList.add('sel');
+      if (o.cur) el.classList.add('cur');
+    }
+    el.style.top = (o.top || 0) + 'px';
+    el.style.left = (o.left || 0) + 'px';
+    el.style.zIndex = String(o.z || 1);
+    return el;
+  }
+  function ghostNode(txt, cls) {
+    var g = document.createElement('div');
+    g.className = 'ghost' + (cls ? ' ' + cls : '');
+    g.textContent = txt || '';
+    g.setAttribute('aria-hidden', 'true');
+    return g;
+  }
+
+  function render() {
+    layout();
+    var keep = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.zone : null;
+
+    /* 抽牌堆 */
+    stockEl.innerHTML = '';
+    if (S.stock.length) {
+      stockEl.appendChild(cardNode({ r: 0, s: 'S', up: false }, { z: 1 }));
+      var badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = String(S.stock.length);
+      stockEl.appendChild(badge);
+      stockEl.setAttribute('aria-label', '抽牌堆，剩 ' + S.stock.length + ' 张，点击抽 ' + (S.mode === '1' ? '1' : '3') + ' 张');
+    } else if (S.waste.length) {
+      stockEl.appendChild(ghostNode('⟳', 'recycle'));
+      stockEl.setAttribute('aria-label', '抽牌堆已空，点击把弃牌堆翻回来（扣 20 分）');
+    } else {
+      stockEl.appendChild(ghostNode(''));
+      stockEl.setAttribute('aria-label', '抽牌堆已空');
+    }
+
+    /* 弃牌堆：最多摊开 3 张，最右是堆顶 */
+    wasteEl.innerHTML = '';
+    var wn = S.waste.length;
+    if (!wn) {
+      wasteEl.appendChild(ghostNode(''));
+    } else {
+      var show = Math.min(3, wn), off = Math.round(LAY.cw * 0.24);
+      for (var i = 0; i < show; i++) {
+        var card = S.waste[wn - show + i];
+        wasteEl.appendChild(cardNode(card, { left: i * off, z: i + 1, sel: S.sel === cid(card) }));
+      }
+    }
+    wasteEl.setAttribute('aria-label', wn ? '弃牌堆，' + wn + ' 张，堆顶 ' + cardName(S.waste[wn - 1]) : '弃牌堆，空');
+
+    /* 4 个收集区 */
+    for (var f = 0; f < 4; f++) {
+      var fel = foundEls[f], arr = S.found[f], su = SUITS[f];
+      fel.innerHTML = '';
+      if (arr.length) fel.appendChild(cardNode(arr[arr.length - 1], { z: 1, sel: S.sel === cid(arr[arr.length - 1]) }));
+      else fel.appendChild(ghostNode(SUIT_CH[su], 'found'));
+      fel.setAttribute('aria-label', '收集区 ' + SUIT_CN[su] + (arr.length ? '，当前 ' + RANK_TXT[arr[arr.length - 1].r] : '，空'));
+    }
+
+    /* 7 列牌堆 */
+    for (var c = 0; c < 7; c++) {
+      var cel = colEls[c], col = S.cols[c];
+      cel.innerHTML = '';
+      var top = 0, z = 1, cur = S.kcur['col' + c];
+      for (var k = 0; k < col.length; k++) {
+        var cc = col[k];
+        cel.appendChild(cardNode(cc, {
+          top: top, z: z++, sel: S.sel === cid(cc),
+          cur: cc.up && typeof cur === 'number' && cur === k
+        }));
+        top += cc.up ? LAY.offU : LAY.offD;
+      }
+      if (!col.length) cel.appendChild(ghostNode('K'));
+      cel.setAttribute('aria-label', '第 ' + (c + 1) + ' 列，' + (col.length
+        ? col.length + ' 张，' + (col[col.length - 1].up ? '牌面 ' + cardName(col[col.length - 1]) : '牌背')
+        : '空列，只能放 K'));
+    }
+
+    if (keep) {
+      var kEl = board.querySelector('.slot[data-zone="' + keep + '"]');
+      if (kEl) kEl.focus({ preventScroll: true });
+    }
+    updateHud();
+  }
+
+  function updateHud() {
+    scoreEl.textContent = String(S.score);
+    timeEl.textContent = fmtTime(elapsedMs());
+    movesEl.textContent = String(S.moves);
+    undoBtn.disabled = (S.mode === 'challenge') || !S.history.length;
+  }
+  function syncModes() {
+    var btns = board.parentNode.parentNode.querySelectorAll('.modes button');
+    for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('on', btns[i].dataset.mode === S.mode);
+  }
+
+  /* ================= 拖拽与点击 ================= */
+  var pend = null, ghostEl = null, suppressUntil = 0, lastTap = { id: null, zone: null, t: 0 };
+
+  function buildGhost() {
+    dragLayer.innerHTML = '';
+    for (var i = 0; i < pend.ids.length; i++) {
+      var card = cardById(pend.ids[i]);
+      if (!card) continue;
+      dragLayer.appendChild(cardNode({ r: card.r, s: card.s, up: true }, { top: i * LAY.offU, z: i + 1 }));
+      var src = board.querySelector('.card[data-id="' + pend.ids[i] + '"]');
+      if (src) src.classList.add('ghosted');
+    }
+    dragLayer.classList.add('on');
+    ghostEl = dragLayer;
+  }
+  function clearGhost() {
+    dragLayer.classList.remove('on');
+    dragLayer.innerHTML = '';
+    ghostEl = null;
+  }
+  function offWin() {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onCancel);
+  }
+
+  function zoneAt(x, y) {
+    var best = null, bd = 1e9;
+    var els = board.querySelectorAll('.slot[data-zone]');
+    for (var i = 0; i < els.length; i++) {
+      var z = els[i].dataset.zone;
+      if (z.indexOf('col') !== 0 && z.indexOf('found') !== 0) continue;
+      var r = els[i].getBoundingClientRect();
+      var dx = Math.max(r.left - x, 0, x - r.right);
+      var dy = Math.max(r.top - y, 0, y - r.bottom);
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bd) { bd = d; best = z; }
+    }
+    return bd <= 60 ? best : null;                 /* 落点附近 60px 内都算 */
+  }
+
+  function onDown(e) {
+    if (S.over) return;
+    if (typeof e.button === 'number' && e.button !== 0) return;
+    var cardEl = e.target.closest ? e.target.closest('.card') : null;
+    var slotEl = e.target.closest ? e.target.closest('.slot[data-zone]') : null;
+    if (!cardEl || !slotEl) return;
+    var zone = slotEl.dataset.zone;
+    if (zone === 'stock') return;                  /* 抽牌堆交给 click 处理 */
+    var ids = groupFrom(zone, cardEl.dataset.id);
+    if (!ids) return;
+    var r = cardEl.getBoundingClientRect();
+    pend = { x: e.clientX, y: e.clientY, rect: r, zone: zone, ids: ids, moved: false };
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+  }
+  function onMove(e) {
+    if (!pend) return;
+    var dx = e.clientX - pend.x, dy = e.clientY - pend.y;
+    if (!pend.moved) {
+      if (dx * dx + dy * dy < 49) return;
+      pend.moved = true;
+      pend.ox = pend.x - pend.rect.left;
+      pend.oy = pend.y - pend.rect.top;
+      buildGhost();
+    }
+    if (e.cancelable) e.preventDefault();
+    if (ghostEl) ghostEl.style.transform = 'translate(' + (e.clientX - pend.ox) + 'px,' + (e.clientY - pend.oy) + 'px)';
+  }
+  function onUp(e) {
+    if (!pend) return;
+    var p = pend;
+    pend = null;
+    offWin();
+    if (!p.moved) { clearGhost(); return; }
+    clearGhost();
+    suppressUntil = Date.now() + 350;              /* 拖完别把这次当成点击 */
+    var z = zoneAt(e.clientX, e.clientY);
+    if (z && !attemptMove(p.ids, z)) render();
+    else if (!z) { render(); say('拖到某一列或收集区上才放得下'); }
+  }
+  function onCancel() {
+    if (!pend) return;
+    pend = null;
+    offWin();
+    clearGhost();
+    render();
+  }
+
+  function onTap(zone, id) {
+    if (S.over) return;
+    var now = Date.now();
+    var dbl = id && id === lastTap.id && zone === lastTap.zone && (now - lastTap.t) < 340;
+    lastTap = { id: id, zone: zone, t: now };
+    if (dbl) {
+      lastTap = { id: null, zone: null, t: 0 };
+      if (autoToFoundation(zone, id)) return;
+    }
+    if (S.sel) {
+      if (S.sel === id) { S.sel = null; render(); say('取消选择'); return; }
+      var from = findCard(S.sel);
+      if (from) {
+        var ids = groupFrom(from.zone, S.sel);
+        if (ids && attemptMove(ids, zone)) return;
+      }
+      var c1 = id ? cardById(id) : null;
+      if (c1 && c1.up) { S.sel = id; render(); say('已选中 ' + cardName(c1)); return; }
+      S.sel = null; render();
+      return;
+    }
+    if (zone === 'stock') { drawFrom(); return; }
+    var c2 = id ? cardById(id) : null;
+    if (c2 && c2.up) {
+      S.sel = id;
+      render();
+      say('已选中 ' + cardName(c2) + '，再点目标位置放下');
+      return;
+    }
+    if (c2 && !c2.up) say('牌背不能移动，先把上面的牌拿开');
+    else if (zone === 'waste') drawFrom();
+  }
+
+  board.addEventListener('click', function (e) {
+    if (S.over) return;
+    if (Date.now() < suppressUntil) return;
+    var slotEl = e.target.closest ? e.target.closest('.slot[data-zone]') : null;
+    if (!slotEl) return;
+    var cardEl = e.target.closest ? e.target.closest('.card') : null;
+    var id = (cardEl && cardEl.dataset && cardEl.dataset.id) ? cardEl.dataset.id : null;
+    onTap(slotEl.dataset.zone, id);
+  });
+  board.addEventListener('pointerdown', onDown);
+
+  /* ================= 键盘 / 无障碍 ================= */
+  function clampK(zone, arr) {
+    var k = S.kcur[zone];
+    if (typeof k !== 'number' || k < 0 || k >= arr.length) k = arr.length - 1;
+    return k;
+  }
+  function curCardId(zone) {
+    var arr = zoneArr(zone);
+    if (!arr || !arr.length) return null;
+    if (zone.indexOf('col') === 0) {
+      var k = clampK(zone, arr);
+      if (arr[k] && arr[k].up) return cid(arr[k]);
+      return arr[arr.length - 1].up ? cid(arr[arr.length - 1]) : null;
+    }
+    var t = arr[arr.length - 1];
+    return t && t.up ? cid(t) : null;
+  }
+  function focusZone(zone) {
+    var el = board.querySelector('.slot[data-zone="' + zone + '"]');
+    if (el) el.focus({ preventScroll: true });
+  }
+  board.addEventListener('keydown', function (e) {
+    var slotEl = e.target.closest ? e.target.closest('.slot[data-zone]') : null;
+    if (!slotEl) return;
+    var zone = slotEl.dataset.zone;
+    var i = ZONES.indexOf(zone);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      var j = (i + (e.key === 'ArrowRight' ? 1 : ZONES.length - 1)) % ZONES.length;
+      focusZone(ZONES[j]);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (zone.indexOf('col') !== 0) return;
+      var arr = S.cols[+zone.slice(3)];
+      if (!arr.length) return;
+      var k = clampK(zone, arr) + (e.key === 'ArrowDown' ? 1 : -1);
+      if (k < 0 || k >= arr.length || !arr[k].up) return;
+      S.kcur[zone] = k;
+      S.sel = cid(arr[k]);
+      render();
+      focusZone(zone);
+      say('选中 ' + cardName(arr[k]));
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (zone === 'stock') drawFrom(); else onTap(zone, curCardId(zone));
+      focusZone(zone);
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k === 'Escape' && S.sel) { S.sel = null; render(); say('取消选择'); return; }
+    if (k === 'u' || k === 'U') { e.preventDefault(); undo(); return; }
+    if (k === 'r' || k === 'R') { e.preventDefault(); restart(); return; }
+    if (k === 'n' || k === 'N') { e.preventDefault(); drawFrom(); return; }
+    if (k === '1') { setMode('1'); return; }
+    if (k === '3') { setMode('3'); return; }
+  });
+
+  function setMode(mode) {
+    if (mode === S.mode) return;
+    say('切换到「' + MODE_NAME[mode] + '」，重发同一副牌');
+    start(S.seed, mode);
+  }
+
+  /* ================= 按钮绑定 ================= */
+  undoBtn.addEventListener('click', undo);
+  resetBtn.addEventListener('click', restart);
+  newBtn.addEventListener('click', newShuffle);
+  $('winAgain').addEventListener('click', restart);
+  $('winClose').addEventListener('click', function () {
+    winEl.classList.remove('on');
+    winEl.setAttribute('aria-hidden', 'true');
+  });
+  var modeBox = document.querySelector('.modes');
+  modeBox.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-mode]') : null;
+    if (b) setMode(b.dataset.mode);
+  });
+
+  var rzT = 0;
+  window.addEventListener('resize', function () {
+    if (rzT) return;
+    rzT = requestAnimationFrame(function () { rzT = 0; render(); });
+  });
+  setInterval(function () { if (S.running && !S.over) updateHud(); }, 500);
+
+  /* ================= 启动 ================= */
+  var dailyRaw = param('daily');
+  var daily = (dailyRaw && /^\d{4}-\d{2}-\d{2}$/.test(dailyRaw.trim())) ? dailyRaw.trim() : null;
+  var seedRaw = param('seed');
+  var initSeed;
+  if (daily) initSeed = hashStr('solitaire:' + daily);            /* 每日挑战：全球同一天同一副牌 */
+  else if (seedRaw !== null && /^-?\d+$/.test(seedRaw.trim())) initSeed = parseInt(seedRaw.trim(), 10) >>> 0;
+  else initSeed = randomSeed();
+  var modeRaw = (param('mode') || '').trim().toLowerCase();
+  var initMode = (modeRaw === '3' || modeRaw === 'draw3') ? '3'
+    : (modeRaw === 'challenge' || modeRaw === 'hard') ? 'challenge' : '1';
+  if (daily && !modeRaw) initMode = '3';                          /* 每日挑战用标准的抽 3 张 */
+  S.daily = daily;
+
+  start(initSeed, initMode);
+  if (daily) say('每日挑战 ' + daily + '（抽 3 张 · 全球同牌）');
+
+  /* ================= 调试 / 验收句柄 ================= */
+  window.GAME = {
+    slug: 'solitaire',
+    state: function () {
+      return {
+        over: S.over,
+        score: S.score,
+        moves: S.moves,
+        elapsedMs: Math.round(elapsedMs()),
+        mode: S.mode,
+        drawCount: S.mode === '1' ? 1 : 3,
+        challenge: S.mode === 'challenge',
+        stock: S.stock.length,
+        waste: S.waste.length,
+        wasteTop: S.waste.length ? cid(S.waste[S.waste.length - 1]) : null,
+        foundations: S.found.map(function (f) { return f.length; }),
+        foundationTop: S.found.map(function (f) { return f.length ? cid(f[f.length - 1]) : null; }),
+        tableau: S.cols.map(function (c) {
+          return {
+            n: c.length,
+            up: c.filter(function (x) { return x.up; }).length,
+            top: c.length ? cid(c[c.length - 1]) : null
+          };
+        }),
+        sel: S.sel,
+        canUndo: S.history.length > 0 && S.mode !== 'challenge',
+        undoDepth: S.history.length,
+        redeals: S.redeals,
+        won: S.over && isWon(),
+        seed: S.seed,
+        daily: S.daily,
+        dealSig: S.dealSig
+      };
+    },
+    restart: restart,
+    seed: function () { return S.seed; }
+  };
+
+  /* 自测用（不属于交付契约）：只读快照 + 装载指定局面 + 合法走法坐标 */
+  window.SOLITAIRE = {
+    cards: function () {
+      var out = { stock: S.stock.map(cid), waste: S.waste.map(cid), found: S.found.map(function (f) { return f.map(cid); }), cols: S.cols.map(function (c) { return c.map(cid); }) };
+      return out;
+    },
+    legalMoves: function () {
+      var out = [], i, j, k;
+      function coord(zone, idx) {
+        var el = board.querySelector('.slot[data-zone="' + zone + '"]');
+        if (!el) return null;
+        var r = el.getBoundingClientRect();
+        var x = r.left + r.width / 2, y = r.top + Math.min(r.height - 6, LAY.ch / 2);
+        if (idx !== undefined && idx !== null) {
+          var cards = el.querySelectorAll('.card');
+          var c = cards[Math.min(idx, cards.length - 1)];
+          if (c) { var cr = c.getBoundingClientRect(); x = cr.left + cr.width / 2; y = cr.top + Math.min(cr.height - 4, LAY.ch * 0.4); }
+        }
+        return { x: x, y: y };
+      }
+      /* 桌面 -> 桌面 / 收集区 */
+      for (i = 0; i < 7; i++) {
+        var col = S.cols[i];
+        for (k = 0; k < col.length; k++) {
+          if (!col[k].up) continue;
+          var ids = groupFrom('col' + i, cid(col[k]));
+          if (!ids) continue;
+          for (j = 0; j < 7; j++) {
+            if (j === i) continue;
+            if (canDropToCol(col[k], j)) out.push({ ids: ids, from: 'col' + i, idx: k, to: 'col' + j, fromXY: coord('col' + i, k), toXY: coord('col' + j, S.cols[j].length - 1) });
+          }
+          var fi = SUITS.indexOf(col[k].s);
+          if (ids.length === 1 && canDropToFound(col[k], fi)) out.push({ ids: ids, from: 'col' + i, idx: k, to: 'found' + fi, fromXY: coord('col' + i, k), toXY: coord('found' + fi) });
+        }
+      }
+      /* 弃牌堆顶 -> 桌面 / 收集区 */
+      if (S.waste.length) {
+        var wt = S.waste[S.waste.length - 1];
+        for (j = 0; j < 7; j++) if (canDropToCol(wt, j)) out.push({ ids: [cid(wt)], from: 'waste', to: 'col' + j, fromXY: coord('waste'), toXY: coord('col' + j, S.cols[j].length - 1) });
+        var wf = SUITS.indexOf(wt.s);
+        if (canDropToFound(wt, wf)) out.push({ ids: [cid(wt)], from: 'waste', to: 'found' + wf, fromXY: coord('waste'), toXY: coord('found' + wf) });
+      }
+      return out;
+    },
+    autoMoveTarget: function () {
+      /* 找一张能双击上收集区的牌（必须是所在堆顶） */
+      var i, cand = [];
+      for (i = 0; i < 7; i++) {
+        var col = S.cols[i];
+        if (!col.length) continue;
+        var t = col[col.length - 1];
+        if (t.up && canDropToFound(t, SUITS.indexOf(t.s))) {
+          var el = board.querySelector('.slot[data-zone="col' + i + '"] .card[data-id="' + cid(t) + '"]');
+          if (el) { var r = el.getBoundingClientRect(); cand.push({ id: cid(t), zone: 'col' + i, x: r.left + r.width / 2, y: r.top + r.height * 0.5 }); }
+        }
+      }
+      if (S.waste.length) {
+        var wt = S.waste[S.waste.length - 1];
+        if (canDropToFound(wt, SUITS.indexOf(wt.s))) {
+          var wel = board.querySelector('.slot[data-zone="waste"] .card[data-id="' + cid(wt) + '"]');
+          if (wel) { var wr = wel.getBoundingClientRect(); cand.push({ id: cid(wt), zone: 'waste', x: wr.left + wr.width / 2, y: wr.top + wr.height * 0.5 }); }
+        }
+      }
+      return cand;
+    },
+    rectOf: function (id) {
+      var el = board.querySelector('.card[data-id="' + id + '"]');
+      if (!el) return null;
+      var r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + Math.min(r.height - 4, r.height * 0.4), w: r.width, h: r.height, left: r.left, top: r.top };
+    },
+    drawXY: function () {
+      var r = stockEl.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    },
+    /* 装载指定局面（自测胜利流程用） */
+    load: function (pos) {
+      function mk(code, up) {
+        return { r: parseInt(code.slice(1), 10), s: code.charAt(0), up: up !== false };
+      }
+      S.cols = (pos.cols || [[], [], [], [], [], [], []]).map(function (col) {
+        return col.map(function (c) { return typeof c === 'string' ? mk(c, true) : mk(c.code, c.up); });
+      });
+      S.found = (pos.found || [[], [], [], []]).map(function (f) {
+        return f.map(function (c) { return typeof c === 'string' ? mk(c, true) : mk(c.code, c.up); });
+      });
+      S.stock = (pos.stock || []).map(function (c) { return mk(c, false); });
+      S.waste = (pos.waste || []).map(function (c) { return mk(c, true); });
+      S.history = []; S.score = pos.score || 0; S.moves = pos.moves || 0;
+      S.over = false; S.sel = null; S.kcur = {}; S.redeals = 0;
+      S.running = false; S.elapsed = 0; S.t0 = 0;
+      board.classList.remove('win');
+      winEl.classList.remove('on');
+      render();
+      return true;
+    },
+    showWin: showWin,
+    hideWin: function () { winEl.classList.remove('on'); winEl.setAttribute('aria-hidden', 'true'); board.classList.remove('win'); }
+  };
+})();
+</script>
+</body>
+</html>
