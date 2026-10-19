@@ -167,6 +167,8 @@ https://forum.fishport.cn/auth/google/callback       （新增）
 3. 想加/换一个子域：改 `src/sites.js` 的 `SITES` 数组，push 一次即可（Express / Workers+D1 / 静态导出三条线共用这一份清单）；
 4. `send` / `rsend`（邮件）、`mc`（Minecraft，含 `_minecraft._tcp` 的 SRV）与 `resend._domainkey` 的 TXT 按需求不进导航页，页面上也不会出现它们的链接。
 
+> **已实测（2026-10-19）**：两个自定义域加完即生效，`https://fishport.cn/` 与 `https://www.fishport.cn/` 的根路径返回同一页导航（200、内容一致、无 console 报错、无失败请求，9 张站点卡片分 4 组），全页截图在 `docs/screens/nav-apex-fishport-cn.png`（1280×1184）与 `docs/screens/nav-apex-mobile.png`（414 宽）。
+
 验证：`pnpm test:features`（或 `pnpm test:worker-features`）里有一节 11 项断言，其中 5 项就是拿自定义 `Host` 头真发请求查门户主机的判定；线上则是加完自定义域后直接开 `https://fishport.cn/` 看。
 
 ### 7. 这条路线我没法在本机验证的部分

@@ -1,7 +1,31 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-18 15:26";
-export const CHANGELOG_TOTAL = 41;
+export const CHANGELOG_GENERATED = "2026-10-19 13:50";
+export const CHANGELOG_TOTAL = 44;
 export const CHANGELOG = [
+  {
+    "hash": "2c281da",
+    "date": "2026-10-19 18:22",
+    "day": "2026-10-19",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "移动端触屏交互优化（站点头部/播放器 + 10 款游戏手势与触摸目标）"
+  },
+  {
+    "hash": "4288c46",
+    "date": "2026-10-19 17:12",
+    "day": "2026-10-19",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "棋盘类游戏改为自适应放大（五子棋/中国象棋/国际象棋 + 2048/井字棋）"
+  },
+  {
+    "hash": "26a71f5",
+    "date": "2026-10-18 23:26",
+    "day": "2026-10-18",
+    "kind": "fix",
+    "kindLabel": "修复",
+    "subject": "board-games 开房改为点一次长等房码，避免远程延迟下重复建房"
+  },
   {
     "hash": "65ef57a",
     "date": "2026-10-18 22:58",
