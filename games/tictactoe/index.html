@@ -10,7 +10,7 @@
   body{display:flex;align-items:center;justify-content:center;padding:12px;
     background:radial-gradient(circle at 50% 0%,#083344,#050b14 72%);color:#dbf8ff;
     font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;user-select:none}
-  .wrap{width:100%;max-width:440px;display:flex;flex-direction:column;gap:12px}
+  .wrap{width:100%;max-width:min(100%,900px);display:flex;flex-direction:column;gap:12px}
   .hud{display:flex;align-items:center;gap:8px;font-size:13px;color:#7dd3fc;flex-wrap:wrap}
   .stat{background:rgba(6,182,212,.13);border:1px solid rgba(6,182,212,.35);
     padding:6px 12px;border-radius:10px}
@@ -20,13 +20,13 @@
     color:#bfe9ff;border-radius:9px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer}
   .levels button.on{background:linear-gradient(135deg,#06b6d4,#0ea5e9);border-color:transparent;color:#fff;font-weight:700}
   .status{text-align:center;font-size:15px;color:#a5e9ff;min-height:24px;font-weight:600}
-  .board{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%;
+  .board{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:min(100%,calc(100vh - 170px));align-self:center;
     aspect-ratio:1;padding:10px;border-radius:16px;
     background:linear-gradient(160deg,rgba(6,182,212,.14),rgba(14,165,233,.06));
-    border:1px solid rgba(6,182,212,.3);box-shadow:0 12px 34px rgba(0,0,0,.45)}
+    border:1px solid rgba(6,182,212,.3);box-shadow:0 12px 34px rgba(0,0,0,.45);container-type:inline-size}
   .cell{display:flex;align-items:center;justify-content:center;border-radius:12px;
     background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
-    font-size:min(15vw,62px);font-weight:800;cursor:pointer;transition:.15s;line-height:1}
+    font-size:min(15vw,62px);font-size:min(16cqw,96px);font-weight:800;cursor:pointer;transition:.15s;line-height:1}
   .cell:hover{background:rgba(6,182,212,.18)}
   .cell.x{color:#22d3ee;text-shadow:0 0 18px rgba(34,211,238,.8)}
   .cell.o{color:#f472b6;text-shadow:0 0 18px rgba(244,114,182,.8)}
