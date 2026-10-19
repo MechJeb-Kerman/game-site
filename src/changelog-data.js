@@ -1,7 +1,23 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-19 13:50";
-export const CHANGELOG_TOTAL = 44;
+export const CHANGELOG_GENERATED = "2026-10-19 17:25";
+export const CHANGELOG_TOTAL = 46;
 export const CHANGELOG = [
+  {
+    "hash": "12f6a66",
+    "date": "2026-10-20 01:25",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "新增 10 款自研游戏，并上线每日挑战 / 成就徽章 / 个人主页 / 棋谱回放与观战 / PWA"
+  },
+  {
+    "hash": "c1a2b12",
+    "date": "2026-10-19 21:50",
+    "day": "2026-10-19",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "fishport.cn 与 www.fishport.cn 自定义域线上实测（导航页门户截图）"
+  },
   {
     "hash": "2c281da",
     "date": "2026-10-19 18:22",
