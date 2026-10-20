@@ -1,7 +1,23 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 09:45";
-export const CHANGELOG_TOTAL = 61;
+export const CHANGELOG_GENERATED = "2026-10-20 13:04";
+export const CHANGELOG_TOTAL = 63;
 export const CHANGELOG = [
+  {
+    "hash": "b98e9b2",
+    "date": "2026-10-20 21:04",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "推送密钥自举 —— PUSH_AUTO_KEYS=1 时自动生成 VAPID 并落库，免去控制台手填"
+  },
+  {
+    "hash": "94e17d6",
+    "date": "2026-10-20 17:45",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "更新说明补上本轮提交（61 条）"
+  },
   {
     "hash": "32af7b6",
     "date": "2026-10-20 17:45",
