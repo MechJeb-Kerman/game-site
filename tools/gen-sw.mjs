@@ -5,6 +5,9 @@
  * Workers 没有磁盘，public/ 下的 Service Worker 只能在 worker/app.js 里内联一份；
  * 两份必须逐字节一致（tools/pwa-test.mjs 会校验），所以改完 public/sw.js 就跑一次这里。
  *
+ * 行尾：Windows 上 core.autocrlf=true 时工作树里 worker/app.js 是 CRLF、public/sw.js 常是 LF，
+ * 逐字节比会假报不一致（内容其实一样），所以比对前把两边都归一化成 LF，写入也用 LF。
+ *
  * 用法：
  *   node tools/gen-sw.mjs          写入（内容没变就什么都不做）
  *   node tools/gen-sw.mjs --check  只比对，不一致时退出码 1
@@ -28,7 +31,9 @@ function unescapeTpl(s) {
   return s.replace(/\\\$\{/g, "${").replace(new RegExp("\\\\" + BT, "g"), BT).replace(/\\\\/g, "\\");
 }
 
-const sw = fs.readFileSync(SW, "utf8").replace(/\n$/, "");
+/* 工作树行尾（autocrlf）与结尾空行都可能与内联副本不同，比对前统一归一化：CRLF → LF + 去掉结尾空白 */
+const norm = (s) => s.replace(/\r\n/g, "\n").replace(/\s+$/, "");
+const sw = norm(fs.readFileSync(SW, "utf8"));
 const want = escapeTpl(sw);
 const src = fs.readFileSync(WORKER, "utf8");
 const startMark = "const PWA_SW = " + BT;
@@ -38,7 +43,7 @@ const bodyStart = i + startMark.length;
 const end = src.indexOf("\n" + BT + ";", bodyStart);
 if (end < 0) { console.error("PWA_SW 结束标记（换行 + 反引号分号）找不到"); process.exit(2); }
 const current = src.slice(bodyStart, end);
-const same = unescapeTpl(current) === sw;
+const same = norm(unescapeTpl(current)) === sw;
 if (CHECK) {
   if (same) { console.log("PWA_SW 与 public/sw.js 一致（" + sw.length + " 字节）"); process.exit(0); }
   console.error("PWA_SW 与 public/sw.js 不一致：跑 node tools/gen-sw.mjs 同步");

@@ -186,8 +186,8 @@ game-site/
 │   ├── gen-seed-data.mjs  由 src/seed.js 重新生成 worker/seed-data.js（pnpm gen:seed，两边种子不再手抄）
 │   ├── gen-icons.mjs    生成 public/icons 下 4 张 PNG 图标（png 手写编码，零依赖）
 │   ├── gen-precache.mjs 扫仓库生成 public/precache.json 并刷新 public/sw.js 里的生成块（pnpm gen:precache；--check 只比对不写，不一致 exit 1）
-│   ├── gen-sw.mjs       把 public/sw.js 同步进 worker/app.js 的内联副本（pnpm gen:sw）
-│   ├── gen-og.mjs       预生成 OG 位图到 public/og/（pnpm gen:og；--check 只比对不写，0 一致 / 1 有差异 / 2 缺清单）
+│   ├── gen-sw.mjs       把 public/sw.js 同步进 worker/app.js 的内联副本（pnpm gen:sw；--check 只比对，比对前把 CRLF 与结尾空行归一化，免得 Windows 上 core.autocrlf 换来行尾就假报不一致）
+│   ├── gen-og.mjs       预生成 OG 位图到 public/og/（pnpm gen:og；--check 只比对不写，0 一致 / 1 有差异 / 2 缺清单。清单是**本地库内容的快照**——棋谱与打卡记录增长后会报「新增条目」，跑一次 pnpm gen:og 跟上即可，不是代码漂移）
 │   ├── gen-covers.mjs   重新生成 public/covers 下 20 张封面 SVG（pnpm gen:covers）
 │   ├── pwa-test.mjs     PWA 验收（pnpm test:pwa，共 176 项）：自起 :3101 与 :3102 两条线，比对 manifest / sw / 图标 / 预缓存清单与 public/ 逐字节一致、清单里 35 个 URL 都真 200，再无头浏览器里断网（CDP offline）直开两款游戏页核对 window.GAME 与缓存命中
 │   ├── gamepad-test.mjs   手柄自测：注入假手柄跑 11 个用例（pnpm test:gamepad）
