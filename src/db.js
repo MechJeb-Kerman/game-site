@@ -2,6 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { REWARD_LEDGER_DDL } from './rewards.js';
+import { ATTACH_REVIEW_COLUMNS, ATTACH_REVIEW_DDL } from './attachments.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -447,6 +449,21 @@ export function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_mail_suppression_created ON mail_suppression(created_at DESC);
   `);
+
+  // 第十四批：打卡奖励流水 user_rewards（「拿到就不掉」）。
+  // DDL 与 src/rewards.js 共用一份（同样是 worker/schema.js 用同一份），三处不各写一遍就不会漂移。
+  // 每条都是单行语句：D1 的 exec 按换行切，多行会被切坏，两线同源才安全。
+  for (const sql of REWARD_LEDGER_DDL) db.exec(sql);
+
+  // 第十五批：附件人工复核（attachments 上加六列 + 两条审核索引）。
+  // 列与索引的 DDL 与 src/attachments.js 的 ATTACH_REVIEW_COLUMNS / ATTACH_REVIEW_DDL 共用一份，
+  // worker/schema.js 也摊平同一份常量——三处不各写一遍就不会漂移（模块内 ensureReviewSchema() 仍幂等自建兜底）。
+  // 注意索引名**故意不带 idx_attachments_ 前缀**：既有测试按 "idx_attachments%" 数出 5 条来锁 ATTACH_DDL。
+  for (const col of ATTACH_REVIEW_COLUMNS) {
+    const has = db.prepare('PRAGMA table_info(attachments)').all().some((c) => c.name === col.name);
+    if (!has) db.exec(col.ddl);
+  }
+  for (const sql of ATTACH_REVIEW_DDL) db.exec(sql);
 
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核
   addColumn('games', 'submitted_by', 'submitted_by INTEGER');

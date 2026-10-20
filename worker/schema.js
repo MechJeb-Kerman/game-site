@@ -8,6 +8,8 @@ import { CATEGORIES, GAMES } from './seed-data.js';
 import { ensureAdmin } from './auth.js';
 // 种子数据是直接 INSERT 的，不带拼音索引；启动时补一次，老库升级也能用拼音搜
 import { reindexSearchIndex } from './data.js';
+import { REWARD_LEDGER_DDL } from './rewards.js';
+import { ATTACH_REVIEW_COLUMNS, ATTACH_REVIEW_DDL } from '../src/attachments.js';
 
 /** 与 src/db.js migrate() 的 schema 逐字段一致（D1 是 SQLite，语法通用） */
 export const DDL = [
@@ -455,7 +457,12 @@ export const DDL = [
   "      source     TEXT NOT NULL DEFAULT '',",
   "      created_at INTEGER NOT NULL",
   "    );",
-  "    CREATE INDEX IF NOT EXISTS idx_mail_suppression_created ON mail_suppression(created_at DESC);"
+  "    CREATE INDEX IF NOT EXISTS idx_mail_suppression_created ON mail_suppression(created_at DESC);",
+  // 第十四批：打卡奖励流水（与 src/db.js 的 migrate() 同源，直接摊平平铺 src/rewards.js 那份 DDL）。
+  // 每条都是单行语句：下面 migrate() 按分号拆、D1 也按换行切，单行才两边都安全。
+  // 摊平时必须补上分号：src/rewards.js 那 5 条**本身不带分号**（它那边是逐条 prepare 的），
+  // 不补就会被 migrate() 的分号切分并成一条多语句 → 真机首请求报 near "CREATE": syntax error。
+  ...REWARD_LEDGER_DDL.map((s) => s.trim().replace(/;?$/, ';'))
 ].join("\n");
 
 /** 老库补字段：D1 的 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列（对应 src/db.js 的 addColumn） */
@@ -519,6 +526,15 @@ export async function ensureColumns(db) {
   for (const [name, ddl] of ADD_INDEXES) {
     await db.prepare('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + ddl).run();
   }
+  // 第十五批：附件人工复核的六列 + 两条审核索引（常量与 src/attachments.js / src/db.js 共用一份；
+  // 这里是整条 ALTER / CREATE INDEX，不走 ADD_COLUMNS 的「表 + 列片段」形状，D1 直接 prepare().run()）。
+  const attachInfo = await db.prepare('PRAGMA table_info(attachments)').all();
+  const attachCols = (attachInfo && attachInfo.results) || [];
+  for (const col of ATTACH_REVIEW_COLUMNS) {
+    if (attachCols.some((c) => c.name === col.name)) continue;
+    await db.prepare(col.ddl).run();
+  }
+  for (const sql of ATTACH_REVIEW_DDL) await db.prepare(sql).run();
 }
 
 /** 种子数据：分类与游戏都按 slug 幂等补齐（只插缺的，不动已有游戏的游玩次数 / 评分 / 评论） */

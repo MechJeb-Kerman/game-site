@@ -30,7 +30,18 @@ import {
   attachmentUrl,
   validateAttachment,
   D1_BLOB_MAX,
-  D1_BLOB_LABEL
+  D1_BLOB_LABEL,
+  ATTACH_REVIEW,
+  ATTACH_REVIEW_RULES,
+  ATTACH_REVIEW_COLUMNS,
+  ATTACH_REVIEW_DDL,
+  ensureReviewSchema,
+  autoReviewAttachment,
+  readImageSize,
+  setClassifier,
+  getClassifier,
+  createObjectStore,
+  OBJECT_STORE
 } from '../src/attachments.js';
 
 /** 一个 isolate 里同一份 D1 绑定只建一次 store（attachments.js 内部也记着「这张表建过了」） */
@@ -61,6 +72,8 @@ function storeOf(db) {
 export async function ensureAttachments(db) {
   if (!db || typeof db.exec !== 'function') return noStore();
   for (let i = 0; i < ATTACH_DDL.length; i++) await db.exec(ATTACH_DDL[i]);
+  // 审核列 / 索引作为**副作用**补齐（幂等）：函数体与返回值逐字不动，理由见 ensureAttachmentReview
+  await ensureAttachmentReview(db);
   return { ok: true, statements: ATTACH_DDL.length };
 }
 
@@ -166,5 +179,105 @@ export async function pageAttachment(ctx, params) {
   if (!row || row.error || !row.body || row.status !== ATTACH_STATUS.ACTIVE) return notFound();
   return new Response(row.body, { status: 200, headers: attachmentHeaders(row) });
 }
+
+// ============================== 审核（人工队列 / 自动规则 / 分类器） ==============================
+
+/**
+ * 幂等补审核列与索引（6 个 ADD COLUMN + 2 条索引，都在 src/attachments.js 的
+ * ATTACH_REVIEW_COLUMNS / ATTACH_REVIEW_DDL 里，单行语句，D1 的 exec 切得动）。
+ * 为什么不并进 ensureAttachments：那个函数的返回是 { ok, statements: 7 }，被 tools/attachments-test.mjs
+ * 的 234 项断言锁死；审核装配就作为它的副作用跑，也可以单独调用（重复调用不报错、第二次 added 为空）。
+ * @returns {Promise<{ok:true,driver:string,added:string[],columns:number}|{ok:false,error:string,hint:string}>}
+ */
+export async function ensureAttachmentReview(db) {
+  if (!db || typeof db.prepare !== 'function') return noStore();
+  return ensureReviewSchema(db);
+}
+
+/**
+ * 待审队列（只列 review_status='pending' 且没被软删的行，按 id 升序）。
+ * @param {object} db D1 绑定（env.DB）
+ * @param {number} [limit] 每页条数，缺省 50、上限 200
+ * @param {number} [offset] 偏移，负数当 0
+ * @returns {Promise<{ok:true,total:number,limit:number,offset:number,items:object[]}|{error:string,hint?:string}>}
+ */
+export async function listPendingAttachments(db, limit, offset) {
+  const store = storeOf(db);
+  if (!store) return noStore();
+  return store.listPending(limit, offset);
+}
+
+/** 已驳回清单（含被软删的行，按 id 倒序 —— 最近驳回的在最前） */
+export async function listRejectedAttachments(db, limit, offset) {
+  const store = storeOf(db);
+  if (!store) return noStore();
+  return store.listRejected(limit, offset);
+}
+
+/**
+ * 人工审核一条附件。
+ * @param {object} db D1 绑定（env.DB）
+ * @param {number} id 附件 id
+ * @param {'approve'|'reject'} action approve = 通过（被隐藏的会退回原生命周期），reject = 驳回
+ * @param {{moderatorId:number,reason?:string,at?:string}} opts moderatorId 必填（0/空视为没登录）；reject 必须带 reason
+ * @returns {Promise<{ok:true,id:number,status:string,already:boolean,hidden:number,lifecycle:string,moderatorId:number,at:string,reason:string,error:string}|{ok:false,status:string,error:string,hint:string}>}
+ *          驳回口径：review_status='rejected' 且**软删 + 隐藏**（status='deleted'、review_hidden=1），
+ *          /ugc/a/:id 只发 active 所以内容自然取不到；行与内容都留着，等管理员复核或人工清理。
+ */
+export async function moderateAttachment(db, id, action, opts) {
+  const store = storeOf(db);
+  if (!store) return noStore();
+  return store.moderate(id, action, opts || {});
+}
+
+/**
+ * 审核台账：各状态计数与体积（stats() 是驱动计数、形状被锁死，审核统计另开这一个）。
+ * @returns {Promise<{ok:true,driver:string,total:number,live:number,pending:number,pending_live:number,
+ *   approved:number,rejected:number,hidden:number,bytes:number,bytes_pending:number,
+ *   bytes_approved:number,bytes_rejected:number,byStatus:{status:string,n:number,bytes:number}[]}|{error:string}>}
+ */
+export async function attachmentModerationStats(db) {
+  const store = storeOf(db);
+  if (!store) return noStore();
+  return store.moderationStats();
+}
+
+/**
+ * 对已存在的附件重跑一遍自动规则（opts.keep 为真则只算不写，用来试规则）。
+ * @returns {Promise<{ok:boolean,id:number,status:string,reason:string,note:string,hidden:number,lifecycle:string,kept:boolean}|{error:string}>}
+ */
+export async function autoReviewAttachmentInDb(db, id, opts) {
+  const store = storeOf(db);
+  if (!store) return noStore();
+  return store.autoReview(id, opts || {});
+}
+
+/**
+ * 调一次注入的外部分类器（NSFW 之类）。没注入就返回 { ok:false, error:'no_classifier' } 且**不改状态**——
+ * 审核状态只会因为人工或分类器给出的明确结论而变，自动化不假装审过。
+ */
+export async function classifyAttachment(db, id) {
+  const store = storeOf(db);
+  if (!store) return noStore();
+  return store.classify(id);
+}
+
+/** 审核相关的表结构与规则常量（给后台页面 / 迁移脚本读，避免各处再抄一遍） */
+export function attachmentReviewSchema() {
+  return { states: ATTACH_REVIEW, rules: ATTACH_REVIEW_RULES, columns: ATTACH_REVIEW_COLUMNS, ddl: ATTACH_REVIEW_DDL };
+}
+
+/**
+ * Worker 线的对象存储：把 ctx.env 里的 S3_* 透传给 src/attachments.js 的 createObjectStore
+ * （本地盘在 Worker 里不存在，没配 S3 时它同样回落 local，但 Worker 的 local 需要 io 注入，
+ * 所以线上要么配全 S3_*，要么继续用 D1 内容层）。与 db 无关，所以不占第一个参数。
+ */
+export function objectStoreFor(env, config) {
+  const cfg = Object.assign({}, config || {});
+  if (env && cfg.env === undefined) cfg.env = env;
+  return createObjectStore(cfg);
+}
+
+export { createObjectStore, OBJECT_STORE, setClassifier, getClassifier, autoReviewAttachment, readImageSize, ATTACH_REVIEW, ATTACH_REVIEW_RULES, ATTACH_REVIEW_COLUMNS, ATTACH_REVIEW_DDL, ensureReviewSchema };
 
 export { attachmentUrl, validateAttachment, ATTACH_STATUS, ATTACH_DDL, D1_BLOB_MAX, D1_BLOB_LABEL };

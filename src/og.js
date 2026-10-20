@@ -33,11 +33,21 @@
  *   render_failed  渲染端点报错（带 status；网络异常 status = 0）
  *   bad_png        拿到字节了但不是 PNG（端点配错、返回 HTML 之类）
  *
+ * 预生成（可选，离线把热门卡先栅格化好，省掉首次请求的现场渲染）：
+ *   createRasterizer({ pregen: true }) 或 { pregen: { dir: '<仓库>/public/og' } } 之后，png() 会先按
+ *   ogFileName(kind, key) 去那个目录找离线生成的 PNG（tools/gen-og.mjs 产出，附 manifest.json）：
+ *   文件在、是合法 PNG、尺寸也对 → 直接用它（driver 'pregen'，不进内存缓存，文件就是最新真相）；
+ *   缺失 / 损坏 / 尺寸不符 → 静默回落现场栅格化；现场也失败 → 调用方照旧回落 card.svg。
+ *   所以预生成只是「少渲染几次」的加速层，不改变任何回退语义。目录默认按仓库根的
+ *   public/og，也可用 pregenRoot 或环境变量 OG_PREGEN_ROOT 指定基准目录。
+ *
  * 典型用法：
  *   import { createRasterizer, ogMeta } from './og.js';
  *   const rz = createRasterizer();                        // Node 线（auto -> chrome）
  *   const rz = createRasterizer({ driver: 'browser' });   // Workers 线
+ *   const rz = createRasterizer({ pregen: true });        // 挂了预生成目录（Node 线）
  *   const r = await rz.png({ kind: 'replay', key: id, svg });
+ *   const w = await rz.warm();                            // 预热：{ total, ok, failed }
  *   const ogImage = ogMeta(origin, 'replay', id, { png: r.ok });
  *   // Express: res.setHeader('Content-Type', 'image/png').send(Buffer.from(r.bytes))
  *   // Workers: new Response(r.bytes, { headers: { 'content-type': 'image/png' } })
@@ -266,10 +276,301 @@ export function ogMeta(origin, kind, id, opts) {
   return base + fillPath(template, segment);
 }
 
+/* ===================== 预生成清单（public/og） ===================== */
+
+// 离线预生成（tools/gen-og.mjs）与线上读取（createRasterizer 的 pregen 选项）共用一套
+// 「key → 文件名 → 清单条目」的口径，两边都从这里取，免得各写一份慢慢漂移。
+//
+// 为什么文件名要自己算：profile 的 key 是用户名，可能是中文 / 空格 / emoji / 各种标点，
+// 直接当文件名在 Windows 上会炸（\ / : * ? " < > | 都是非法字符），而且 og/ 是静态目录，
+// URL 里还得再编码一层，不如落盘时就换算成 ASCII 安全名。
+export const OG_PREGEN_DIR = 'public/og'; // 相对仓库根；tools/gen-og.mjs 就落这里
+export const OG_MANIFEST_NAME = 'manifest.json';
+export const OG_PREGEN_VERSION = 1;
+export const OG_PREGEN_KINDS = Object.freeze(['replay', 'daily', 'profile']);
+
+// FNV-1a 32 位（16 进制 8 位）：Workers 上不能碰 node:crypto，这里只是「同名兜底」，
+// 不当安全哈希用。
+function fnv1aHex(text) {
+  const s = String(text);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return ('00000000' + h.toString(16)).slice(-8);
+}
+
+// kind 归一到 replay / profile / daily（play / user / u / day 也认，与 ogMeta 同一张嘴）。
+export function ogKindName(kind) {
+  const raw = String(kind === undefined || kind === null ? '' : kind).trim().toLowerCase();
+  return KIND_ALIAS[raw] || raw || 'card';
+}
+
+// 清单条目的主键，与栅格化缓存 key 的前两段同形：'replay:12'。
+export function ogPregenKey(kind, key) {
+  return ogKindName(kind) + ':' + String(key === undefined || key === null ? '' : key);
+}
+
+/**
+ * key → 预生成文件名（纯函数，确定性）。
+ *
+ *   ogFileName('replay', 12)      -> 'replay-12.png'
+ *   ogFileName('play', '12')      -> 'replay-12.png'（别名归一）
+ *   ogFileName('profile', '张三')  -> 'profile-__~3f2a1b0c.png'（换掉非法字符 + 短哈希防撞名）
+ *
+ * 规则：[A-Za-z0-9._-] 之外一律换成 '_'（连续一段合成一个 '_'）；只要换过（或截断过）就追加
+ * '~' + 8 位 FNV-1a，原文参与哈希，所以「张三」「张 三」这类不会撞名。用 '~' 当分隔是因为它
+ * 自己会被换成 '_'——干净 key 的文件名里永远不出现 '~'，两种形态不可能同名。
+ * 先截到 48 字符再补哈希；开头 / 结尾的 '.' '_' 去掉（Windows 上那是非法名）。
+ */
+export function ogFileName(kind, key) {
+  const k = ogKindName(kind);
+  const raw = String(key === undefined || key === null ? '' : key);
+  let base = raw.replace(/[^A-Za-z0-9._-]+/g, '_');
+  if (base.length > 48) base = base.slice(0, 48);
+  base = base.replace(/^[._]+/, '').replace(/[._]+$/, '');
+  if (!base) base = 'card';
+  const changed = base !== raw;
+  return k + '-' + base + (changed ? '~' + fnv1aHex(k + ':' + raw) : '') + '.png';
+}
+
+// 目录参数归一：绝对路径原样用；相对路径按 root 解（默认 cwd，OG_PREGEN_ROOT 可覆盖）。
+function resolveDir(pathMod, raw, root) {
+  const dir = String(raw === undefined || raw === null ? '' : raw);
+  if (!dir || !pathMod) return dir;
+  try {
+    if (typeof pathMod.isAbsolute === 'function' && pathMod.isAbsolute(dir)) return dir;
+  } catch (err) { /* 当相对路径处理 */ }
+  let base = String(root === undefined || root === null ? '' : root);
+  if (!base && typeof process !== 'undefined' && process.cwd) {
+    try { base = process.cwd(); } catch (err) { base = ''; }
+  }
+  if (!base) return dir;
+  try { return pathMod.resolve(base, dir); } catch (err) { return dir; }
+}
+
+/**
+ * 组装清单（纯函数）：条目按 key 排序、同 key 后者覆盖前者，顶层再带一份整体指纹。
+ * opts: { generatedAt, dir, width, height }
+ * 条目字段（逐字）：{ key, kind, id, file, bytes, width, height, revision, source, generatedAt }
+ *   revision = 来源指纹（生成这张图那份 SVG 的短哈希）：源变了它才变，--check 靠它发现
+ *   「源已变、该重新生成」。
+ */
+export function buildOgManifest(entries, opts) {
+  const o = opts || {};
+  const at = String(o.generatedAt || new Date().toISOString());
+  const defW = intOr(o.width, OG_WIDTH);
+  const defH = intOr(o.height, OG_HEIGHT);
+  const byKey = new Map();
+  const list = Array.isArray(entries) ? entries : [];
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i] || {};
+    const kind = ogKindName(e.kind);
+    const id = String(e.id === undefined || e.id === null ? '' : e.id);
+    const key = String(e.key === undefined || e.key === null ? '' : e.key) || (kind + ':' + id);
+    byKey.set(key, {
+      key: key,
+      kind: kind,
+      id: id,
+      file: String(e.file === undefined || e.file === null ? '' : e.file) || ogFileName(kind, id || key),
+      bytes: Math.max(0, intOr(e.bytes, 0)),
+      width: intOr(e.width, defW),
+      height: intOr(e.height, defH),
+      revision: String(e.revision === undefined || e.revision === null ? '' : e.revision),
+      source: String(e.source === undefined || e.source === null ? '' : e.source),
+      generatedAt: String(e.generatedAt || at)
+    });
+  }
+  const sorted = Array.from(byKey.values()).sort(function (a, b) {
+    return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
+  });
+  let total = 0;
+  for (let i = 0; i < sorted.length; i++) total += sorted[i].bytes;
+  return {
+    version: OG_PREGEN_VERSION,
+    generatedAt: at,
+    dir: String(o.dir || OG_PREGEN_DIR),
+    width: defW,
+    height: defH,
+    count: sorted.length,
+    bytes: total,
+    fingerprint: fnv1aHex(sorted.map(function (e) { return e.key + '@' + e.revision; }).join('|')),
+    entries: sorted
+  };
+}
+
+/**
+ * 清单比对（纯函数）：回问题清单，空数组 = 一致。generatedAt 不参与比对（与 gen-precache 同口径）。
+ *   oldManifest  磁盘上读到的清单对象
+ *   fresh        现在「应该」有的条目（key / kind / id / file / revision，bytes 可缺）
+ *   opts.disk    { 文件名: 磁盘字节数 }：查文件缺失与字节数不符
+ *   opts.files   目录里的 *.png 文件名数组：查清单外的多余文件
+ */
+export function diffOgManifest(oldManifest, fresh, opts) {
+  const o = opts || {};
+  const problems = [];
+  const man = oldManifest;
+  if (!man || typeof man !== 'object' || Array.isArray(man)) return ['清单不存在或不是 JSON 对象'];
+  if (intOr(man.version, 0) !== OG_PREGEN_VERSION) {
+    problems.push('version 不一致：磁盘 ' + intOr(man.version, 0) + ' / 现状 ' + OG_PREGEN_VERSION);
+  }
+  if (!Array.isArray(man.entries)) {
+    problems.push('清单缺少 entries 数组');
+    return problems;
+  }
+  const oldByKey = new Map();
+  for (let i = 0; i < man.entries.length; i++) {
+    const e = man.entries[i] || {};
+    const key = String(e.key || '');
+    if (key) oldByKey.set(key, e);
+  }
+  const freshByKey = new Map();
+  const freshList = Array.isArray(fresh) ? fresh : [];
+  for (let i = 0; i < freshList.length; i++) {
+    const e = freshList[i] || {};
+    const kind = ogKindName(e.kind);
+    const id = String(e.id === undefined || e.id === null ? '' : e.id);
+    const key = String(e.key || '') || ogPregenKey(kind, id);
+    freshByKey.set(key, {
+      key: key,
+      file: String(e.file || '') || ogFileName(kind, id || key),
+      revision: String(e.revision || '')
+    });
+  }
+  for (const pair of freshByKey) {
+    const key = pair[0];
+    const fe = pair[1];
+    const oe = oldByKey.get(key);
+    if (!oe) { problems.push('新增条目（源里有、清单里没有，跑生成补上）：' + key); continue; }
+    const of = String(oe.file || '');
+    if (of !== fe.file) problems.push('文件名不一致：' + key + '（清单 ' + of + ' / 现状 ' + fe.file + '）');
+    const orv = String(oe.revision || '');
+    if (orv !== fe.revision) problems.push('来源已变（要重新生成）：' + key + '（' + orv + ' → ' + fe.revision + '）');
+  }
+  for (const pair of oldByKey) {
+    if (!freshByKey.has(pair[0])) problems.push('多余条目（源里已经没有了）：' + pair[0]);
+  }
+  const disk = o.disk;
+  if (disk && typeof disk === 'object') {
+    for (const pair of oldByKey) {
+      const oe = pair[1];
+      const file = String(oe.file || '');
+      if (!file) continue;
+      if (!Object.prototype.hasOwnProperty.call(disk, file)) {
+        problems.push('文件缺失：' + file + '（清单 ' + intOr(oe.bytes, 0) + ' 字节）');
+        continue;
+      }
+      const want = intOr(oe.bytes, 0);
+      const actual = intOr(disk[file], -1);
+      if (actual !== want) problems.push('文件字节数不符：' + file + '（清单 ' + want + ' / 磁盘 ' + actual + '）');
+    }
+  }
+  if (Array.isArray(o.files)) {
+    const known = new Set();
+    for (const pair of oldByKey) known.add(String(pair[1].file || ''));
+    for (let i = 0; i < o.files.length; i++) {
+      const f = String(o.files[i] || '');
+      if (f && !known.has(f)) problems.push('多余文件（清单里没有）：' + f);
+    }
+  }
+  return problems;
+}
+
+/**
+ * 读预生成清单。
+ *   回 { ok:true, manifest, file }
+ *    | { ok:false, error:'no_fs' | 'no_manifest' | 'bad_json' | 'bad_shape', file, detail }
+ * opts: { dir, name, root, fs, path, manifest }（manifest 直接给对象就跳过读盘）
+ * 注意 no_manifest 与 bad_json 是两个不同的错：前者是「还没生成过」，后者是「清单被写坏了」。
+ */
+export async function readOgManifest(opts) {
+  const o = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : { dir: opts };
+  const pathMod = o.path || await loadNode('path');
+  const fs = o.fs || await loadNode('fs');
+  const dir = resolveDir(pathMod, firstNonEmpty(o.dir, OG_PREGEN_DIR), o.root);
+  const name = firstNonEmpty(o.name, OG_MANIFEST_NAME);
+  const file = pathMod ? pathMod.join(dir, name) : dir + '/' + name;
+  if (o.manifest && typeof o.manifest === 'object' && !Array.isArray(o.manifest)) {
+    return { ok: true, manifest: o.manifest, file: file };
+  }
+  if (!fs || !fs.promises) return { ok: false, error: 'no_fs', file: file };
+  let text = '';
+  try { text = await fs.promises.readFile(file, 'utf8'); }
+  catch (err) { return { ok: false, error: 'no_manifest', file: file, detail: errText(err) }; }
+  let manifest = null;
+  try { manifest = JSON.parse(String(text)); }
+  catch (err) { return { ok: false, error: 'bad_json', file: file, detail: errText(err) }; }
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return { ok: false, error: 'bad_shape', file: file };
+  }
+  if (!Array.isArray(manifest.entries)) {
+    return { ok: false, error: 'bad_shape', file: file, detail: 'entries 不是数组' };
+  }
+  return { ok: true, manifest: manifest, file: file };
+}
+
+/**
+ * 预热：把清单里的 key 依次读一遍（校验 PNG 魔数与清单里的尺寸），回统计。
+ *   -> { dir, file, version, total, ok, failed, bytes, entries:[{key,file,ok,bytes,width,height,error}] }
+ * 若读不到清单，回 { total:0, ok:0, failed:0, error:'no_manifest'|'no_fs'|… }。
+ * 只读：不写文件、不动栅格化器的内存缓存（线上请求走 pregen 直读文件，本来就是最新真相）。
+ * 逐条 error 码：missing（文件不在）/ bad_png（不是合法 PNG）/ size_mismatch（尺寸与清单不符）。
+ */
+export async function warmOgPregen(opts) {
+  const o = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : { dir: opts };
+  const pathMod = o.path || await loadNode('path');
+  const fs = o.fs || await loadNode('fs');
+  const dir = resolveDir(pathMod, firstNonEmpty(o.dir, OG_PREGEN_DIR), o.root);
+  const empty = { dir: dir, file: '', version: 0, total: 0, ok: 0, failed: 0, bytes: 0, entries: [] };
+  if (!fs || !fs.promises || !pathMod) return Object.assign(empty, { error: 'no_fs' });
+  const info = await readOgManifest({ dir: dir, name: o.name, root: o.root, fs: fs, path: pathMod, manifest: o.manifest });
+  if (!info.ok) return Object.assign(empty, { file: info.file || '', error: info.error, detail: info.detail });
+  const manifest = info.manifest;
+  const list = Array.isArray(manifest.entries) ? manifest.entries : [];
+  const results = [];
+  let ok = 0, failed = 0, bytes = 0;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i] || {};
+    const key = String(e.key || '') || ogPregenKey(e.kind, e.id);
+    const id = (e.id === undefined || e.id === null || e.id === '') ? key : e.id;
+    const file = String(e.file || '') || ogFileName(e.kind, id);
+    const abs = pathMod.join(dir, file);
+    let buf = null;
+    try { buf = await fs.promises.readFile(abs); }
+    catch (err) {
+      failed++;
+      results.push({ key: key, file: file, ok: false, error: 'missing', detail: errText(err) });
+      continue;
+    }
+    const u8 = toBytes(buf);
+    const size = pngSize(u8);
+    if (!size) {
+      failed++;
+      results.push({ key: key, file: file, ok: false, error: 'bad_png' });
+      continue;
+    }
+    const wantW = intOr(e.width, 0);
+    const wantH = intOr(e.height, 0);
+    if ((wantW && size.width !== wantW) || (wantH && size.height !== wantH)) {
+      failed++;
+      results.push({ key: key, file: file, ok: false, error: 'size_mismatch', width: size.width, height: size.height });
+      continue;
+    }
+    ok++;
+    bytes += u8.length;
+    results.push({ key: key, file: file, ok: true, bytes: u8.length, width: size.width, height: size.height });
+  }
+  return {
+    dir: dir, file: info.file, version: intOr(manifest.version, 0),
+    total: list.length, ok: ok, failed: failed, bytes: bytes, entries: results
+  };
+}
+
 /* ============================ 栅格化器 ============================ */
 
 /**
- * createRasterizer(opts) -> { png, stats, clear }
+ * createRasterizer(opts) -> { png, stats, clear, browserPath, warm }
  *
  * opts 全部可选：
  *   driver     'auto'（默认，Node 线）| 'chrome' | 'browser'（Workers 线）
@@ -284,8 +585,14 @@ export function ogMeta(origin, kind, id, opts) {
  *   fetch      网络注入，默认全局 fetch
  *   spawn      子进程注入，默认 node:child_process.spawn
  *   tmpDir     临时文件根目录，默认 os.tmpdir()
+ *   pregen     预生成 PNG 的优先读取路径：false（默认，关）| true（默认目录）| 目录字符串 |
+ *              { dir, name, fs, path }；相对目录按 pregenRoot 解
+ *   pregenRoot pregen 目录的基准目录（默认 cwd，可被环境变量 OG_PREGEN_ROOT 覆盖）
  *   browserCandidates / browserExists  浏览器探测的注入点（测试用）
  *   fs / os / path                     文件系统相关注入点（一般不用）
+ *
+ * png() 命中预生成文件时多回三个字段：source:'pregen'、pregen:true、file（文件名）；命中缓存
+ * 与现场渲染的返回形状一个字没动（既有调用方与测试不受影响）。
  */
 export function createRasterizer(opts) {
   const o = opts || {};
@@ -303,11 +610,27 @@ export function createRasterizer(opts) {
   const candidates = Array.isArray(o.browserCandidates) ? o.browserCandidates : BROWSER_CANDIDATES;
   const tmpDirWanted = firstNonEmpty(o.tmpDir);
   const existsImpl = typeof o.browserExists === 'function' ? o.browserExists : null;
+  // 预生成目录：false / 不给 = 关；true = 默认目录；字符串 = 目录；对象 = { dir, name, fs, path }
+  const pregenConf = (function () {
+    const p = o.pregen;
+    if (!p) return null;
+    if (p === true) return { dir: OG_PREGEN_DIR, name: OG_MANIFEST_NAME, fs: null, path: null };
+    if (typeof p === 'string') return { dir: p, name: OG_MANIFEST_NAME, fs: null, path: null };
+    if (typeof p === 'object') {
+      const dir = firstNonEmpty(p.dir, p.directory);
+      if (!dir) return null;
+      return { dir: dir, name: firstNonEmpty(p.name, OG_MANIFEST_NAME), fs: p.fs || null, path: p.path || null };
+    }
+    return null;
+  })();
+  const pregenRootOpt = firstNonEmpty(o.pregenRoot, env.OG_PREGEN_ROOT);
+  let pregenDirResolved = '';
 
   const cache = new Map(); // cacheKey -> { bytes, at, driver, bytesLen, oversized }
   const st = {
     hits: 0, misses: 0, renders: 0, failures: 0,
     oversized: false, oversizedCount: 0, evictions: 0, expired: 0, clears: 0, sizeMismatch: 0,
+    pregenHits: 0, pregenMisses: 0, pregenInvalid: 0, pregenSizeSkip: 0, pregenDir: '', pregenLastFile: '',
     lastError: '', driverUsed: '', lastBytes: 0, lastSize: null
   };
   let browserChecked = false;
@@ -337,6 +660,53 @@ export function createRasterizer(opts) {
     const fs = o.fs || await loadNode('fs');
     if (!fs || typeof fs.existsSync !== 'function') return false;
     try { return !!fs.existsSync(p); } catch (err) { return false; }
+  }
+
+  // 预生成目录（惰性解析一次）：给了绝对路径就用它，相对路径按 pregenRoot / cwd 解。
+  async function ensurePregenDir() {
+    if (!pregenConf) return '';
+    if (pregenDirResolved) return pregenDirResolved;
+    const pathMod = pregenConf.path || o.path || await loadNode('path');
+    pregenDirResolved = resolveDir(pathMod, pregenConf.dir, pregenRootOpt);
+    st.pregenDir = pregenDirResolved;
+    return pregenDirResolved;
+  }
+
+  // 读一份预生成文件。任何异常（不在 / 不是 PNG / 尺寸不符）都只回 reason 交给调用方回落，
+  // 绝不 throw —— 预生成永远只是加速层。
+  async function readPregen(kind, key, width, height) {
+    const dir = await ensurePregenDir();
+    if (!dir) return { ok: false, reason: 'disabled' };
+    const fs = pregenConf.fs || o.fs || await loadNode('fs');
+    const pathMod = pregenConf.path || o.path || await loadNode('path');
+    if (!fs || !fs.promises || !pathMod) return { ok: false, reason: 'no_fs' };
+    const file = ogFileName(kind, key);
+    let buf = null;
+    try { buf = await fs.promises.readFile(pathMod.join(dir, file)); }
+    catch (err) { return { ok: false, reason: 'missing', file: file, detail: errText(err) }; }
+    const bytes = toBytes(buf);
+    const size = pngSize(bytes);
+    if (!size) return { ok: false, reason: 'invalid', file: file };
+    if (size.width !== width || size.height !== height) {
+      return { ok: false, reason: 'size', file: file, pngWidth: size.width, pngHeight: size.height };
+    }
+    return { ok: true, file: file, bytes: bytes, bytesLen: bytes.length, pngWidth: size.width, pngHeight: size.height };
+  }
+
+  // 预热：把这份栅格化器认的预生成目录按清单读一遍（统计口径见 warmOgPregen）。
+  async function warm(opts2) {
+    if (!pregenConf) {
+      return { dir: '', file: '', version: 0, total: 0, ok: 0, failed: 0, bytes: 0, entries: [], error: 'pregen_disabled' };
+    }
+    const oo = opts2 || {};
+    return await warmOgPregen({
+      dir: oo.dir || await ensurePregenDir(),
+      name: oo.name || pregenConf.name,
+      root: pregenRootOpt,
+      fs: oo.fs || pregenConf.fs || o.fs,
+      path: oo.path || pregenConf.path || o.path,
+      manifest: oo.manifest
+    });
   }
 
   // 探测本机浏览器：显式路径（参数 / CHROME_PATH / EDGE_PATH）优先，然后候选表。
@@ -553,6 +923,26 @@ export function createRasterizer(opts) {
     const cacheKey = kind + ':' + key + ':' + width + 'x' + height;
     const atMs = nowFn();
 
+    // 预生成优先：文件在就用它（每次直读磁盘，文件是唯一真相，不进 LRU 也就不会被 TTL 挡住）。
+    if (pregenConf) {
+      const pre = await readPregen(kind, key, width, height);
+      if (pre.file) st.pregenLastFile = pre.file;
+      if (pre.ok) {
+        st.pregenHits++;
+        const over = pre.bytesLen > OVERSIZE_BYTES;
+        if (over) { st.oversized = true; st.oversizedCount++; }
+        return {
+          ok: true, cached: false, source: 'pregen', pregen: true, driver: 'pregen', file: pre.file, key: cacheKey,
+          bytes: pre.bytes, bytesLen: pre.bytesLen,
+          width: width, height: height, pngWidth: pre.pngWidth, pngHeight: pre.pngHeight,
+          oversized: over
+        };
+      }
+      st.pregenMisses++;
+      if (pre.reason === 'invalid') st.pregenInvalid++;
+      else if (pre.reason === 'size') st.pregenSizeSkip++;
+    }
+
     const hit = readCache(cacheKey, atMs);
     if (hit) {
       st.hits++;
@@ -629,7 +1019,14 @@ export function createRasterizer(opts) {
       endpointConfigured: !!endpoint,
       lastError: st.lastError,
       lastBytes: st.lastBytes,
-      lastSize: st.lastSize
+      lastSize: st.lastSize,
+      pregen: !!pregenConf,
+      pregenDir: pregenDirResolved || (pregenConf ? String(pregenConf.dir) : ''),
+      pregenHits: st.pregenHits,
+      pregenMisses: st.pregenMisses,
+      pregenInvalid: st.pregenInvalid,
+      pregenSizeSkip: st.pregenSizeSkip,
+      pregenLastFile: st.pregenLastFile
     };
   }
 
@@ -646,10 +1043,13 @@ export function createRasterizer(opts) {
     return await resolveBrowser();
   }
 
-  return { png: png, stats: stats, clear: clear, browserPath: browserPath };
+  return { png: png, stats: stats, clear: clear, browserPath: browserPath, warm: warm };
 }
 
 export default {
   createRasterizer, ogMeta, svgToHtml, pngSize, isPng, browserCandidates,
-  OG_ROUTES, OG_CONTENT_TYPE, BROWSER_CANDIDATES, PNG_MAGIC, OG_WIDTH, OG_HEIGHT
+  OG_ROUTES, OG_CONTENT_TYPE, BROWSER_CANDIDATES, PNG_MAGIC, OG_WIDTH, OG_HEIGHT,
+  OG_PREGEN_DIR, OG_MANIFEST_NAME, OG_PREGEN_VERSION, OG_PREGEN_KINDS,
+  ogKindName, ogPregenKey, ogFileName,
+  buildOgManifest, diffOgManifest, readOgManifest, warmOgPregen
 };

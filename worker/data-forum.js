@@ -13,6 +13,7 @@ import {
   matchRules,
   compileRules
 } from '../src/forum-guard.js';
+import { createRuleCache, rulesFingerprint } from './ratelimit.js';
 
 const THREAD_COLS =
   't.id, t.title, t.status, t.pinned, t.featured, t.locked, t.reply_count, t.view_count, ' +
@@ -427,10 +428,17 @@ export async function deleteBlacklist(db, id) {
 let ruleCache = null;
 let ruleCacheAt = 0;
 
+// 跨实例共享的黑名单编译产物（第十四批）：多个 isolate 冷启时不必各自重编译同一批正则。
+// 介质默认 caches.default —— worker/ratelimit.js:121 的 resolveCache 在没有 caches 的宿主里回 null，自动退内存，
+// 所以本机测试与「没注入介质」时的行为与改造前一致。
+// 外面 10 秒的本地 TTL 照旧挡在最前面（免得每次发帖都查一遍库）；键是规则指纹，规则一改指纹就变、
+// 天然换键失效，所以 addBlacklist / deleteBlacklist 里只清本地副本、不做显式 invalidate。
+const sharedRules = createRuleCache({ ttlMs: 60000, keyPrefix: 'forum-rules:' });
+
 export async function forumRules(db) {
   if (ruleCache && Date.now() - ruleCacheAt < 10000) return ruleCache;
-  const rows = await listBlacklist(db);
-  ruleCache = compileRules(rows.reverse());
+  const rows = (await listBlacklist(db)).reverse();
+  ruleCache = await sharedRules.getOrCompile(rulesFingerprint(rows), () => compileRules(rows));
   ruleCacheAt = Date.now();
   return ruleCache;
 }

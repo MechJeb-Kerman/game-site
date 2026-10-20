@@ -23,6 +23,10 @@ cloudflare-pages.zip
 # 拼音表数据源（约 12MB，重新获取：node tools/gen-pinyin.mjs --download）
 .pinyin-src.txt
 
+# OG 预生成位图：按库里的棋谱/主页/每日题生成（node tools/gen-og.mjs），随数据变，不进仓库。
+# 缺了也不影响线上——src/og.js 会静默回落现场渲染。
+public/og/
+
 # 系统垃圾
 .DS_Store
 Thumbs.db

@@ -8,7 +8,7 @@
  *    按 urls 逐条预缓存；单条失败只计数、不中断（避开 cache.addAll 的全有或全无语义）。
  *  - 导航：已预缓存的页面（20 款游戏页 + 首页）走 stale-while-revalidate（先给缓存、后台更新），
  *    其余页面保持 network-first；网络失败时依次回落「该页面自己的缓存 → 离线壳 → 内置兜底页」。
- *  - 静态资源（/static/ /games/ /icons/ /cover/ /manifest.webmanifest）：stale-while-revalidate。
+ *  - 静态资源（/static/ /games/ /icons/ /cover/ /covers/ /manifest.webmanifest）：stale-while-revalidate。
  *
  * 两层版本号：
  *  - SW_VERSION 只管「页面 ⇄ SW 的握手协议」，不随内容改（worker/app.js 里的内联副本由
@@ -19,8 +19,8 @@
  */
 
 /* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
-/* 33 条 · 851.3 KB · 最大单文件 95.8 KB */
-const PRECACHE_VERSION = 'p1-95c403f1a492';
+/* 35 条 · 883.4 KB · 最大单文件 95.8 KB */
+const PRECACHE_VERSION = 'p1-cc9bf9cfc401';
 const PRECACHE_FALLBACK = [
   '/',
   '/games/2048/index.html',
@@ -47,6 +47,8 @@ const PRECACHE_FALLBACK = [
   '/static/js/app.js',
   '/static/js/gamepad.js',
   '/static/js/net-play.js',
+  '/static/js/offline-queue.js',
+  '/static/js/offline-wire.js',
   '/static/css/style.css',
   '/icons/apple-touch-icon-180.png',
   '/icons/icon-192.png',
@@ -90,6 +92,7 @@ const STATIC_PATHS = [
   /^\/games\//,
   /^\/icons\//,
   /^\/cover\//,
+  /^\/covers\//,
   /^\/manifest\.webmanifest$/
 ];
 

@@ -5,7 +5,7 @@
  * 通过 wrangler.toml 的 [assets] 绑定成 env.ASSETS。这个 Worker 负责：
  *
  *   1. 注入安全响应头（Workers 不支持 Pages 的 _headers 文件，只能写在代码里）
- *   2. 按路径分级缓存：/static/* 7 天、/cover/* 1 天、/games/* 1 小时、HTML 不缓存
+ *   2. 按路径分级缓存：/static/* 与 /covers/* 7 天、/cover/* 1 天、/games/* 1 小时、HTML 不缓存
  *   3. 干净地址：/games -> /games.html、/game/2048 -> /game/2048.html、/category/puzzle -> ...
  *   4. 404 回 404.html 并加 noindex；/favicon.ico 302 到 /favicon.svg
  *   5. 非 GET / HEAD 一律 405（静态站没有服务端接口）
@@ -44,6 +44,7 @@ export const SECURITY_HEADERS = {
 const CACHE_RULES = [
   [/^\/static\//, 'public, max-age=604800'],
   [/^\/cover\//, 'public, max-age=86400'],
+  [/^\/covers\//, 'public, max-age=604800'],
   [/^\/games\//, 'public, max-age=3600']
 ];
 

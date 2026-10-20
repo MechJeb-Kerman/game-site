@@ -1,10 +1,10 @@
 {
-  "version": "p1-95c403f1a492",
-  "generatedAt": "2026-10-20T05:23:13.308Z",
+  "version": "p1-cc9bf9cfc401",
+  "generatedAt": "2026-10-20T06:40:24.137Z",
   "generator": "tools/gen-precache.mjs",
   "note": "PWA 离线清单：sw.js 在 install 时按 urls 逐条预缓存（单条失败只计数，不整体失败）",
-  "count": 33,
-  "bytes": 871735,
+  "count": 35,
+  "bytes": 904583,
   "maxBytes": 98130,
   "urls": [
     {
@@ -181,6 +181,20 @@
       "revision": "108304868bfc",
       "bytes": 31267,
       "file": "public/js/net-play.js"
+    },
+    {
+      "url": "/static/js/offline-queue.js",
+      "kind": "script",
+      "revision": "1579649c918b",
+      "bytes": 26910,
+      "file": "public/js/offline-queue.js"
+    },
+    {
+      "url": "/static/js/offline-wire.js",
+      "kind": "script",
+      "revision": "f607269c82c2",
+      "bytes": 5938,
+      "file": "public/js/offline-wire.js"
     },
     {
       "url": "/static/css/style.css",

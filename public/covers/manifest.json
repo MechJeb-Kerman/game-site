@@ -1,0 +1,289 @@
+{
+  "generator": "tools/gen-covers.mjs",
+  "width": 1200,
+  "height": 675,
+  "count": 20,
+  "generatedAt": "2026-10-20T06:11:40.363Z",
+  "covers": {
+    "2048": {
+      "file": "2048.svg",
+      "src": "/covers/2048.svg",
+      "bytes": 7744,
+      "primary": "#f59e0b",
+      "palette": [
+        "#f59e0b",
+        "#ef4444",
+        "#fde68a"
+      ],
+      "alt": "2048：合并数字方块",
+      "fingerprint": "c5f1ae24cdf358a4",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "blackhole": {
+      "file": "blackhole.svg",
+      "src": "/covers/blackhole.svg",
+      "bytes": 6265,
+      "primary": "#6d28d9",
+      "palette": [
+        "#6d28d9",
+        "#22d3ee",
+        "#c4b5fd"
+      ],
+      "alt": "黑洞吞噬：被引力卷住的星体",
+      "fingerprint": "2d3387d7c1fefcc2",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "chess": {
+      "file": "chess.svg",
+      "src": "/covers/chess.svg",
+      "bytes": 9314,
+      "primary": "#818cf8",
+      "palette": [
+        "#818cf8",
+        "#e2e8f0",
+        "#c7d2fe"
+      ],
+      "alt": "国际象棋：棋盘与棋子",
+      "fingerprint": "a9d5d3e9b04a8613",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "connect4": {
+      "file": "connect4.svg",
+      "src": "/covers/connect4.svg",
+      "bytes": 10301,
+      "primary": "#facc15",
+      "palette": [
+        "#facc15",
+        "#ef4444",
+        "#fde68a"
+      ],
+      "alt": "四子棋：重力落子连成四",
+      "fingerprint": "7ac2791f70bc2980",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "draughts": {
+      "file": "draughts.svg",
+      "src": "/covers/draughts.svg",
+      "bytes": 10735,
+      "primary": "#4d7c0f",
+      "palette": [
+        "#4d7c0f",
+        "#ecfccb",
+        "#bef264"
+      ],
+      "alt": "国际跳棋：棋盘与王棋",
+      "fingerprint": "2739c5b38d36fc18",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "gomoku": {
+      "file": "gomoku.svg",
+      "src": "/covers/gomoku.svg",
+      "bytes": 10409,
+      "primary": "#0ea5e9",
+      "palette": [
+        "#0ea5e9",
+        "#e2e8f0",
+        "#7dd3fc"
+      ],
+      "alt": "五子棋：棋盘上的黑白连珠",
+      "fingerprint": "c89d2b6b86b25c53",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "idiom": {
+      "file": "idiom.svg",
+      "src": "/covers/idiom.svg",
+      "bytes": 7162,
+      "primary": "#be123c",
+      "palette": [
+        "#be123c",
+        "#f59e0b",
+        "#fda4af"
+      ],
+      "alt": "成语猜猜：四字猜词的反馈方格",
+      "fingerprint": "373a4250a1c98d64",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "linkup": {
+      "file": "linkup.svg",
+      "src": "/covers/linkup.svg",
+      "bytes": 8987,
+      "primary": "#ec4899",
+      "palette": [
+        "#ec4899",
+        "#a78bfa",
+        "#fbcfe8"
+      ],
+      "alt": "连连看：两次转弯的连线消除",
+      "fingerprint": "0dc232ed172905cb",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "match3": {
+      "file": "match3.svg",
+      "src": "/covers/match3.svg",
+      "bytes": 10215,
+      "primary": "#d946ef",
+      "palette": [
+        "#d946ef",
+        "#22d3ee",
+        "#f5d0fe"
+      ],
+      "alt": "宝石三消：成排发光的宝石",
+      "fingerprint": "ae20eea4960f92f8",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "memory": {
+      "file": "memory.svg",
+      "src": "/covers/memory.svg",
+      "bytes": 6698,
+      "primary": "#c4b5fd",
+      "palette": [
+        "#c4b5fd",
+        "#34d399",
+        "#ede9fe"
+      ],
+      "alt": "记忆翻牌：配对翻开的卡牌",
+      "fingerprint": "2fe6a02ad5b53513",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "minesweeper": {
+      "file": "minesweeper.svg",
+      "src": "/covers/minesweeper.svg",
+      "bytes": 8359,
+      "primary": "#94a3b8",
+      "palette": [
+        "#94a3b8",
+        "#0ea5e9",
+        "#e2e8f0"
+      ],
+      "alt": "扫雷：数字与地雷方格",
+      "fingerprint": "8b66250e2cc3a2d5",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "reversi": {
+      "file": "reversi.svg",
+      "src": "/covers/reversi.svg",
+      "bytes": 10868,
+      "primary": "#134e4a",
+      "palette": [
+        "#134e4a",
+        "#f8fafc",
+        "#5eead4"
+      ],
+      "alt": "黑白棋：棋盘上翻转的双色棋子",
+      "fingerprint": "453150199fd5920d",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "snake": {
+      "file": "snake.svg",
+      "src": "/covers/snake.svg",
+      "bytes": 4363,
+      "primary": "#22c55e",
+      "palette": [
+        "#22c55e",
+        "#facc15",
+        "#bbf7d0"
+      ],
+      "alt": "贪吃蛇：蜿蜒的蛇身与果实",
+      "fingerprint": "a2b31ee9236b1743",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "sokoban": {
+      "file": "sokoban.svg",
+      "src": "/covers/sokoban.svg",
+      "bytes": 9355,
+      "primary": "#b45309",
+      "palette": [
+        "#b45309",
+        "#0d9488",
+        "#fcd34d"
+      ],
+      "alt": "推箱子：木箱与目标点",
+      "fingerprint": "90ed9b583790bde3",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "solitaire": {
+      "file": "solitaire.svg",
+      "src": "/covers/solitaire.svg",
+      "bytes": 8104,
+      "primary": "#10b981",
+      "palette": [
+        "#10b981",
+        "#f8fafc",
+        "#a7f3d0"
+      ],
+      "alt": "纸牌接龙：摊开的牌列",
+      "fingerprint": "2365ccc449b8a396",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "sudoku": {
+      "file": "sudoku.svg",
+      "src": "/covers/sudoku.svg",
+      "bytes": 8945,
+      "primary": "#2563eb",
+      "palette": [
+        "#2563eb",
+        "#a78bfa",
+        "#93c5fd"
+      ],
+      "alt": "数独：九宫格与点阵数字",
+      "fingerprint": "88757d9704238618",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "tetris": {
+      "file": "tetris.svg",
+      "src": "/covers/tetris.svg",
+      "bytes": 6790,
+      "primary": "#dc2626",
+      "palette": [
+        "#dc2626",
+        "#22d3ee",
+        "#fca5a5"
+      ],
+      "alt": "俄罗斯方块：下落的方块与消行",
+      "fingerprint": "1e2f269f1a8060e7",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "tictactoe": {
+      "file": "tictactoe.svg",
+      "src": "/covers/tictactoe.svg",
+      "bytes": 5982,
+      "primary": "#22d3ee",
+      "palette": [
+        "#22d3ee",
+        "#f472b6",
+        "#a5f3fc"
+      ],
+      "alt": "井字棋：三连的圈叉格",
+      "fingerprint": "f756d270aee7b12a",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "whack": {
+      "file": "whack.svg",
+      "src": "/covers/whack.svg",
+      "bytes": 6386,
+      "primary": "#f97316",
+      "palette": [
+        "#f97316",
+        "#dc2626",
+        "#fdba74"
+      ],
+      "alt": "打地鼠：地洞与挥下的锤子",
+      "fingerprint": "6c0dd97ce9ddc8f8",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    },
+    "xiangqi": {
+      "file": "xiangqi.svg",
+      "src": "/covers/xiangqi.svg",
+      "bytes": 9434,
+      "primary": "#7c2d12",
+      "palette": [
+        "#7c2d12",
+        "#facc15",
+        "#fdba74"
+      ],
+      "alt": "中国象棋：楚河汉界与棋子",
+      "fingerprint": "ae541f631ff251c6",
+      "generatedAt": "2026-10-20T06:11:40.363Z"
+    }
+  }
+}

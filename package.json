@@ -33,6 +33,7 @@
     "gen:sw": "node tools/gen-sw.mjs",
     "index:meili": "node tools/meili-index.mjs",
     "gen:precache": "node tools/gen-precache.mjs",
+    "gen:og": "node tools/gen-og.mjs",
     "test:pwa": "node tools/pwa-test.mjs",
     "test:rules": "node tools/rules-test.mjs",
     "test:cards": "node tools/cards-test.mjs",
@@ -45,6 +46,7 @@
     "test:tags": "node tools/forum-tags-test.mjs",
     "test:oauth": "node tools/oauth-gateway-test.mjs",
     "test:og": "node tools/og-raster-test.mjs",
+    "test:og-warm": "node tools/og-warm-test.mjs",
     "test:outbox": "node tools/outbox-test.mjs",
     "test:ratelimit": "node tools/ratelimit-test.mjs",
     "test:rules-xiangqi": "node tools/rules-xiangqi-test.mjs",
@@ -57,7 +59,16 @@
     "test:push": "node tools/push-test.mjs",
     "test:push-wiring": "node tools/push-wiring-test.mjs",
     "test:rewards": "node tools/daily-reward-test.mjs",
-    "test:replay-identity": "node tools/replay-identity-test.mjs"
+    "test:rewards-ledger": "node tools/rewards-ledger-test.mjs",
+    "test:replay-identity": "node tools/replay-identity-test.mjs",
+    "test:ratelimit-shared": "node tools/ratelimit-shared-test.mjs",
+    "test:forum-rules": "node tools/forum-rules-cache-test.mjs",
+    "gen:covers": "node tools/gen-covers.mjs",
+    "test:covers": "node tools/cover-test.mjs",
+    "test:attachment-store": "node tools/attachment-store-test.mjs",
+    "test:offline-queue": "node tools/offline-queue-test.mjs",
+    "test:offline-wire": "node tools/offline-wire-test.mjs",
+    "test:export-records": "node tools/export-record-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

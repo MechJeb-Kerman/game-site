@@ -15,6 +15,7 @@ import * as fguard from './src/forum-guard.js';
 // 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
 import { PORTAL_HOSTS } from './src/sites.js';
 import * as play from './src/play-store.js';
+import * as recordExport from './src/record-export.js';
 import * as social from './src/social.js';
 import { dayKey, makeupCheck } from './src/daily.js';
 import { replayCardSvg, profileCardSvg, dailyCardSvg } from './src/cards.js';
@@ -27,6 +28,7 @@ import * as elo from './src/elo.js';
 import * as og from './src/og.js';
 import * as rules from './src/rules/index.js';
 import * as push from './src/push.js';
+import * as rewards from './src/rewards.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -66,7 +68,12 @@ app.locals.attachStore = attachStore;
  * og:image 位图栅格化：用本机 Chrome / Edge 无头截一张 1200x630 PNG。
  * 没装浏览器时 png() 返回 { ok:false, error:'no_browser' }，路由回退发同一张 SVG 卡片。
  */
-const rasterizer = og.createRasterizer({ driver: process.env.OG_DRIVER || 'chrome' });
+const rasterizer = og.createRasterizer({
+  driver: process.env.OG_DRIVER || 'chrome',
+  // 预生成位图（tools/gen-og.mjs 写到 public/og/，第十四批）：命中就直接读盘，省一次无头浏览器渲染。
+  // 它只是加速层——目录不存在 / 清单坏了 / 尺寸不符都静默回落现场渲染，线上不会因为一张坏图 500；OG_PREGEN=0 可关掉。
+  pregen: process.env.OG_PREGEN === '0' ? false : { dir: join(PUBLIC_DIR, 'og') }
+});
 app.locals.rasterizer = rasterizer;
 
 /* ---------- 第二轮接线的共用小工具（附件 / og 位图 / 天梯） ---------- */
@@ -316,6 +323,9 @@ app.use((req, res, next) => {
 app.use('/static', express.static(PUBLIC_DIR, { maxAge: '7d', etag: true }));
 // PWA 图标：public/ 根目录没有整体挂静态，单独把 icons 目录挂出来（manifest 里声明的 4 张图）
 app.use('/icons', express.static(join(PUBLIC_DIR, 'icons'), { maxAge: '30d', etag: true }));
+// 20 款游戏的静态封面（public/covers/<slug>.svg，由 tools/gen-covers.mjs 生成、src/covers.js 是唯一事实来源）：
+// 和 icons 同理，public/ 根没有整体挂静态，所以单独挂一层；查不到就回落动态 /cover/:slug.svg。
+app.use('/covers', express.static(join(PUBLIC_DIR, 'covers'), { maxAge: '7d', etag: true }));
 // 生产环境建议把游戏放到独立域名（如 games.example.com）做沙箱隔离
 app.use('/games', express.static(GAMES_DIR, { maxAge: '1h', etag: true }));
 
@@ -717,6 +727,12 @@ app.get('/daily', (req, res) => {
   const day = dayKey();
   const slug = social.dailySlug(day);
   const stats = req.user ? social.dailyStats(req.user.id) : null;
+  // 奖励流水（第十四批）：访问本页时把已达到的档补记一次，幂等（UNIQUE(user_id, day, tier)）。
+  // ledger 既做补记也直接当展示数据，所以「今天已领取」不需要额外一次请求。
+  let ledger = null;
+  if (req.user && stats) {
+    try { ledger = rewards.grantRewards(req.user.id, stats).summary; } catch { ledger = null; }
+  }
   res.send(
     ui.dailyPage({
       origin: originOf(req),
@@ -725,6 +741,7 @@ app.get('/daily', (req, res) => {
       game: data.getGame(slug),
       // dailyStats 已经是「视图要什么给什么」的形状（含 calendar / perfect / makeupUsed），整份透传即可
       stats: stats || null,
+      ledger,
       board: social.dailyBoard(day, 12),
       notice: String(req.query.notice || '')
     })
@@ -1071,7 +1088,11 @@ app.post('/api/games/:slug/play', (req, res) => {
   // 每日挑战打卡：今天轮到的正好是这款游戏时记一笔（只有登录用户有打卡，游客只计播放次数）
   let daily = null;
   if (req.user) {
-    try { daily = social.markDaily(req.user.id, slug); } catch { daily = null; }
+    try {
+      daily = social.markDaily(req.user.id, slug);
+      // 真打出今天这一笔时才落奖励流水（幂等），省得每次播放都重算统计
+      if (daily && daily.fresh) rewards.grantRewards(req.user.id, social.dailyStats(req.user.id));
+    } catch { daily = null; }
   }
   res.json({ counted: true, plays, daily: daily && daily.fresh ? daily.day : '' });
 });
@@ -1234,6 +1255,66 @@ function replayJson(req, res, attachment) {
 }
 app.get('/api/replays', (req, res) => replayJson(req, res, false));
 app.get('/replays/export.json', (req, res) => replayJson(req, res, true));
+
+/**
+ * 棋谱专用格式导出（第十五批）：/replays/export.sgf（五子棋/四子棋/黑白棋/跳棋/中国象棋的 SGF）、
+ * /replays/export.pgn（国际象棋 PGN）、/replays/export.tar.gz（一局一个文件打包）。
+ * 筛选参数与 JSON 版完全一致，共用同一把频率锁。列表接口只回行数据（不含 moves），
+ * 所以这里逐条 play.replay(id) 取完整棋谱再交给 src/record-export.js 转换。
+ */
+const REPLAY_EXPORT_TYPES = {
+  sgf: 'application/x-go-sgf; charset=utf-8',
+  pgn: 'application/x-chess-pgn; charset=utf-8'
+};
+async function replayExportFile(req, res, ext) {
+  if (!replayWindow('replay-export:' + req.ip, 60, 60000)) {
+    return res.status(429).json({ ok: false, error: 'busy', hint: '导出太频繁了，歇一分钟再来' });
+  }
+  const q = replayFiltersFor(req);
+  const rawLim = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const asked = String(rawLim == null ? '' : rawLim).trim() === '' ? NaN : Number(rawLim);
+  const limit = Math.min(Math.max(Number.isFinite(asked) ? Math.floor(asked) : 200, 1), play.REPLAY_MAX_LIMIT);
+  const list = play.replayList({
+    game: q.filters.game,
+    player: q.filters.player,
+    result: q.filters.result,
+    from: q.filters.from,
+    to: q.filters.to,
+    mine: q.mine,
+    ownerId: q.ownerId,
+    limit: limit,
+    offset: 0,
+    maxLimit: play.REPLAY_MAX_LIMIT
+  });
+  const rows = (list && list.items) || [];
+  const records = [];
+  for (const row of rows) {
+    const rec = play.replay(Number(row && row.id) || 0);
+    if (rec) records.push(rec);
+  }
+  const stamp = replayStamp();
+  res.setHeader('Cache-Control', 'no-store');
+  if (ext === 'tar.gz') {
+    const pack = await recordExport.exportArchive(records, { format: 'auto', name: 'replays-' + stamp });
+    if (!pack) return res.status(500).json({ ok: false, error: 'export_failed' });
+    // 筛到没有可导出的对局不是服务端故障（比如只看国际象棋却点 SGF）：回一个合法的空包 + count=0 头，
+    // 让浏览器正常下载/提示，别把 500 丢过去（浏览器会当成下载失败）
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('X-Replay-Export', 'count=' + pack.count + '; skipped=' + pack.skipped + '; total=' + Number((list && list.total) || 0));
+    res.setHeader('Content-Disposition', 'attachment; filename=' + pack.name);
+    return res.send(Buffer.from(pack.archive));
+  }
+  const out = recordExport.exportMany(records, { format: ext });
+  if (!out) return res.status(500).json({ ok: false, error: 'export_failed' });
+  // 采纳数与跳过数放在头里，导出的文本本身保持干净（爬虫/棋谱软件只认格式）
+  res.setHeader('Content-Type', REPLAY_EXPORT_TYPES[ext]);
+  res.setHeader('X-Replay-Export', 'count=' + out.count + '; skipped=' + out.skipped + '; total=' + Number((list && list.total) || 0));
+  res.setHeader('Content-Disposition', 'attachment; filename=replays-' + stamp + '.' + ext);
+  return res.send(out.text);
+}
+for (const ext of Object.keys(REPLAY_EXPORT_TYPES).concat('tar.gz')) {
+  app.get('/replays/export.' + ext, (req, res, next) => { replayExportFile(req, res, ext).catch(next); });
+}
 
 // ---------- 账号 ----------
 
@@ -2370,6 +2451,75 @@ app.post('/forum/admin/users/:id/mute', requireAdmin, (req, res) => {
   forumTo(res, '/forum/admin', 'done');
 });
 
+/* ---------- 附件审核（第十四批，与 /forum/admin 同一套权限） ---------- */
+
+/** 附件审核只认这几个错误码，别的按 default 处理（照 FORUM_ERR 归一的老规矩） */
+const ATTACH_ERR_CODES = ['not_found', 'bad_action', 'forbidden', 'reason_required'];
+
+/** 附件审核页的统一回跳：不复用 forumTo —— 那几个新码会被它归一成 default，翻不出人话 */
+function attachTo(res, ok, err) {
+  if (ok) return res.redirect(withQuery('/forum/admin/attachments', 'ok=' + encodeURIComponent(ok)));
+  if (err) {
+    const code = ATTACH_ERR_CODES.indexOf(String(err)) >= 0 ? String(err) : 'default';
+    return res.redirect(withQuery('/forum/admin/attachments', 'err=' + encodeURIComponent(code)));
+  }
+  res.redirect('/forum/admin/attachments');
+}
+
+/** 存储没建起来时别硬跑（attachStore 建失败会带 error 字段） */
+const attachStoreOk = () => !!attachStore && !attachStore.error;
+
+app.get('/forum/admin/attachments', requireAdmin, async (req, res, next) => {
+  if (!attachStoreOk()) {
+    return res.status(503).type('text/plain; charset=utf-8')
+      .send('附件存储没建起来，审核页用不了：' + String(attachStore.error || 'unknown'));
+  }
+  try {
+    res.send(ui.attachAdminPage({
+      origin: originOf(req),
+      user: req.user,
+      stats: await attachStore.moderationStats(),
+      pending: await attachStore.listPending(attachments.ATTACH_REVIEW_RULES.queueLimit, 0),
+      rejected: await attachStore.listRejected(30, 0),
+      ok: String((req.query && req.query.ok) || ''),
+      err: String((req.query && req.query.err) || '')
+    }));
+  } catch (e) { next(e); }
+});
+
+/** 手动跑一遍自动规则：只拒不给通过，拿不准的留在队列里 */
+app.post('/forum/admin/attachments/auto', requireAdmin, async (req, res, next) => {
+  if (!attachStoreOk()) return attachTo(res, null, 'not_found');
+  try {
+    const list = await attachStore.listPending(attachments.ATTACH_REVIEW_RULES.queueLimit, 0);
+    const items = (list && list.items) || [];
+    let rejected = 0;
+    for (const a of items) {
+      const r = await attachStore.autoReview(a.id);
+      if (r && r.status === 'rejected') rejected += 1;
+    }
+    data.logAudit(req.user, 'attach.auto', String(items.length),
+      '自动拒 ' + rejected + ' 件，留人工 ' + (items.length - rejected) + ' 件');
+    attachTo(res, 'auto', null);
+  } catch (e) { next(e); }
+});
+
+/** 人工复核：通过 / 拒绝（拒绝必须给理由，moderate 自己会把关） */
+app.post('/forum/admin/attachments/:id/review', requireAdmin, async (req, res, next) => {
+  if (!attachStoreOk()) return attachTo(res, null, 'not_found');
+  try {
+    const id = Number(req.params.id) || 0;
+    const b = req.body || {};
+    const action = String(b.action || '');
+    const reason = String(b.reason || '').trim().slice(0, 80);
+    const r = await attachStore.moderate(id, action, { moderatorId: req.user.id, reason });
+    if (r && r.error) return attachTo(res, null, r.error);
+    data.logAudit(req.user, 'attach.review', String(id),
+      (action === 'approve' ? '通过' : '拒绝') + (reason ? '：' + reason : ''));
+    attachTo(res, 'done', null);
+  } catch (e) { next(e); }
+});
+
 // ---------- 错误处理 ----------
 app.use((req, res) => {
   res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
@@ -2418,6 +2568,20 @@ if (process.env.MAIL_TICK !== '0') {
   if (mailTimer.unref) mailTimer.unref();
 }
 
+/**
+ * OG 预生成预热：启动后把 public/og 的清单读一遍并核对尺寸，命中后第一次请求就免渲染。
+ * 没有清单（还没跑过 gen:og）时 total=0，什么都不做。OG_WARM=0 关掉。
+ */
+async function warmOgOnStart() {
+  if (process.env.OG_WARM === '0') return;
+  try {
+    const w = await rasterizer.warm();
+    if (w && w.total) console.log('[og] 预生成命中 ' + w.ok + '/' + w.total + ' 张' + (w.failed ? '，失败 ' + w.failed : ''));
+  } catch (err) {
+    console.error('[og] 预热失败：', err && err.message);
+  }
+}
+
 const server = app.listen(PORT, () => {
   const s = data.siteStats();
   console.log('');
@@ -2428,6 +2592,7 @@ const server = app.listen(PORT, () => {
     console.log('  ⚠️  管理员仍是默认口令 admin / admin123，上线前务必用 ADMIN_USER / ADMIN_PASS 改掉');
   }
   console.log('');
+  warmOgOnStart();
 });
 
 /* 导出给测试与排障用（tools/search-fallback-test.mjs 在进程内 import 本站，直接观察榜单缓存的单飞与 TTL）：

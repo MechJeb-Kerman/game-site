@@ -228,6 +228,10 @@ put("static/js/app-static.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "app-
 put("static/js/gamepad.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "gamepad.js"), "utf8"));
 /* 联机对战小部件：棋类游戏页会引它，静态导出必须一起带上 */
 put("static/js/net-play.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "net-play.js"), "utf8"));
+/* 离线兜底：views.js 无条件引 offline-wire.js（它再按需用 offline-queue.js），
+   静态托管上少一个就是 404 + console 报错，所以两件都得跟着产物导出 */
+put("static/js/offline-queue.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "offline-queue.js"), "utf8"));
+put("static/js/offline-wire.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "offline-wire.js"), "utf8"));
 const FAVICON = "<svg xmlns=" + Q + "http://www.w3.org/2000/svg" + Q + " viewBox=" + Q + "0 0 64 64" + Q + "><rect width=" + Q + "64" + Q + " height=" + Q + "64" + Q + " rx=" + Q + "22" + Q + " fill=" + Q + "#6366f1" + Q + "/><text x=" + Q + "32" + Q + " y=" + Q + "43" + Q + " font-size=" + Q + "34" + Q + " text-anchor=" + Q + "middle" + Q + ">🎮</text></svg>";
 put("favicon.svg", FAVICON);
 
@@ -245,6 +249,14 @@ const PRECACHE_SRC = path.join(PUBLIC_DIR, "precache.json");
 if (fs.existsSync(PRECACHE_SRC)) put("precache.json", fs.readFileSync(PRECACHE_SRC));
 else console.log("!! 缺少 public/precache.json（PWA 真离线清单）：先跑 node tools/gen-precache.mjs");
 for (const ic of PWA_ICONS) put("icons/" + ic, fs.readFileSync(path.join(PUBLIC_DIR, "icons", ic)));
+/* 静态封面（第二十批）：卡片 / 排行榜小图 / 首页 hero 都引 /covers/<slug>.svg，
+   由 tools/gen-covers.mjs 生成（连同一份 manifest.json），产物里必须齐 */
+const COVERS_DIR = path.join(PUBLIC_DIR, "covers");
+if (fs.existsSync(COVERS_DIR)) {
+  for (const f of fs.readdirSync(COVERS_DIR).sort()) put("covers/" + f, fs.readFileSync(path.join(COVERS_DIR, f)));
+} else {
+  console.log("!! 缺少 public/covers/（静态封面）：先跑 node tools/gen-covers.mjs");
+}
 
 const HEAD = /<head[^>]*>/i;
 for (const g of games) {
@@ -336,6 +348,9 @@ if (CF_MODE) {
     "/cover/*",
     "  Cache-Control: public, max-age=86400",
     "",
+    "/covers/*",
+    "  Cache-Control: public, max-age=604800",
+    "",
     "/games/*",
     "  Cache-Control: public, max-age=3600",
     "",
@@ -376,6 +391,12 @@ if (CF_MODE) {
   if (rels.indexOf("static/js/app-static.js") < 0) problems.push("没有产出 static/js/app-static.js");
   if (rels.indexOf("static/js/gamepad.js") < 0) problems.push("没有产出 static/js/gamepad.js（手柄支持）");
   if (rels.indexOf("static/js/net-play.js") < 0) problems.push("没有产出 static/js/net-play.js（联机对战小部件）");
+  if (rels.indexOf("static/js/offline-queue.js") < 0) problems.push("没有产出 static/js/offline-queue.js（离线队列）");
+  if (rels.indexOf("static/js/offline-wire.js") < 0) problems.push("没有产出 static/js/offline-wire.js（离线兜底接线）");
+  const coverRels = rels.filter(function (r) { return r.indexOf("covers/") === 0 && /[.]svg$/.test(r); });
+  if (coverRels.length < games.length) {
+    problems.push("covers/ 只导出了 " + coverRels.length + " 张封面（应为 " + games.length + " 张，先跑 node tools/gen-covers.mjs）");
+  }
   /* PWA 三件套：页面 head（src/views.js）无条件链了 /manifest.webmanifest 与 apple-touch-icon，
      产物里必须都有，否则静态托管上就是 404 */
   if (rels.indexOf("manifest.webmanifest") < 0) problems.push("没有产出 manifest.webmanifest（PWA）");
@@ -395,6 +416,8 @@ if (CF_MODE) {
   if (idxHtml.indexOf(base + "rank/today.html") < 0) problems.push("首页导航的排行榜链接没有指向 " + base + "rank/today.html");
   if (idxHtml.indexOf(base + "manifest.webmanifest") < 0) problems.push("首页 head 的 manifest 链接没有指向 " + base + "manifest.webmanifest");
   if (idxHtml.indexOf(base + "icons/apple-touch-icon-180.png") < 0) problems.push("首页 head 的 apple-touch-icon 没有指向 " + base + "icons/apple-touch-icon-180.png");
+  if (idxHtml.indexOf(base + "covers/") < 0) problems.push("首页封面没带 base 前缀（应为 " + base + "covers/…）——子路径部署会 404");
+  if (idxHtml.indexOf(base + "static/js/offline-wire.js") < 0) problems.push("首页没引 " + base + "static/js/offline-wire.js（离线兜底）");
   const gpWant = base + "static/js/gamepad.js";
   const gamePages = rels.filter(function (r) { return r.indexOf("games/") === 0 && /index[.]html$/.test(r); });
   if (!gamePages.length) problems.push("没有产出任何游戏本体页");
@@ -438,7 +461,7 @@ if (CF_MODE) {
     problems.forEach(function (p) { console.error("  - " + p); });
     process.exitCode = 1;
   } else {
-    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js、手柄脚本与 PWA 三件套已随产物导出");
+    console.log("  自检：app.js 是动态前端、app-static.js 已就位、全部 HTML 只引 app-static.js、手柄脚本 / 离线兜底 / 封面与 PWA 三件套已随产物导出");
   }
 })();
 

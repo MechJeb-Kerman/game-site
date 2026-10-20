@@ -16,6 +16,7 @@ import * as fguard from '../src/forum-guard.js';
 // 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
 import { PORTAL_HOSTS } from '../src/sites.js';
 import * as play from './play-store.js';
+import * as recordExport from '../src/record-export.js';
 import * as social from './social.js';
 import { dayKey, makeupCheck } from '../src/daily.js';
 import { replayCardSvg, profileCardSvg, dailyCardSvg } from '../src/cards.js';
@@ -26,6 +27,7 @@ import * as attach from './attachments.js';
 import * as rules from '../src/rules/index.js';
 import { seasonOf } from '../src/elo.js';
 import * as push from './push.js';
+import { grantRewards } from './rewards.js';
 
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
@@ -1398,6 +1400,10 @@ async function apiPlay(ctx, params) {
   if (plays === null) return okJson(ctx, { error: 'not_found' }, 404);
   // 每日挑战：当天那款游戏收到一次播放事件就算打卡（服务端判定，前端不申报）
   const daily = ctx.user ? await social.markDaily(ctx.db, ctx.user.id, slug, Date.now()) : null;
+  // 真打出今天这一笔时才落奖励流水（幂等），与 Express 线的 /api/games/:slug/play 同一处
+  if (daily && daily.fresh) {
+    try { await grantRewards(ctx.db, ctx.user.id, await social.dailyStats(ctx.db, ctx.user.id)); } catch { /* 发奖失败不影响打卡 */ }
+  }
   return okJson(ctx, { counted: true, plays: plays, daily: daily && daily.fresh ? daily.day : '' });
 }
 
@@ -1837,6 +1843,63 @@ async function adminForumMuteById(ctx, params) {
   return forumTo(ctx, '/forum/admin', 'done');
 }
 
+/* ---------- 附件审核（第十四批，与 /forum/admin 同一套权限） ---------- */
+
+/** 附件审核只认这几个错误码，别的按 default 处理（照 FORUM_ERR 归一的老规矩） */
+const ATTACH_ERR_CODES = ['not_found', 'bad_action', 'forbidden', 'reason_required'];
+
+/** 附件审核页的统一回跳：不复用 forumTo —— 那几个新码会被它归一成 default，翻不出人话 */
+function attachTo(ctx, ok, err) {
+  if (ok) return redirectTo(ctx, withQuery('/forum/admin/attachments', 'ok=' + encodeURIComponent(ok)));
+  if (err) {
+    const code = ATTACH_ERR_CODES.indexOf(String(err)) >= 0 ? String(err) : 'default';
+    return redirectTo(ctx, withQuery('/forum/admin/attachments', 'err=' + encodeURIComponent(code)));
+  }
+  return redirectTo(ctx, '/forum/admin/attachments');
+}
+
+async function pageAttachAdmin(ctx) {
+  const stats = await attach.attachmentModerationStats(ctx.db);
+  if (!stats || stats.ok !== true) {
+    return plainText(ctx, '附件存储没建起来，审核页用不了：' + String((stats && (stats.error || stats.hint)) || 'unknown'), 503);
+  }
+  return okHtml(ctx, ui.attachAdminPage({
+    origin: ctx.origin, user: ctx.user, stats: stats,
+    pending: await attach.listPendingAttachments(ctx.db, attach.ATTACH_REVIEW_RULES.queueLimit, 0),
+    rejected: await attach.listRejectedAttachments(ctx.db, 30, 0),
+    ok: String(ctx.url.searchParams.get('ok') || ''),
+    err: String(ctx.url.searchParams.get('err') || '')
+  }));
+}
+
+/** 手动跑一遍自动规则：只拒不给通过，拿不准的留在队列里 */
+async function adminAttachAuto(ctx) {
+  const list = await attach.listPendingAttachments(ctx.db, attach.ATTACH_REVIEW_RULES.queueLimit, 0);
+  if (!list || list.ok !== true) return attachTo(ctx, null, 'not_found');
+  const items = list.items || [];
+  let rejected = 0;
+  for (const a of items) {
+    const r = await attach.autoReviewAttachmentInDb(ctx.db, a.id);
+    if (r && r.status === 'rejected') rejected += 1;
+  }
+  await data.logAudit(ctx.db, ctx.user, 'attach.auto', String(items.length),
+    '自动拒 ' + rejected + ' 件，留人工 ' + (items.length - rejected) + ' 件');
+  return attachTo(ctx, 'auto', null);
+}
+
+/** 人工复核：通过 / 拒绝（拒绝必须给理由，moderateAttachment 自己会把关） */
+async function adminAttachReview(ctx, params) {
+  const id = Number(params.id) || 0;
+  const b = await readBody(ctx.request);
+  const action = String(b.action || '');
+  const reason = String(b.reason || '').trim().slice(0, 80);
+  const r = await attach.moderateAttachment(ctx.db, id, action, { moderatorId: ctx.user.id, reason: reason });
+  if (r && r.error) return attachTo(ctx, null, r.error);
+  await data.logAudit(ctx.db, ctx.user, 'attach.review', String(id),
+    (action === 'approve' ? '通过' : '拒绝') + (reason ? '：' + reason : ''));
+  return attachTo(ctx, 'done', null);
+}
+
 /* ================= 联机对战（房间 + 走法中继） ================= */
 //
 // 与 Express 线 server.js 的 /api/play/* 一一对应：服务端负责「轮流 + 转发走法」，
@@ -1924,6 +1987,11 @@ async function pageDaily(ctx) {
   const day = dayKey();
   const slug = await social.dailySlug(ctx.db, day);
   const stats = ctx.user ? await social.dailyStats(ctx.db, ctx.user.id) : null;
+  // 奖励流水（第十四批）：与 Express 线的 /daily 同一处补记，幂等；ledger 直接当展示数据
+  let ledger = null;
+  if (ctx.user && stats) {
+    try { ledger = (await grantRewards(ctx.db, ctx.user.id, stats)).summary; } catch { ledger = null; }
+  }
   return okHtml(ctx, ui.dailyPage({
     origin: ctx.origin,
     user: ctx.user,
@@ -1931,6 +1999,7 @@ async function pageDaily(ctx) {
     game: await data.getGame(ctx.db, slug),
     // dailyStats 的返回形状就是视图要的形状（含 calendar / perfect / makeupUsed），整份透传
     stats: stats || null,
+    ledger,
     board: await social.dailyBoard(ctx.db, day, 12),
     notice: String(ctx.url.searchParams.get('notice') || '')
   }));
@@ -2383,6 +2452,77 @@ async function apiReplays(ctx) {
   return res;
 }
 
+/**
+ * 棋谱专用格式导出（第十五批）：/replays/export.sgf、/replays/export.pgn、/replays/export.tar.gz。
+ * 筛选参数与 JSON 版一致、共用同一把频率锁；列表只回行数据，所以逐条 play.replay(db, id) 取完整棋谱。
+ * Workers 没有 zlib：打包走 tarOf()（纯 tar、同步）再用 CompressionStream('gzip') 压一遍；
+ * 运行时万一没有 CompressionStream 就回未压缩的 .tar（头里标 X-Replay-Export-Packed: plain）。
+ */
+async function gzipBytes(bytes, level) {
+  if (typeof CompressionStream !== 'function') return null;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch (e) {
+    return null;
+  }
+}
+async function exportReplays(ctx) {
+  const ip = ctx.request.headers.get('cf-connecting-ip') || 'local';
+  if (!replayWindow('replay-export:' + ip, 60, 60000)) {
+    return okJson(ctx, { ok: false, error: 'busy', hint: '导出太频繁了，歇一分钟再来' }, 429);
+  }
+  const ext = String(ctx.url.pathname).replace('/replays/export.', '');
+  const q = replayFiltersFor(ctx);
+  const raw = ctx.url.searchParams.get('limit');
+  const asked = raw == null || String(raw).trim() === '' ? NaN : Number(raw);
+  const limit = Math.min(Math.max(Number.isFinite(asked) ? Math.floor(asked) : 200, 1), play.REPLAY_MAX_LIMIT);
+  const list = await play.replayList(ctx.db, {
+    game: q.filters.game,
+    player: q.filters.player,
+    result: q.filters.result,
+    from: q.filters.from,
+    to: q.filters.to,
+    mine: q.mine,
+    ownerId: q.ownerId,
+    limit: limit,
+    offset: 0,
+    maxLimit: play.REPLAY_MAX_LIMIT
+  });
+  const rows = (list && list.items) || [];
+  const records = [];
+  for (const row of rows) {
+    const rec = await play.replay(ctx.db, Number(row && row.id) || 0);
+    if (rec) records.push(rec);
+  }
+  const stamp = replayStamp();
+  const total = Number((list && list.total) || 0);
+  if (ext === 'tar.gz') {
+    // 注入「原样返回」的 gzip 替身：这里要的是它按记录切好的 tarEntries 与未压缩字节，
+    // 真正的 gzip 交给下面的 CompressionStream（Workers 里没有 zlib）
+    const pack = await recordExport.exportArchive(records, { format: 'auto', name: 'replays-' + stamp, gzip: (b) => b });
+    // 筛到没有可导出的对局不算故障：照样出一个合法（空）包 + count=0 头，见 server.js 同名注释
+    if (!pack) return okJson(ctx, { ok: false, error: 'export_failed' }, 500);
+    const tar = pack.archive;
+    const gz = await gzipBytes(tar);
+    const body = gz || tar;
+    const res = new Response(body, { status: 200 });
+    res.headers.set('content-type', gz ? 'application/gzip' : 'application/x-tar');
+    res.headers.set('cache-control', 'no-store');
+    res.headers.set('x-replay-export', 'count=' + pack.count + '; skipped=' + pack.skipped + '; total=' + total + '; packed=' + (gz ? 'gzip' : 'plain'));
+    res.headers.set('content-disposition', 'attachment; filename=replays-' + stamp + (gz ? '.tar.gz' : '.tar'));
+    return res;
+  }
+  const out = recordExport.exportMany(records, { format: ext });
+  if (!out) return okJson(ctx, { ok: false, error: 'export_failed' }, 500);
+  const res = new Response(out.text, { status: 200 });
+  res.headers.set('content-type', ext === 'sgf' ? 'application/x-go-sgf; charset=utf-8' : 'application/x-chess-pgn; charset=utf-8');
+  res.headers.set('cache-control', 'no-store');
+  res.headers.set('x-replay-export', 'count=' + out.count + '; skipped=' + out.skipped + '; total=' + total);
+  res.headers.set('content-disposition', 'attachment; filename=replays-' + stamp + '.' + ext);
+  return res;
+}
+
 /** 棋谱 OG 位图：非法 id 给 400（地址写错了），棋谱没了给 404 */
 async function ogReplay(ctx, params) {
   const id = Number(params.id);
@@ -2526,6 +2666,9 @@ const ROUTES = [
   { m: 'POST', p: '/forum/admin/blacklist/:id/delete', fn: adminForumBlacklistDel, need: 'admin' },
   { m: 'POST', p: '/forum/admin/users/mute', fn: adminForumMuteByName, need: 'admin' },
   { m: 'POST', p: '/forum/admin/users/:id/mute', fn: adminForumMuteById, need: 'admin' },
+  { m: 'GET', p: '/forum/admin/attachments', fn: pageAttachAdmin, need: 'admin' },
+  { m: 'POST', p: '/forum/admin/attachments/auto', fn: adminAttachAuto, need: 'admin' },
+  { m: 'POST', p: '/forum/admin/attachments/:id/review', fn: adminAttachReview, need: 'admin' },
 
   // 联机对战：房间与走法中继（五子棋 / 中国象棋 / 国际象棋等共用）
   { m: 'POST', p: '/api/play/create', fn: apiPlayCreate },
@@ -2539,6 +2682,9 @@ const ROUTES = [
   { m: 'POST', p: '/api/play/watch', fn: apiPlayWatch },
   { m: 'GET', p: '/api/replays', fn: apiReplays },
   { m: 'GET', p: '/replays/export.json', fn: apiReplays },
+  { m: 'GET', p: '/replays/export.sgf', fn: exportReplays },
+  { m: 'GET', p: '/replays/export.pgn', fn: exportReplays },
+  { m: 'GET', p: '/replays/export.tar.gz', fn: exportReplays },
   { m: 'GET', p: '/api/replays/:id', fn: apiReplay },
 ];
 
@@ -2659,7 +2805,7 @@ const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略 + 真离�
  *    按 urls 逐条预缓存；单条失败只计数、不中断（避开 cache.addAll 的全有或全无语义）。
  *  - 导航：已预缓存的页面（20 款游戏页 + 首页）走 stale-while-revalidate（先给缓存、后台更新），
  *    其余页面保持 network-first；网络失败时依次回落「该页面自己的缓存 → 离线壳 → 内置兜底页」。
- *  - 静态资源（/static/ /games/ /icons/ /cover/ /manifest.webmanifest）：stale-while-revalidate。
+ *  - 静态资源（/static/ /games/ /icons/ /cover/ /covers/ /manifest.webmanifest）：stale-while-revalidate。
  *
  * 两层版本号：
  *  - SW_VERSION 只管「页面 ⇄ SW 的握手协议」，不随内容改（worker/app.js 里的内联副本由
@@ -2670,8 +2816,8 @@ const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略 + 真离�
  */
 
 /* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
-/* 33 条 · 851.3 KB · 最大单文件 95.8 KB */
-const PRECACHE_VERSION = 'p1-95c403f1a492';
+/* 35 条 · 883.4 KB · 最大单文件 95.8 KB */
+const PRECACHE_VERSION = 'p1-cc9bf9cfc401';
 const PRECACHE_FALLBACK = [
   '/',
   '/games/2048/index.html',
@@ -2698,6 +2844,8 @@ const PRECACHE_FALLBACK = [
   '/static/js/app.js',
   '/static/js/gamepad.js',
   '/static/js/net-play.js',
+  '/static/js/offline-queue.js',
+  '/static/js/offline-wire.js',
   '/static/css/style.css',
   '/icons/apple-touch-icon-180.png',
   '/icons/icon-192.png',
@@ -2741,6 +2889,7 @@ const STATIC_PATHS = [
   /^\\/games\\//,
   /^\\/icons\\//,
   /^\\/cover\\//,
+  /^\\/covers\\//,
   /^\\/manifest\\.webmanifest$/
 ];
 
@@ -3172,6 +3321,8 @@ function pwaResponse(ctx) {
 
 const ASSET_CACHE = (pathname) => {
   if (/^\/static\//.test(pathname)) return 'public, max-age=604800';
+  /* 静态封面（第二十批）：与 Express 线 /covers 的 maxAge 7d 对齐 */
+  if (/^\/covers\//.test(pathname)) return 'public, max-age=604800';
   if (/^\/games\//.test(pathname)) return 'public, max-age=3600';
   if (pathname === '/precache.json') return 'public, max-age=600';
   return 'public, max-age=3600';
@@ -3353,7 +3504,9 @@ async function route(ctx) {
     if (asset) return asset;
   }
 
-  if (/^\/static\//.test(pathname) || /^\/games\//.test(pathname)) {
+  /* /covers/* 与 /static、/games 一样直接交给静态资源层；
+     漏了它会掉进下面的 ROUTES 循环 → 404 页（本机 Worker 线因此红过三条） */
+  if (/^\/static\//.test(pathname) || /^\/games\//.test(pathname) || /^\/covers\//.test(pathname)) {
     const asset = await serveAsset(ctx);
     if (asset) return asset;
     if (pathname === '/static/img/og.svg') {

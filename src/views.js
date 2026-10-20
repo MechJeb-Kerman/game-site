@@ -7,6 +7,8 @@ import { makeupCheck } from './daily.js';
 import { rewardsOf, rewardSummary } from './rewards.js';
 // 导航页的数据源：fishport.cn 下能打开的站点清单（三条线共用一份）
 import { groupedSites, siteUrl } from './sites.js';
+// 20 款游戏的静态封面（public/covers/*.svg）：命中就用真封面，没命中回落动态 /cover/:slug.svg
+import { coverFor } from './covers.js';
 
 export const SITE = {
   name: '趣玩小游戏',
@@ -202,6 +204,7 @@ ${bare ? '' : header(user)}
 <main id="main">${content}</main>
 ${bare ? '' : footer()}
 <script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=9" defer></script>
+<script src="/static/js/offline-wire.js?v=9" defer></script>
 </body>
 </html>`;
 }
@@ -282,7 +285,7 @@ export function rankPage({ origin, user = null, kind = 'today', label = '', desc
         return '<li class="rk-row">' +
           '<span class="rk-no n' + Math.min(3, r.rank) + '">' + r.rank + '</span>' +
           '<a class="rk-cover" href="/game/' + esc(r.slug) + '" tabindex="-1" aria-hidden="true" style="--a:' + esc(r.accent || '#6366f1') + ';--b:' + esc(r.accent2 || '#8b5cf6') + '">' +
-            '<img src="/cover/' + esc(r.slug) + '.svg" alt="" loading="lazy" decoding="async" width="120" height="75"></a>' +
+            '<img src="' + esc((coverFor(r.slug) || {}).src || '/cover/' + r.slug + '.svg') + '" alt="" loading="lazy" decoding="async" width="120" height="75"></a>' +
           '<span class="rk-body"><a class="rk-title" href="/game/' + esc(r.slug) + '">' + esc(r.emoji || '🎮') + ' ' + esc(r.title) + '</a>' +
             '<small class="dim">' + sub + '</small></span>' +
           '<span class="rk-val"><b>' + (metric === 'rating' ? Number(r.value).toFixed(1) : fmtNum(r.value)) + '</b><small>' + (BOARD_UNIT[metric] || '') + '</small></span>' +
@@ -333,7 +336,7 @@ export function gameCard(g) {
   const scoreTip = votes ? votes + ' 人评分' : '还没有人评分';
   return `<a class="card" href="/game/${esc(g.slug)}" data-slug="${esc(g.slug)}" data-title="${esc(g.title)}" data-sub="${esc(g.subtitle || '')}" data-tags="${esc(Array.isArray(g.tags) ? g.tags.join(' ') : '')}" data-plays="${Number(g.plays) || 0}" data-rating="${Number(g.rating) || 0}" data-votes="${votes}" data-created="${esc(String(g.created_at || '').slice(0, 10))}">
   <span class="card-cover" style="--a:${esc(g.accent)};--b:${esc(g.accent2)}">
-    <img src="/cover/${esc(g.slug)}.svg" alt="${esc(g.title)}封面" loading="lazy" decoding="async" width="320" height="200">
+    <img src="${esc((coverFor(g.slug) || {}).src || '/cover/' + g.slug + '.svg')}" alt="${esc((coverFor(g.slug) || {}).alt || g.title + '封面')}" loading="lazy" decoding="async" width="320" height="200">
     <span class="card-badge">${esc(g.category ? g.category.icon + ' ' + g.category.name : '游戏')}</span>
   </span>
   <span class="card-body">
@@ -412,7 +415,7 @@ export function homePage({ origin, featured, hot, newest, categories, tags, stat
           <p class="hero-stat">已累计 <b>${fmtNum(stats.plays)}</b> 次游玩 · 共 <b>${stats.games}</b> 款游戏</p>
         </div>
         <a class="hero-art" href="/game/${esc(featured.slug)}" tabindex="-1" aria-hidden="true">
-          <img src="/cover/${esc(featured.slug)}.svg" alt="" width="420" height="262">
+          <img src="${esc((coverFor(featured.slug) || {}).src || '/cover/' + featured.slug + '.svg')}" alt="" width="420" height="262">
         </a>
       </section>`
     : '';
@@ -1818,8 +1821,10 @@ export function forumThreadPage({ origin, user = null, thread, forum = null, pos
       ? gateBox({ error: 'login' }, base, '/t/' + Number(thread.id))
       : (gate && !gate.ok)
         ? gateBox(gate, base, '/t/' + Number(thread.id))
-        : '<form class="fpost-form" id="reply" method="post" enctype="multipart/form-data" action="' + base + '/t/' + Number(thread.id) + '/reply">' +
+        // data-offline：断网时由 /static/js/offline-wire.js 接管，先入队、联网后自动补传
+        : '<form class="fpost-form" id="reply" method="post" enctype="multipart/form-data" data-offline="这条回复" action="' + base + '/t/' + Number(thread.id) + '/reply">' +
           antispamFields(form || {}) +
+          '<span class="dim" data-offline-note hidden></span>' +
           '<input type="hidden" name="parent_id" value="' + (replyTo ? Number(replyTo.id) : 0) + '">' +
           (replyTo ? '<p class="dim">正在回复' + (Number(replyTo.floor) ? ' #' + Number(replyTo.floor) + ' 楼' : '') + ' @' + esc(replyTo.name || '') +
             '（<a href="' + base + '/t/' + Number(thread.id) + '#reply">取消</a>）</p>' : '') +
@@ -1851,7 +1856,8 @@ export function forumNewPage({ origin, user = null, forums = [], forumSlug = '',
     ? gateBox({ error: 'login' }, base, '/new')
     : (gate && !gate.ok)
       ? gateBox(gate, base, '/new')
-      : `<form class="fpost-form" method="post" enctype="multipart/form-data" action="${base}/new">
+      : `<form class="fpost-form" method="post" enctype="multipart/form-data" data-offline="这个主题" action="${base}/new">
+    <span class="dim" data-offline-note hidden></span>
     ${antispamFields(form || {})}
     <label>板块<select name="forum">${opts}</select></label>
     <label>标题<input name="title" value="${v('title')}" required maxlength="80" placeholder="一句话说清楚问题或话题"></label>
@@ -1930,7 +1936,7 @@ export function forumAdminPage({ origin, user, stats = {}, pendingThreads = [], 
   <h1>🛡 论坛管理</h1>
   <p class="dim">待审主题 ${fmtNum(stats.pendingThreads)} · 待审回复 ${fmtNum(stats.pendingPosts)} · 待处理举报 ${fmtNum(stats.reports)} · 板块 ${fmtNum(stats.forums)} · 主题 ${fmtNum(stats.threads)} · 回复 ${fmtNum(stats.posts)} · 今日新增 ${fmtNum(stats.today)} · 被禁言 ${fmtNum(stats.muted)}</p>
   ${notice ? '<p class="forum-notice">' + esc(notice) + '</p>' : ''}
-  <p><a class="btn" href="/forum">← 回论坛</a> <a class="btn" href="/admin">→ 站点后台</a></p>
+  <p><a class="btn" href="/forum">← 回论坛</a> <a class="btn" href="/forum/admin/attachments">🖼 附件审核</a> <a class="btn" href="/admin">→ 站点后台</a></p>
   <section class="sec"><div class="sec-head"><h2>待审主题</h2></div>${table(['内容', '操作'], pendingThreads.map(thRow), '没有待审主题')}</section>
   <section class="sec"><div class="sec-head"><h2>待审回复</h2></div>${table(['内容', '操作'], pendingPosts.map(pRow), '没有待审回复')}</section>
   <section class="sec"><div class="sec-head"><h2>待处理举报</h2></div>${table(['被举报内容', '举报人', '操作'], reports.map(rRow), '没有待处理举报')}</section>
@@ -1962,6 +1968,76 @@ export function forumAdminPage({ origin, user, stats = {}, pendingThreads = [], 
   return layout({ origin, user, title: '论坛管理', description: '论坛审核后台', path: '/forum/admin', content, noindex: true });
 }
 
+/* ---------- 附件审核（第十四批） ---------- */
+
+/** 审核状态 / 来源 → 人话 */
+const ATTACH_REVIEW_LABEL = { pending: '待审', approved: '已通过', rejected: '已拒绝' };
+const ATTACH_SOURCE_LABEL = { auto: '自动规则', manual: '人工', classifier: '分类器' };
+/** 回跳提示：只认识自己这几个码，别的码按「没成功」显示（不把任意文本照到页面上） */
+const ATTACH_OK_MSG = { done: '✅ 处理好了。', auto: '🤖 自动规则跑完一遍，拿不准的都留在待审队列里。' };
+const ATTACH_ERR_MSG = {
+  not_found: '这条附件不在了',
+  reason_required: '拒绝要填一个理由',
+  forbidden: '当前账号没有审核权限',
+  bad_action: '动作不对，请用页面上的按钮',
+  default: '这次操作没成功，稍后再试'
+};
+
+/**
+ * 附件审核页：图片 / 文件的人工复核队列。
+ * 数据来自 src/attachments.js 的 listPending / listRejected / moderationStats（Worker 线同名同形）。
+ * 口径：拒绝 = 软删 + 隐藏（记录留着，能翻案）；待审不影响展示。
+ */
+export function attachAdminPage({ origin, user, stats = {}, pending = {}, rejected = {}, ok = '', err = '' }) {
+  const itemsOf = (box) => (box && Array.isArray(box.items) ? box.items : []);
+  const okMsg = ATTACH_OK_MSG[String(ok || '')] || '';
+  const errMsg = ATTACH_ERR_MSG[String(err || '')] || (err ? ATTACH_ERR_MSG.default : '');
+  const thumb = (a) => {
+    const id = Number(a.id) || 0;
+    if (String(a.mime || '').indexOf('image/') !== 0) return '<span class="dim">📎 不是图片</span>';
+    if (String(a.status || '') === 'deleted') return '<span class="dim">（已隐藏，没法预览）</span>';
+    return '<a href="/ugc/a/' + id + '" target="_blank" rel="noopener"><img src="/ugc/a/' + id +
+      '" alt="" loading="lazy" style="width:120px;height:80px;object-fit:cover;border-radius:6px"></a>';
+  };
+  const place = (a) => {
+    if (Number(a.thread_id)) return '<a href="/forum/t/' + Number(a.thread_id) + '" target="_blank" rel="noopener">主题 #' + Number(a.thread_id) + '</a>';
+    if (Number(a.post_id)) return '回复 #' + Number(a.post_id);
+    return '<span class="dim">还没挂到帖子上</span>';
+  };
+  const stime = (v) => esc(String(v || '').slice(0, 16).replace('T', ' '));
+  const modForm = (a) => '<form class="inline" method="post" action="/forum/admin/attachments/' + (Number(a.id) || 0) + '/review">' +
+    '<input name="reason" maxlength="80" placeholder="拒绝理由（拒绝必填）" style="width:150px">' +
+    '<button class="btn btn-sm ok" type="submit" name="action" value="approve">✅ 通过</button>' +
+    '<button class="btn btn-sm danger" type="submit" name="action" value="reject">✖ 拒绝</button></form>';
+  const row = (a) => '<tr><td>' + thumb(a) + '</td>' +
+    '<td><b>' + esc(a.filename || '附件') + '</b><br><small class="dim">' + esc(a.mime || '—') + ' · ' + fmtSize(a.bytes) +
+    (a.review_hidden ? ' · <span class="pill">已隐藏</span>' : '') + '</small></td>' +
+    '<td><small class="dim">用户 #' + (Number(a.owner_id) || 0) + '<br>' + place(a) + '<br>' + stime(a.created_at) + '</small></td>' +
+    '<td><small class="dim">' + esc(a.review_reason || '—') + '<br>' +
+    (a.review_source ? esc(ATTACH_SOURCE_LABEL[a.review_source] || a.review_source) + ' · ' + stime(a.review_at) : '—') + '</small></td>' +
+    '<td class="act">' + modForm(a) + '</td></tr>';
+  const table = (rows, empty) => rows.length
+    ? '<table class="tbl"><thead><tr><th>预览</th><th>文件</th><th>来自</th><th>审核记录</th><th>操作</th></tr></thead><tbody>' + rows.join('') + '</tbody></table>'
+    : '<p class="cmt-empty">' + esc(empty) + '</p>';
+  const content = `<div class="wrap">
+  <h1>🖼 附件审核</h1>
+  <p class="dim">共 ${fmtNum(stats.total)} 件 · 待审 ${fmtNum(stats.pending)}（还挂在帖子上的 ${fmtNum(stats.pending_live)}）· 已通过 ${fmtNum(stats.approved)} · 已拒绝 ${fmtNum(stats.rejected)} · 已隐藏 ${fmtNum(stats.hidden)} · 占用 ${fmtSize(stats.bytes)}（待审 ${fmtSize(stats.bytes_pending)}）</p>
+  <p class="dim">存储驱动 <code>${esc(stats.driver || 'fs')}</code>；<b>拒绝 = 软删 + 隐藏</b>：记录和内容都留着，随时能点「通过」翻案；<b>待审不影响展示</b>，只有被拒的内容会被 /ugc/a/ 挡掉。</p>
+  ${okMsg ? '<p class="forum-notice">' + esc(okMsg) + '</p>' : ''}
+  ${errMsg ? '<p class="forum-notice">' + esc(errMsg) + '</p>' : ''}
+  <p><a class="btn" href="/forum/admin">← 回论坛管理</a> <a class="btn" href="/forum">论坛首页</a></p>
+  <section class="sec"><div class="sec-head"><h2>待审队列</h2><span class="pill">${fmtNum(pending.total)} 件</span></div>
+    <form class="inline" method="post" action="/forum/admin/attachments/auto"><button class="btn" type="submit">🤖 跑一遍自动规则</button></form>
+    <p class="dim">自动规则只拒不给通过：体积、类型、图片尺寸里有任何一条不合规才会自动拒，读不出尺寸的一律留在队列里等人工。</p>
+    ${table(itemsOf(pending).map(row), '待审队列是空的')}
+  </section>
+  <section class="sec"><div class="sec-head"><h2>最近被拒</h2><span class="pill">${fmtNum(rejected.total)} 件</span></div>
+    ${table(itemsOf(rejected).map(row), '没有被拒的附件')}
+  </section>
+</div>`;
+  return layout({ origin, user, title: '附件审核', description: '论坛附件人工复核后台', path: '/forum/admin/attachments', content, noindex: true });
+}
+
 /* ---------- 每日挑战 ---------- */
 
 /** 最近 n 天的日期键（本地时区），用于打卡日历；end 为空表示到今天就结束 */
@@ -1989,7 +2065,7 @@ const DAILY_NOTICE_ERR = {
   slug_mismatch: '这一天的题目对不上，没法补做。'
 };
 
-export function dailyPage({ origin, user = null, day = '', game = null, stats = null, board = null, notice = '' }) {
+export function dailyPage({ origin, user = null, day = '', game = null, stats = null, ledger = null, board = null, notice = '' }) {
   const s = stats || { total: 0, streak: 0, doneToday: false, done: [], slug: '' };
   const done = new Set((s.done || []).map((d) => String(d).slice(0, 10)));
   const loginHref = '/login?next=' + encodeURIComponent('/daily');
@@ -2039,9 +2115,11 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
       // 只有「漏掉的、还在补做窗口内的」那一格才出按钮（今天直接玩就算打卡，不走补做）
       const canMakeup = user && !isDone && d !== day && makeupCheck(d) === null;
       if (!canMakeup) return chip;
-      return chip + '<form class="chip-act" method="post" action="/daily/makeup">' +
+      // data-offline：断网时由 /static/js/offline-wire.js 接管，先入队、联网后自动补传
+      return chip + '<form class="chip-act" method="post" action="/daily/makeup" data-offline="这次补做打卡">' +
         '<input type="hidden" name="day" value="' + esc(d) + '">' +
-        '<button class="chip chip-btn" type="submit" title="补做 ' + esc(d) + ' 的题目">🔁 补做</button></form>';
+        '<button class="chip chip-btn" type="submit" title="补做 ' + esc(d) + ' 的题目">🔁 补做</button>' +
+        '<span class="dim" data-offline-note hidden></span></form>';
     }).join('') + '</div>';
 
   // 打卡奖励（src/rewards.js）：8 档，与徽章各算一套经验，这里只展示快照进度
@@ -2057,6 +2135,35 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
           ? '下一个：' + rw.next.icon + ' ' + esc(rw.next.title) + '，还差 ' + fmtNum(rw.next.left) + '（' + Number(rw.next.percent || 0) + '%）'
           : '八档奖励全部拿满，接下来只剩超越自己 🏆') +
         '。奖励经验与徽章经验可叠加，会一起算进个人主页的等级。</p>' +
+      '</div>'
+    : '';
+
+  // 奖励流水（第十四批，src/rewards.js 的 user_rewards）：与上面那栏快照不同，这一栏只增不减
+  const led = ledger && Number(ledger.total) > 0 ? ledger : null;
+  const defByKey = new Map(rewardsOf(s).map((r) => [r.key, r]));
+  const ledRows = led ? (led.tiers || []).slice(-6).reverse() : [];
+  const ledgerBox = user
+    ? '<div class="panel">' +
+        '<div class="sec-head"><h2>🏆 奖励流水</h2><span class="pill">' +
+          (led ? fmtNum(led.owned) + ' 项 · ' + fmtNum(led.xp) + ' 经验' : '还没有记录') + '</span></div>' +
+        (led && led.titles && led.titles.length
+          ? '<div class="chips">' + led.titles.map((t) => '<span class="chip">🎖️ ' + esc(t) + '</span>').join('') + '</div>'
+          : '<p class="dim" style="margin:0">第一次达成上面任一档时会自动记一笔。</p>') +
+        (ledRows.length
+          ? '<div class="table-wrap" style="margin-top:12px"><table class="tbl" style="min-width:340px"><thead><tr><th>奖励</th><th>次数</th><th>最近一次</th><th>经验</th></tr></thead><tbody>' +
+            ledRows.map((row) => {
+              const def = defByKey.get(String(row.tier)) || {};
+              return '<tr><td>' + (def.icon || '🏅') + ' ' + esc(def.title || String(row.tier)) + '</td>' +
+                '<td>' + fmtNum(row.count) + (String(row.kind) === 'perfect' ? ' 个月' : ' 次') + '</td>' +
+                '<td>' + esc(String(row.last_day || '')) + '</td>' +
+                '<td>+' + fmtNum(row.amount) + '</td></tr>';
+            }).join('') +
+            '</tbody></table></div>'
+          : '') +
+        (led && led.tiers && led.tiers.length > ledRows.length
+          ? '<p class="dim" style="margin:8px 0 0">共 ' + fmtNum(led.tiers.length) + ' 档，这里只列最近 6 档。</p>'
+          : '') +
+        '<p class="dim" style="margin:12px 0 0">这一栏是「拿到就不掉」的发放记录——断签、进度回落都不会把它抹掉，所以它和上一栏会变的快照对不上是正常的。</p>' +
       '</div>'
     : '';
 
@@ -2080,6 +2187,7 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
     ${cal}
   </div>
   ${rewardBox}
+  ${ledgerBox}
   <div class="panel">
     <div class="sec-head"><h2>🏅 今日打卡榜</h2><span class="pill">${boardRows.length} / ${(board && board.count) || boardRows.length} 人</span></div>
     ${boardBox}
@@ -2721,6 +2829,11 @@ export function replaysPage({ origin, user = null, items = [], total = 0, game =
     '<button class="btn btn-sm" type="submit">筛选</button>' +
     (anyFilter ? '<a class="btn btn-sm" href="/replays">重置</a>' : '') +
     '<a class="btn btn-sm" href="/replays/export.json' + query({}) + '">⬇ 导出 JSON</a>' +
+    // 专用格式（第十五批）：SGF 给五子棋/四子棋/黑白棋/跳棋/中国象棋，PGN 给国际象棋，
+    // 打包是把每局拆成一个文件的 tar.gz；筛选条件与 JSON 导出共用同一查询串
+    '<a class="btn btn-sm" href="/replays/export.sgf' + query({}) + '">⬇ SGF</a>' +
+    '<a class="btn btn-sm" href="/replays/export.pgn' + query({}) + '">⬇ PGN</a>' +
+    '<a class="btn btn-sm" href="/replays/export.tar.gz' + query({}) + '">⬇ 打包</a>' +
     '</form>';
   const rows = (Array.isArray(items) ? items : []).map((it) => {
     const id = encodeURIComponent(String(it.id == null ? '' : it.id));
