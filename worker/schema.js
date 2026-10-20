@@ -268,6 +268,8 @@ export const DDL = [
   "      move_count  INTEGER NOT NULL DEFAULT 0,",
   "      result      TEXT NOT NULL DEFAULT '',",
   "      rematch     INTEGER NOT NULL DEFAULT 0,",
+  "      host_user_id INTEGER NOT NULL DEFAULT 0,",
+  "      guest_user_id INTEGER NOT NULL DEFAULT 0,",
   "      created_at  INTEGER NOT NULL DEFAULT 0,",
   "      updated_at  INTEGER NOT NULL DEFAULT 0",
   "    );",
@@ -294,6 +296,8 @@ export const DDL = [
   "      move_count INTEGER NOT NULL DEFAULT 0,",
   "      moves      TEXT NOT NULL DEFAULT '[]',",
   "      plays      INTEGER NOT NULL DEFAULT 0,",
+  "      host_user_id INTEGER NOT NULL DEFAULT 0,",
+  "      guest_user_id INTEGER NOT NULL DEFAULT 0,",
   "      created_at INTEGER NOT NULL DEFAULT 0",
   "    );",
   "    CREATE INDEX IF NOT EXISTS idx_replays_game ON play_replays(game, id DESC);",
@@ -428,7 +432,30 @@ export const DDL = [
   "    CREATE TABLE IF NOT EXISTS attachments_blob (",
   "      id       INTEGER PRIMARY KEY AUTOINCREMENT,",
   "      data_b64 TEXT NOT NULL",
-  "    );"
+  "    );",
+  "    -- 第十一批：Web Push 订阅（VAPID）。与 src/db.js 的 push_subs 逐字一致，",
+  "    -- 两边都建只是为了表结构有单一出处；src/push.js 与 worker/push.js 内部也会幂等自建。",
+  "    CREATE TABLE IF NOT EXISTS push_subs (",
+  "      id         INTEGER PRIMARY KEY AUTOINCREMENT,",
+  "      user_id    INTEGER NOT NULL,",
+  "      endpoint   TEXT NOT NULL UNIQUE,",
+  "      p256dh     TEXT NOT NULL,",
+  "      auth       TEXT NOT NULL,",
+  "      ua         TEXT NOT NULL DEFAULT '',",
+  "      created_at TEXT NOT NULL,",
+  "      ok_at      TEXT DEFAULT '',",
+  "      fail_count INTEGER NOT NULL DEFAULT 0,",
+  "      disabled   INTEGER NOT NULL DEFAULT 0",
+  "    );",
+  "    CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs(user_id, disabled);",
+  "    -- 第十三批：邮件抑制名单。与 src/db.js 的 migrate()、src/outbox.js 的 SUPPRESSION_DDL 逐字一致。",
+  "    CREATE TABLE IF NOT EXISTS mail_suppression (",
+  "      address    TEXT PRIMARY KEY,",
+  "      reason     TEXT NOT NULL DEFAULT '',",
+  "      source     TEXT NOT NULL DEFAULT '',",
+  "      created_at INTEGER NOT NULL",
+  "    );",
+  "    CREATE INDEX IF NOT EXISTS idx_mail_suppression_created ON mail_suppression(created_at DESC);"
 ].join("\n");
 
 /** 老库补字段：D1 的 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列（对应 src/db.js 的 addColumn） */
@@ -452,7 +479,13 @@ export const ADD_COLUMNS = [
   ['play_rooms', 'watch_token', "watch_token TEXT NOT NULL DEFAULT ''"],
   ['play_rooms', 'replay_id', 'replay_id INTEGER DEFAULT 0'],
   // 第八批：论坛精华（置顶/锁定是既有的 pinned/locked；featured 是新增列）
-  ['forum_threads', 'featured', 'featured INTEGER NOT NULL DEFAULT 0']
+  ['forum_threads', 'featured', 'featured INTEGER NOT NULL DEFAULT 0'],
+  // 第十批：账号级「只看我的」——房间记住两位玩家的账号 id（0 = 未登录 / 匿名），
+  // 棋谱落库时从房间行拷过去，检索才能按 id 匹配（对应 src/db.js 的同名 addColumn）
+  ['play_rooms', 'host_user_id', 'host_user_id INTEGER NOT NULL DEFAULT 0'],
+  ['play_rooms', 'guest_user_id', 'guest_user_id INTEGER NOT NULL DEFAULT 0'],
+  ['play_replays', 'host_user_id', 'host_user_id INTEGER NOT NULL DEFAULT 0'],
+  ['play_replays', 'guest_user_id', 'guest_user_id INTEGER NOT NULL DEFAULT 0']
 ];
 
 /** 老库补索引（对应 src/db.js 的 addIndex） */

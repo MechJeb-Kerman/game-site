@@ -8,7 +8,7 @@ import * as auth from './src/auth.js';
 import { coverSvg, ogSvg } from './src/cover.js';
 import * as mail from './src/mail.js';
 import * as oauth from './src/oauth.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { formFromMultipart, parseMultipart } from './src/multipart.js';
 import * as forum from './src/data-forum.js';
 import * as fguard from './src/forum-guard.js';
@@ -26,6 +26,7 @@ import { createBanCache } from './src/ratelimit.js';
 import * as elo from './src/elo.js';
 import * as og from './src/og.js';
 import * as rules from './src/rules/index.js';
+import * as push from './src/push.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -666,10 +667,15 @@ function replayFiltersFor(req) {
   const f = play.replayFilters(req.query);
   // 页面沿用今天的老口径：game 只认天梯里的六款，其余一律当没填（错误拼写不会翻出一张空表）
   const game = LADDER_GAMES.indexOf(f.game) >= 0 ? f.game : '';
-  // 「只看我的」没有账号列可 JOIN（play_replays 只存建房时的昵称），所以按昵称精确匹配当前用户的名字
+  // 「只看我的」用账号 id 优先匹配（play_replays.host_user_id / guest_user_id），
+  // 昵称仍然一起传：老棋谱落库时还没有用户列（都是 0），只能靠建房时的昵称回退命中。
   const names = req.user ? [req.user.name, req.user.username].filter(Boolean) : [];
-  const mine = f.mine && names.length > 0;
-  return { filters: Object.assign({}, f, { game: game, mine: mine }), mine: mine ? names : [] };
+  const mine = f.mine && !!req.user;
+  return {
+    filters: Object.assign({}, f, { game: game, mine: mine }),
+    mine: mine ? names : [],
+    ownerId: mine ? Number(req.user.id) || 0 : 0
+  };
 }
 
 /** 棋谱列表：只列裁判棋的对局（?game=<slug> 过滤，?page= 翻页，另支持上面那组检索参数） */
@@ -684,6 +690,7 @@ app.get('/replays', (req, res) => {
     from: q.filters.from,
     to: q.filters.to,
     mine: q.mine,
+    ownerId: q.ownerId,
     limit: PAGE,
     offset: (asked2 - 1) * PAGE
   });
@@ -1116,20 +1123,25 @@ function playHint(code) {
   }[code] || '';
 }
 
+/** 已登录请求的用户 id，没登录就是 0（房间与棋谱都允许匿名玩，落库时记 0） */
+function userIdOf(req) {
+  return Number(req.user && req.user.id) || 0;
+}
+
 // 建房 / 快速匹配给点限速，防止刷房间；轮询与走法不拦（本来就高频）
 app.post('/api/play/create', (req, res) => {
   if (!dedupe('play-new:' + req.ip, 1000)) return res.status(429).json({ ok: false, error: 'busy', hint: '别急，稍等一秒' });
-  playReply(res, play.createRoom(req.body && req.body.game, req.body && req.body.name, Date.now()), 201);
+  playReply(res, play.createRoom(req.body && req.body.game, req.body && req.body.name, Date.now(), { userId: userIdOf(req) }), 201);
 });
 
 app.post('/api/play/quick', (req, res) => {
   if (!dedupe('play-new:' + req.ip, 1000)) return res.status(429).json({ ok: false, error: 'busy', hint: '别急，稍等一秒' });
-  const r = play.quickMatch(req.body && req.body.game, req.body && req.body.name, Date.now());
+  const r = play.quickMatch(req.body && req.body.game, req.body && req.body.name, Date.now(), { userId: userIdOf(req) });
   playReply(res, r, r.created ? 201 : 200);
 });
 
 app.post('/api/play/join', (req, res) => {
-  playReply(res, play.joinRoom(req.body && req.body.code, req.body && req.body.name, Date.now()));
+  playReply(res, play.joinRoom(req.body && req.body.code, req.body && req.body.name, Date.now(), { userId: userIdOf(req) }));
 });
 
 app.post('/api/play/poll', (req, res) => {
@@ -1210,6 +1222,7 @@ function replayJson(req, res, attachment) {
     from: q.filters.from,
     to: q.filters.to,
     mine: q.mine,
+    ownerId: q.ownerId,
     limit: limit,
     offset: 0,
     maxLimit: play.REPLAY_MAX_LIMIT
@@ -1654,6 +1667,105 @@ app.get('/admin', requireAdmin, (req, res) => {
   }));
 });
 
+/* ---------- 邮件送达：抑制名单后台页 + 服务商退信回调 ---------- */
+
+/** 回调令牌比对：定时安全比较，长度不等直接判否（timingSafeEqual 长度不等会抛） */
+function mailWebhookAuthed(req) {
+  const secret = String(process.env.MAIL_WEBHOOK_SECRET || '');
+  if (!secret) return false;
+  const bearer = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const got = String(bearer || req.query.token || '').trim();
+  const a = Buffer.from(got);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** 只有退信/投诉/投递失败才抑制；其它事件（送达、打开）照收 200，免得服务商重投 */
+const BOUNCE_EVENT_RE = /bounce|complain|failed/; // Resend 的投诉事件名是 email.complained（-ed），别只写 complaint
+
+/** 回调体里的收件人：Resend 是 {type:'email.bounced', data:{to:[…]}}，也认扁平的 {to, reason} */
+function bounceAddresses(body, query = {}) {
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const d = b.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : {};
+  const out = [];
+  const push = (v) => {
+    if (Array.isArray(v)) { for (const x of v) push(x); return; }
+    if (v && typeof v === 'object') { push(v.email || v.address || v.recipient || ''); return; }
+    const s = String(v || '').trim();
+    if (s.includes('@')) out.push(s);
+  };
+  push(b.to); push(d.to); push(b.email); push(d.email); push(b.recipient); push(d.recipient); push(query.to);
+  return Array.from(new Set(out)).slice(0, 20);
+}
+
+/** 事件类型与原因；type 为空时按「服务商既然打到了这个端点」当成退信处理 */
+function bounceKind(body, query = {}) {
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const d = b.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : {};
+  const bounce = (d.bounce && typeof d.bounce === 'object') ? d.bounce
+    : ((b.bounce && typeof b.bounce === 'object') ? b.bounce : {});
+  const type = String(b.type || b.event || b.event_type || b.eventType || query.type || '').toLowerCase();
+  const reason = String(b.reason || d.reason || bounce.message || b.description || d.description || type || '').slice(0, 200);
+  const hard = /permanent|hard/i.test(String(bounce.type || b.bounce_type || ''));
+  return { type, reason, hit: !type || hard || BOUNCE_EVENT_RE.test(type) };
+}
+
+/** 送达率 / 抑制名单后台页（管理后台「📮 邮件」里的入口落点） */
+app.get('/admin/mail', requireAdmin, (req, res) => {
+  res.send(ui.mailAdminPage({
+    origin: originOf(req),
+    user: req.user,
+    stats: outbox.deliveryStats(7),
+    suppressed: outbox.listSuppressed(50),
+    bounces: outbox.bounceSummary(20).rows,
+    webhook: { ready: !!String(process.env.MAIL_WEBHOOK_SECRET || ''), path: '/webhooks/mail-bounce' },
+    notice: String(req.query.ok || '')
+  }));
+});
+
+app.post('/admin/mail/suppress', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const address = String(b.address || '').trim().slice(0, 200);
+  const reason = String(b.reason || '').trim().slice(0, 120);
+  const r = outbox.suppress(address, reason, 'manual');
+  if (!r.ok) return res.redirect('/admin/mail?ok=bad');
+  data.logAudit(req.user, 'mail.suppress', r.address, reason + (r.cleared ? ' 清掉排队 ' + r.cleared + ' 封' : ''));
+  res.redirect('/admin/mail?ok=suppress');
+});
+
+app.post('/admin/mail/unsuppress', requireAdmin, (req, res) => {
+  const address = String((req.body || {}).address || '').trim().slice(0, 200);
+  const r = outbox.unsuppress(address);
+  if (!r.removed) return res.redirect('/admin/mail?ok=missing');
+  data.logAudit(req.user, 'mail.unsuppress', r.address, '');
+  res.redirect('/admin/mail?ok=unsuppress');
+});
+
+/**
+ * 服务商退信 / 投诉回调：命中就写进抑制名单（source='bounce'）并把它排队里剩的信判失败。
+ * 认 Authorization: Bearer $MAIL_WEBHOOK_SECRET 或 ?token=；没配密钥直接 403（后台页会写明）。
+ */
+app.post('/webhooks/mail-bounce', (req, res) => {
+  if (!mailWebhookAuthed(req)) {
+    const configured = !!String(process.env.MAIL_WEBHOOK_SECRET || '');
+    return res.status(403).json({ ok: false, error: configured ? 'forbidden' : 'not_configured' });
+  }
+  const addresses = bounceAddresses(req.body, req.query || {});
+  if (!addresses.length) return res.status(400).json({ ok: false, error: 'no_recipient' });
+  const { type, reason, hit } = bounceKind(req.body, req.query || {});
+  if (!hit) return res.json({ ok: true, ignored: type || 'unknown', suppressed: 0, addresses: [] });
+  const done = [];
+  for (const addr of addresses) {
+    const r = outbox.markBounced(addr, 'provider: ' + (reason || type || 'bounce'));
+    if (r.ok) done.push(addr);
+  }
+  if (done.length) {
+    data.logAudit(null, 'mail.bounce', done.join(','), (reason || type || 'bounce'));
+    console.log('[mail:bounce] 抑制 ' + done.length + ' 个地址：' + done.join(', '));
+  }
+  res.json({ ok: true, type: type || 'bounce', suppressed: done.length, addresses: done });
+});
+
 /** 后台预览：待审核的投稿也能按玩家视角打开 */
 app.get('/admin/preview/:slug', requireAdmin, (req, res) => {
   const game = data.getGameAny(req.params.slug);
@@ -1796,6 +1908,36 @@ app.get('/api/messages/unread', (req, res) => {
   if (!req.user) return res.status(401).json({ ok: false, error: 'login_required', unread: 0 });
   const t = social.listMessageThreads(req.user.id, { limit: 100 });
   res.json({ ok: true, unread: (t.items || []).reduce(function (n, x) { return n + Number(x.unread || 0); }, 0) });
+});
+
+/* ---------- Web Push：浏览器订阅（没配 VAPID 时整条链路空转，前端也不显示按钮） ---------- */
+
+/** 公钥：前端拿它当 applicationServerKey 订阅（views.js 的 pushScript 认 configured/publicKey/subscribed） */
+app.get('/api/push/key', (req, res) => {
+  const key = push.vapidPublicKey();
+  const subs = req.user ? push.listSubscriptions(req.user.id) : [];
+  res.json({
+    ok: true,
+    configured: !!key,
+    publicKey: key,
+    subscribed: (subs || []).some(function (s) { return !s.disabled; })
+  });
+});
+
+/** 订阅：body 收 { subscription }，也兼容直接收订阅对象本身；换账号登录时同一 endpoint 会被认领 */
+app.post('/api/push/subscribe', (req, res) => {
+  if (!req.user) return res.status(401).json({ ok: false, error: 'login_required' });
+  const body = req.body || {};
+  const r = push.subscribe(req.user.id, body.subscription || body, req.headers['user-agent'] || '');
+  res.status(r.ok ? 200 : 400).json({ ok: !!r.ok, id: r.id || 0, error: r.error || '' });
+});
+
+/** 退订：不带 endpoint = 这个账号的全部订阅都退 */
+app.post('/api/push/unsubscribe', (req, res) => {
+  if (!req.user) return res.status(401).json({ ok: false, error: 'login_required' });
+  const body = req.body || {};
+  const r = push.unsubscribe(req.user.id, body.endpoint || '');
+  res.json({ ok: true, removed: r.removed });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -2258,6 +2400,7 @@ async function retryDueMail(now = Date.now(), limit = 20) {
       const r = await mail.deliverNow({ to: row.to_addr, subject: row.subject, text: row.body_text });
       if (r.ok) { outbox.markSent(row.id); done++; }
       else if (r.error === 'not_configured') break;      // 没配传输就别空转，留着下次
+      else if (r.error === 'suppressed') { outbox.markFailed(row.id, r.error, { retry: false }); failed++; }  // 拉黑的地址不再重投
       else { outbox.markFailed(row.id, r.error); failed++; }
     }
   } catch (err) {

@@ -434,3 +434,48 @@ self.addEventListener('message', function (event) {
     self.skipWaiting();
   }
 });
+
+/* ------------------------------------------------------------------ 主动推送（Web Push） */
+
+/* 服务端用 src/push-core.js 加密后 POST 到订阅端点，这里只负责把 payload 变成系统通知。
+   载荷缺失（有些浏览器会给空 push）时也要弹一条兜底通知，否则 Chrome 会按「静默推送」限流。 */
+self.addEventListener('push', function (event) {
+  var data = null;
+  try {
+    if (event.data) data = event.data.json();
+  } catch (e) {
+    try { data = { body: event.data.text() }; } catch (e2) { data = null; }
+  }
+  data = data || {};
+  var title = data.title || '趣玩小游戏';
+  var options = {
+    body: data.body || '有新的通知，点开看看',
+    tag: data.tag || 'qw-notice',
+    icon: '/static/icons/icon-192.png',
+    badge: '/static/icons/icon-192.png',
+    lang: 'zh-CN',
+    data: { url: data.url || '/notifications', kind: data.kind || '' }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+/* 点通知：同源已有窗口就聚焦并跳过去，没有就开一个。深链由服务端在 pushPayload 里算好。 */
+self.addEventListener('notificationclick', function (event) {
+  event.notification.close();
+  var target = (event.notification.data && event.notification.data.url) || '/notifications';
+  var url = new URL(target, self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if (new URL(c.url).origin !== self.location.origin) continue;
+        if ('navigate' in c) {
+          return c.navigate(url).then(function () { return c.focus(); }).catch(function () { return self.clients.openWindow(url); });
+        }
+        return c.focus().catch(function () { return self.clients.openWindow(url); });
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
+

@@ -3,6 +3,8 @@ import { isUploadedUrl, UPLOAD_LABEL } from './upload.js';
 // 更新说明页的数据源：由 tools/gen-changelog.mjs 从 git 提交历史生成
 import { CHANGELOG, CHANGELOG_GENERATED, CHANGELOG_TOTAL } from './changelog-data.js';
 import { makeupCheck } from './daily.js';
+// 每日挑战的实质奖励（8 档，快照口径）：经验与徽章经验叠加算等级
+import { rewardsOf, rewardSummary } from './rewards.js';
 // 导航页的数据源：fishport.cn 下能打开的站点清单（三条线共用一份）
 import { groupedSites, siteUrl } from './sites.js';
 
@@ -69,6 +71,102 @@ function pwaRegisterScript() {
  * ogImage：社交平台预览图，必须是**绝对地址**（如 origin + '/play/1/card.svg'）；不传就退回站内默认图
  * origin + '/static/img/og.svg'，其它页面的输出与改动前逐字节一致。
  */
+/* 浏览器推送的开关面板：只在通知中心出现，服务端没配 VAPID 时整段退化成一行说明。
+   订阅走 /api/push/{key,subscribe,unsubscribe}，加密在服务端做，浏览器只交 PushSubscription。 */
+function pushScript() {
+  return `<script>
+(function () {
+  var box = document.getElementById('pushBox');
+  var btn = document.getElementById('pushToggle');
+  var hint = document.getElementById('pushHint');
+  if (!box || !btn || !hint) return;
+  box.hidden = false;
+  function say(t) { hint.textContent = t; }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    say('当前浏览器不支持网页推送（需要 HTTPS 站点与现代浏览器）。');
+    return;
+  }
+  var state = { on: false, configured: false, key: '' };
+  function b64uToBytes(s) {
+    s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var raw = atob(s), out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function paint() {
+    if (!state.configured) {
+      btn.hidden = true;
+      say('站点还没配置推送密钥（VAPID），暂时只能在站内看通知。');
+      return;
+    }
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.textContent = state.on ? '关闭浏览器推送' : '开启浏览器推送';
+    say(state.on
+      ? '已开启：有人回复、@你、关注你或有新私信时，浏览器会主动弹出提醒（可在系统通知设置里关掉）。'
+      : '开启后，别人回复你、在帖子里 @你、关注你或给你发私信时，浏览器会主动提醒——不必一直守着页面。');
+  }
+  function load() {
+    fetch('/api/push/key', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        state.configured = !!(d && d.configured && d.publicKey);
+        state.key = (d && d.publicKey) || '';
+        state.on = !!(d && d.subscribed);
+        paint();
+      })
+      .catch(function () { say('读取推送配置失败，稍后刷新再试。'); });
+  }
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    if (state.on) {
+      navigator.serviceWorker.ready
+        .then(function (reg) { return reg.pushManager.getSubscription(); })
+        .then(function (sub) {
+          var ep = sub ? sub.endpoint : '';
+          return (sub ? sub.unsubscribe() : Promise.resolve(true)).then(function () {
+            return fetch('/api/push/unsubscribe', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ endpoint: ep })
+            });
+          });
+        })
+        .then(function () { state.on = false; paint(); })
+        .catch(function () { paint(); });
+      return;
+    }
+    Notification.requestPermission().then(function (perm) {
+      if (perm !== 'granted') {
+        say('浏览器拒绝了通知权限：可以在地址栏左侧的站点设置里重新允许，然后再点一次。');
+        btn.disabled = false;
+        return null;
+      }
+      return navigator.serviceWorker.ready
+        .then(function (reg) {
+          return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(state.key) });
+        })
+        .then(function (sub) {
+          return fetch('/api/push/subscribe', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ subscription: sub.toJSON() })
+          });
+        })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (d && d.ok) { state.on = true; paint(); return; }
+          say('订阅失败：' + ((d && d.error) || '服务器拒绝了这次订阅'));
+          btn.disabled = false;
+        });
+    }).catch(function () { btn.disabled = false; });
+  });
+  load();
+})();
+</script>`;
+}
+
 function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true, bodyClass = '', ogImage = '' }) {
   const bare = chrome === 'none';
   const full = title ? (titleSuffix ? title + ' - ' + SITE.name : title) : SITE.name;
@@ -1267,13 +1365,16 @@ export function adminPage({
     ? '<div class="table-wrap"><table class="tbl"><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
     : '<p class="empty">' + empty + '</p>';
 
-  const mailBox = mailTransport === 'outbox' && outbox.length
-    ? '<section class="sec"><div class="sec-head"><h2>📮 开发发件箱 <b>' + outbox.length + '</b></h2>' +
-      '<span class="dim">没配邮件服务时，验证/重置邮件只会落在这里（配 RESEND_API_KEY 或 MAIL_API_URL 即真实发送）</span></div>' +
-      '<ul class="mail-list">' + outbox.map((m) =>
+  // 邮件面板常渲染：没配邮件服务时也要能点进 /admin/mail 看送达率与抑制名单
+  const mailBox = '<section class="sec"><div class="sec-head"><h2>📮 邮件' +
+    (mailTransport === 'outbox' && outbox.length ? ' <b>' + outbox.length + '</b>' : '') + '</h2>' +
+    '<a class="more" href="/admin/mail">送达率与抑制名单 ›</a></div>' +
+    (mailTransport === 'outbox' && outbox.length
+      ? '<ul class="mail-list">' + outbox.map((m) =>
         '<li><b>' + esc(m.subject) + '</b><small class="dim"> → ' + esc(m.to) + ' · ' + esc(m.at) + '</small>' +
-        (m.link ? '<br><a href="' + esc(m.link) + '">' + esc(m.link) + '</a>' : '') + '</li>').join('') + '</ul></section>'
-    : '';
+        (m.link ? '<br><a href="' + esc(m.link) + '">' + esc(m.link) + '</a>' : '') + '</li>').join('') + '</ul>'
+      : '<p class="dim">开发发件箱是空的。没配邮件服务时，验证信、重置信只会落进这里；配 RESEND_API_KEY，或 MAIL_API_URL + MAIL_API_KEY 之后即真实发送。</p>') +
+    '</section>';
 
   const integ = integrations || null;
   const integSection = integ ? (function () {
@@ -1372,6 +1473,97 @@ export function adminPage({
   ${mailBox}
 </div>`;
   return layout({ origin, user, title: '管理后台', description: '站长后台', path: '/admin', content, noindex: true });
+}
+
+/** /admin/mail 的 ?notice= 文案：加/解抑制成功走绿色，地址格式不对走橙色 */
+const MAIL_ADMIN_NOTICE = {
+  suppress: '<p class="auth-ok">✅ 已加入抑制名单，队列里发给它的信也一并清掉了</p>',
+  unsuppress: '<p class="auth-ok">✅ 已解除抑制，可以重新发信了</p>',
+  bad: '<p class="auth-err">⚠️ 地址不对：要含 @，且不超过 200 字</p>',
+  missing: '<p class="auth-err">⚠️ 这个地址不在抑制名单里</p>'
+};
+
+/**
+ * 邮件送达率与抑制名单（/admin/mail）。
+ * 数据全来自 src/outbox.js 的 deliveryStats / listSuppressed / bounceSummary —— 这页只读统计 + 两个动作（加/解抑制）。
+ */
+export function mailAdminPage({ origin, user = null, stats = null, suppressed = null, bounces = null, notice = '', webhook = null }) {
+  const s = stats || {};
+  const t = s.totals || {};
+  const n = (v) => fmtNum(Number(v) || 0);
+  const rate = s.rate === null || s.rate === undefined ? '—' : (Number(s.rate) * 100).toFixed(2) + '%';
+  const wrap = (head, rows, empty) => rows.length
+    ? '<div class="table-wrap"><table class="tbl"><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+    : '<p class="empty">' + empty + '</p>';
+
+  const tagRows = (s.byTag || []).map((r) => '<tr><td><code>' + esc(r.tag || '—') + '</code></td><td>' + n(r.sent) +
+    '</td><td>' + n(r.failed) + '</td><td>' + n(r.bounced) + '</td><td>' + n(r.total) + '</td></tr>').join('');
+  const errRows = (s.topErrors || []).map((r) => '<tr><td><code>' + esc(r.error || '—') + '</code></td><td>' + n(r.count) + '</td></tr>').join('');
+  const sup = suppressed || { total: 0, items: [] };
+  const supRows = (sup.items || []).map((r) => '<tr><td><code>' + esc(r.address) + '</code></td><td>' + esc(r.reason || '—') +
+    '</td><td>' + esc(r.source || '—') + '</td><td>' + esc(sinceTime(r.created_at)) + '</td>' +
+    '<td class="act"><form method="post" action="/admin/mail/unsuppress">' +
+    '<input type="hidden" name="address" value="' + esc(r.address) + '">' +
+    '<button class="btn btn-sm" type="submit">解除</button></form></td></tr>').join('');
+  const bounceRows = (bounces || []).map((b) => '<tr><td><code>' + esc(b.to_addr || '') + '</code></td><td>' +
+    esc(String(b.subject || '').slice(0, 40)) + '</td><td>' + esc(b.tag || '—') + '</td><td><code>' +
+    esc(String(b.last_error || '').slice(0, 60)) + '</code></td><td>' + esc(sinceTime(b.updated_at)) + '</td></tr>').join('');
+  const hook = webhook || { ready: false, path: '/webhooks/mail-bounce' };
+  const hookText = hook.ready
+    ? '回调地址 <code>' + esc(origin + hook.path) + '</code> 已启用：服务商带 <code>Authorization: Bearer $MAIL_WEBHOOK_SECRET</code>，或用查询串 <code>?token=…</code>，把退信 / 硬失败打进来，命中的地址自动进抑制名单。'
+    : '还没配 <code>MAIL_WEBHOOK_SECRET</code>，回调地址不接收请求（发过去会 403）。留空也能用：退信由服务商扣量后自己进名单，或在这页手动加。';
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><a href="/admin">管理后台</a><span>›</span><b>邮件送达</b></nav>
+  <div class="page-head">
+    <h1>📮 邮件送达</h1>
+    <p class="page-sub">统计是全表当前口径；抑制名单里的地址不会再入队，队列里还没发出去的会就地判失败。硬失败（5xx）与退信会自动进名单，也可以在这里手动加。</p>
+  </div>
+  ${MAIL_ADMIN_NOTICE[notice] || ''}
+  <div class="panel">
+    <div class="sec-head"><h2>📊 概览</h2><span class="dim">窗口 ${n(s.days || 7)} 天 · 送达率 = 已送达 ÷（已送达 + 失败 + 退信）</span></div>
+    <div class="stats">
+      <div class="stat"><b>${n(t.sent)}</b><span>已送达</span></div>
+      <div class="stat${Number(t.failed) ? ' hot' : ''}"><b>${n(t.failed)}</b><span>失败</span></div>
+      <div class="stat${Number(t.bounced) ? ' hot' : ''}"><b>${n(t.bounced)}</b><span>退信</span></div>
+      <div class="stat"><b>${n(t.queued)}</b><span>排队中</span></div>
+      <div class="stat"><b>${esc(rate)}</b><span>送达率</span></div>
+      <div class="stat"><b>${n(t.total)}</b><span>合计</span></div>
+    </div>
+    <p class="dim" style="margin:12px 0 0">统计窗口从 ${esc(String(s.from || '').slice(0, 10) || '—')} 到 ${esc(String(s.to || '').slice(0, 10) || '—')}；按用途拆分见下表。</p>
+  </div>
+  <div class="panel">
+    <div class="sec-head"><h2>🏷️ 按用途</h2><span class="dim">tag 是发信时标的用途（verify / reset / daily / alert 等）</span></div>
+    ${wrap('<th>用途</th><th>已送达</th><th>失败</th><th>退信</th><th>合计</th>', tagRows, '还没有任何发信记录')}
+  </div>
+  <div class="panel">
+    <div class="sec-head"><h2>🧯 失败原因 TOP</h2><span class="dim">mail_5xx 这类硬失败会连带进抑制名单，避免反复撞墙</span></div>
+    ${wrap('<th>错误</th><th>次数</th>', errRows, '没有失败记录，挺健康 🎉')}
+  </div>
+  <div class="panel">
+    <div class="sec-head"><h2>🚫 抑制名单 <b>${n(sup.total)}</b></h2><a class="more" href="/admin">回后台 ›</a></div>
+    <form class="auth-form" method="post" action="/admin/mail/suppress">
+      <label>邮箱<input type="email" name="address" placeholder="bounce@example.com" maxlength="200" required></label>
+      <label>原因<input name="reason" placeholder="硬退信 / 用户投诉" maxlength="120"></label>
+      <button class="btn" type="submit">加入抑制名单</button>
+    </form>
+    ${wrap('<th>地址</th><th>原因</th><th>来源</th><th>加入时间</th><th>操作</th>', supRows, '名单是空的：没有硬退信，也没有手动拉黑')}
+  </div>
+  <div class="panel">
+    <div class="sec-head"><h2>↩️ 最近退信</h2><span class="dim">退信 = 对方服务器明确拒收，通常是地址不存在</span></div>
+    ${wrap('<th>地址</th><th>主题</th><th>用途</th><th>错误</th><th>时间</th>', bounceRows, '没有退信记录')}
+  </div>
+  <div class="panel">
+    <div class="sec-head"><h2>🔗 服务商回调</h2></div>
+    <p class="dim">${hookText}</p>
+  </div>
+</div>`;
+  return layout({
+    origin, user, path: '/admin/mail', noindex: true,
+    title: '邮件送达',
+    description: '邮件送达率、失败原因与抑制名单，站点管理员专用。',
+    content
+  });
 }
 
 /** 彻底删除确认页：列出会被连带删掉的数据量，上架中的游戏不让删 */
@@ -1852,6 +2044,22 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
         '<button class="chip chip-btn" type="submit" title="补做 ' + esc(d) + ' 的题目">🔁 补做</button></form>';
     }).join('') + '</div>';
 
+  // 打卡奖励（src/rewards.js）：8 档，与徽章各算一套经验，这里只展示快照进度
+  const rw = rewardSummary(s);
+  const rewardChip = (r) => '<span class="chip" title="' + esc(r.desc) + '"' + (r.done ? '' : ' style="opacity:.45"') + '>' +
+    (r.done ? r.icon : '🔒') + ' ' + esc(r.title) + ' <b>' +
+    (r.done ? '已获得 +' + fmtNum(r.reward.xp) : fmtNum(r.now) + '/' + fmtNum(r.need)) + '</b></span>';
+  const rewardBox = user
+    ? '<div class="panel">' +
+        '<div class="sec-head"><h2>🎁 打卡奖励</h2><span class="pill">' + rw.owned + ' / ' + rw.total + ' 档 · ' + fmtNum(rw.xp) + ' 经验</span></div>' +
+        '<div class="chips">' + rewardsOf(s).map(rewardChip).join('') + '</div>' +
+        '<p class="dim" style="margin:12px 0 0">' + (rw.next
+          ? '下一个：' + rw.next.icon + ' ' + esc(rw.next.title) + '，还差 ' + fmtNum(rw.next.left) + '（' + Number(rw.next.percent || 0) + '%）'
+          : '八档奖励全部拿满，接下来只剩超越自己 🏆') +
+        '。奖励经验与徽章经验可叠加，会一起算进个人主页的等级。</p>' +
+      '</div>'
+    : '';
+
   const boardBox = '<div class="table-wrap"><table class="tbl" style="min-width:320px"><thead><tr><th>#</th><th>玩家</th></tr></thead><tbody>' +
     (boardRows.length
       ? boardRows.map((r, i) => '<tr><td>' + (i + 1) + '</td><td><a href="/u/' + encodeURIComponent(r.username) + '">' + esc(r.name || r.username) + '</a></td></tr>').join('')
@@ -1871,6 +2079,7 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
     <div class="sec-head"><h2>🗓️ 最近 28 天</h2><a class="more" href="${user ? '/u/' + encodeURIComponent(user.username) : loginHref}">看我的徽章 ›</a></div>
     ${cal}
   </div>
+  ${rewardBox}
   <div class="panel">
     <div class="sec-head"><h2>🏅 今日打卡榜</h2><span class="pill">${boardRows.length} / ${(board && board.count) || boardRows.length} 人</span></div>
     ${boardBox}
@@ -2078,6 +2287,19 @@ export function profilePage({ origin, user = null, profile, isSelf = false, coun
     (b.done ? '' : ' style="opacity:.45"') + '>' + b.icon + ' ' + esc(b.name) +
     (b.done ? '' : ' <b>' + b.now + '/' + b.need + '</b>') + '</span>';
 
+  // 打卡奖励（src/rewards.js）：与徽章同一套进度来源，经验另算、叠加进等级
+  const rw = rewardSummary(p);
+  const rewardChip = (r) => '<span class="chip" title="' + esc(r.desc) + '"' + (r.done ? '' : ' style="opacity:.45"') + '>' +
+    (r.done ? r.icon : '🔒') + ' ' + esc(r.title) + ' <b>' +
+    (r.done ? '已获得 +' + fmtNum(r.reward.xp) : fmtNum(r.now) + '/' + fmtNum(r.need)) + '</b></span>';
+  const rewardsPanel = '<div class="panel">' +
+    '<div class="sec-head"><h2>🎁 打卡奖励</h2><span class="pill">' + rw.owned + ' / ' + rw.total + ' 档 · ' + fmtNum(rw.xp) + ' 经验</span></div>' +
+    '<div class="chips">' + rewardsOf(p).map(rewardChip).join('') + '</div>' +
+    (rw.next
+      ? '<p class="dim" style="margin:12px 0 0">下一个：' + rw.next.icon + ' ' + esc(rw.next.title) + '，还差 ' + fmtNum(rw.next.left) + '（' + Number(rw.next.percent || 0) + '%）</p>'
+      : '<p class="dim" style="margin:12px 0 0">八档奖励全部拿满，接下来只剩超越自己 🏆</p>') +
+    '</div>';
+
   const content = `<div class="wrap page">
   <nav class="crumb"><a href="/">首页</a><span>›</span><b>个人主页</b></nav>
 
@@ -2086,7 +2308,7 @@ export function profilePage({ origin, user = null, profile, isSelf = false, coun
       <span style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;font-size:28px;font-weight:800;background:linear-gradient(135deg,#6366f1,#22d3ee);color:#fff">${esc(initial)}</span>
       <div style="flex:1;min-width:200px">
         <h1 style="margin:0 0 6px">${esc(p.name || p.username)} <span class="pill">${esc(p.title || '新面孔')}</span></h1>
-        <p class="dim" style="margin:0">Lv.${p.level} · ${fmtNum(p.xp)} 经验${p.xpNeed ? ' · 距下一级还差 ' + fmtNum(Math.max(0, p.xpNext - p.xp)) : ' · 已满级'} · ${esc(String(p.joinedAt || '').slice(0, 10))} 加入</p>
+        <p class="dim" style="margin:0">Lv.${p.level} · ${fmtNum(p.xp)} 经验${p.xpBonus ? '（含打卡奖励 ' + fmtNum(p.xpBonus) + '）' : ''}${p.xpNeed ? ' · 距下一级还差 ' + fmtNum(Math.max(0, p.xpNext - p.xp)) : ' · 已满级'} · ${esc(String(p.joinedAt || '').slice(0, 10))} 加入</p>
         <div style="height:10px;background:rgba(255,255,255,.1);border-radius:999px;overflow:hidden;margin-top:10px">
           <i style="display:block;height:100%;width:${pct}%;background:linear-gradient(135deg,#6366f1,#22d3ee)"></i>
         </div>
@@ -2118,6 +2340,7 @@ export function profilePage({ origin, user = null, profile, isSelf = false, coun
     <div class="chips">${owned.map(badgeChip).join('') || '<span class="dim">还没有解锁任何徽章</span>'}</div>
     ${locked.length ? '<h3 class="sub" style="margin-top:18px">未解锁</h3><div class="chips">' + locked.map(badgeChip).join('') + '</div>' : ''}
   </div>
+  ${rewardsPanel}
 ${ratingsPanel}
   ${isSelf ? '' : '<p class="dim">只展示公开数据：评论、收藏、评分、论坛发帖与每日打卡。邮箱、登录记录等隐私信息不会出现在这里。</p>'}
   <p class="dim">想有自己的主页？<a href="/register">注册</a> 或 <a href="/login">登录</a> 后就有了，顺手去 <a href="/daily">每日挑战</a> 打卡。</p>
@@ -2203,6 +2426,12 @@ export function notificationsPage({ origin, user, list = null, page = 1, notice 
   ${items.length
     ? '<ul class="note-list">' + rows + '</ul>' + listPager('/notifications', page, pages)
     : '<div class="panel"><p class="dim">还没有通知。别人回复你的帖子、在帖子里 @你、关注你或给你发私信时，这里会有记录。</p></div>'}
+  <div class="panel" id="pushBox" hidden>
+    <h3>🔔 浏览器推送</h3>
+    <p class="dim" id="pushHint">正在检查推送配置…</p>
+    <button class="btn" type="button" id="pushToggle" hidden>开启浏览器推送</button>
+  </div>
+  ${pushScript()}
   <p class="dim">通知只按站内动作生成，同一件事 10 分钟内只提醒一次。</p>
 </div>`;
   return layout({
@@ -2480,8 +2709,8 @@ export function replaysPage({ origin, user = null, items = [], total = 0, game =
   const anyFilter = !!(slug || player || result || f.from || f.to || mine);
   const mineBox = user
     ? '<label class="check"><input type="checkbox" name="mine" value="1"' + (mine ? ' checked' : '') + '> 只看我的</label>' +
-      '<span class="hint">棋谱没有账号字段（只记建房时填的昵称），所以这里按昵称精确匹配：改过昵称或与他人重名会不准</span>'
-    : '<span class="hint"><a href="/login?next=%2Freplays">登录</a>后可用「只看我的」（按你的昵称匹配棋谱）</span>';
+      '<span class="hint">登录用户的对局按账号匹配；更早的棋谱没有账号字段（只记建房时填的昵称），按昵称回退匹配</span>'
+    : '<span class="hint"><a href="/login?next=%2Freplays">登录</a>后可用「只看我的」（按你的账号匹配棋谱，更早的对局回退昵称）</span>';
   const form = '<form class="filters" method="get" action="/replays">' +
     '<select name="game" aria-label="棋类">' + gameOpts + '</select>' +
     '<input name="player" value="' + esc(player) + '" placeholder="玩家名（房主或访客）" maxlength="32" aria-label="玩家名">' +

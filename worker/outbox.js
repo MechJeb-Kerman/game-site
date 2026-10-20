@@ -7,6 +7,9 @@
  * 所以下面的 DDL 每条都必须写成单行字符串；这里也不用 exec()，而是逐条 prepare().run()（同 worker/schema.js）。
  *
  * 时间统一按 'YYYY-MM-DD HH:mm:ss' 文本存，dueList 直接比字符串挑「到期该发」的信。
+ *
+ * 送达率与抑制名单（本次新增）：退信（markBounced）与「试满不重试」的永久 5xx（markFailed）
+ * 会把地址写进 mail_suppression，之后 enqueue 直接拒绝这个地址；deliveryStats() 给后台看送达率。
  */
 
 /** 四种状态：排队中 / 已投递 / 重试用尽 / 被退信 */
@@ -60,26 +63,52 @@ export const OUTBOX_DDL = [
   "CREATE INDEX IF NOT EXISTS idx_mail_outbox_status ON mail_outbox(status, next_attempt_at)"
 ];
 
+/**
+ * 抑制名单 DDL（对应 src/outbox.js 的 SUPPRESSION_DDL；每条同样必须是单行）。
+ * 地址存 trim + 小写后的写法；created_at 存毫秒数——名单按时间倒序翻页，秒级文本时间会大面积并列。
+ */
+export const SUPPRESSION_DDL = [
+  "CREATE TABLE IF NOT EXISTS mail_suppression ( address TEXT PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL )",
+  "CREATE INDEX IF NOT EXISTS idx_mail_suppression_created ON mail_suppression(created_at DESC)"
+];
+
 /** 已经建过表的连接（同一个 isolate 内只跑一次） */
 const READY = new WeakSet();
+
+/** 地址归一：trim + 小写（抑制名单只认这一种写法，查表也用它） */
+function normAddress(address) {
+  return String(address === undefined || address === null ? '' : address).trim().toLowerCase();
+}
+
+/** 只挡「看起来像地址」的：空串或不含 @ 都算非法 */
+function badAddress(addr) {
+  return !addr || addr.indexOf('@') < 0;
+}
 
 /** 幂等建表；db 缺绑定时报 no_d1_binding（调用方自己决定是否忽略） */
 export async function ensureOutbox(db) {
   if (!db) throw new Error('no_d1_binding');
   if (READY.has(db)) return db;
   for (const sql of OUTBOX_DDL) await db.prepare(sql).run();
+  for (const sql of SUPPRESSION_DDL) await db.prepare(sql).run();
   READY.add(db);
   return db;
 }
 
 /**
  * 入队一封信（status='queued'，next_attempt_at=现在，下一轮 dueList 就能捞到）。
+ * 收件人在抑制名单里就**不入队**：回 { ok:false, id:0, status:'', next_attempt_at:null,
+ * suppressed:true, error:'suppressed' }——字段名与老的成功返回一致（调用方读 r.id 不会炸），
+ * 但 status 不谎报 'queued'，因为这封信根本没排进去。
  * @returns {{ok:true, id:number, status:string, next_attempt_at:string}|{ok:false, id:0, error:string}}
  */
 export async function enqueue(db, { to, subject = '', text = '', tag = '' } = {}) {
   const addr = String(to || '').trim();
   if (!addr) return { ok: false, id: 0, error: 'no_recipient' };
   await ensureOutbox(db);
+  if (await isSuppressed(db, addr)) {
+    return { ok: false, id: 0, status: '', next_attempt_at: null, suppressed: true, error: 'suppressed' };
+  }
   const now = stamp();
   const info = await db.prepare(
     'INSERT INTO mail_outbox (to_addr, subject, body_text, tag, status, attempts, last_error, next_attempt_at, created_at, updated_at)' +
@@ -121,16 +150,20 @@ export async function markSent(db, id) {
 export async function markFailed(env, db, id, error = '', { retry = true } = {}) {
   await ensureOutbox(db);
   const key = Number(id) || 0;
-  const row = await db.prepare('SELECT attempts FROM mail_outbox WHERE id = ?').bind(key).first();
+  const row = await db.prepare('SELECT attempts, to_addr FROM mail_outbox WHERE id = ?').bind(key).first();
   if (!row) return { ok: false, id: key, status: '', attempts: 0, delay_ms: 0, next_attempt_at: null, error: 'not_found' };
   const attempts = Number(row.attempts || 0) + 1;
   const giveUp = retry === false || attempts >= maxAttempts(env);
   const status = giveUp ? 'failed' : 'queued';
   const delay = giveUp ? 0 : backoffMs(env, attempts);
   const next = giveUp ? null : stamp(Date.now() + delay);
+  const why = String(error || '').slice(0, 500);
   await db.prepare(
     'UPDATE mail_outbox SET status = ?, attempts = ?, last_error = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?'
-  ).bind(status, attempts, String(error || '').slice(0, 500), next, stamp(), key).run();
+  ).bind(status, attempts, why, next, stamp(), key).run();
+  // 永久性 5xx（mail_5xx）并且这次就是「试满不重试」的那一次：地址进抑制名单。
+  // 仍在 queued 重试的（4xx / 网络抖动）不抑制——抖一下就把人家的地址拉黑，信就永远发不出去了。
+  if (giveUp && why.indexOf('mail_5') === 0) await suppress(db, row.to_addr, why, 'hardfail');
   return { ok: true, id: key, status, attempts, delay_ms: delay, next_attempt_at: next };
 }
 
@@ -162,6 +195,8 @@ export async function markBounced(db, address, reason = '') {
     "UPDATE mail_outbox SET status = 'bounced', last_error = ?, next_attempt_at = NULL, updated_at = ?" +
     " WHERE to_addr = ? COLLATE NOCASE AND status IN ('queued', 'failed')"
   ).bind(why, stamp(), addr).run();
+  // 退信了就不再给这个地址发信：顺带写进抑制名单（source='bounce'），它还排着的信由 suppress 清掉
+  await suppress(db, addr, why, 'bounce');
   const changed = Number(((info && info.meta) || {}).changes || 0);
   return { ok: true, address: addr, reason: why, changed: changed };
 }
@@ -175,4 +210,105 @@ export async function bounceSummary(db, limit = 20) {
   ).bind(clampLimit(limit, 20, 200)).all();
   const c = await db.prepare("SELECT COUNT(*) AS n FROM mail_outbox WHERE status = 'bounced'").first();
   return { count: Number((c && c.n) || 0), rows: (rows && rows.results) || [] };
+}
+
+/* ─────────────────────────── 抑制名单与送达率（本次新增） ─────────────────────────── */
+
+/**
+ * 把一个地址拉进抑制名单（trim + 小写存储），并把这个地址**还排在队里**的信一并清成 failed
+ * （last_error='suppressed: <reason>'、next_attempt_at=NULL）；已 sent / bounced 的行不动。
+ * 重复调用幂等（覆盖 reason / source 并刷新 created_at）。
+ * @returns {{ok:true, address:string, cleared:number, error:''}|{ok:false, address:string, cleared:0, error:'bad_address'}}
+ */
+export async function suppress(db, address, reason = '', source = '') {
+  const addr = normAddress(address);
+  if (badAddress(addr)) return { ok: false, address: addr, cleared: 0, error: 'bad_address' };
+  await ensureOutbox(db);
+  const why = String(reason === undefined || reason === null ? '' : reason);
+  const src = String(source === undefined || source === null ? '' : source);
+  await db.prepare(
+    'INSERT OR REPLACE INTO mail_suppression (address, reason, source, created_at) VALUES (?, ?, ?, ?)'
+  ).bind(addr, why, src, Date.now()).run();
+  const info = await db.prepare(
+    "UPDATE mail_outbox SET status = 'failed', last_error = ?, next_attempt_at = NULL, updated_at = ?" +
+    " WHERE to_addr = ? COLLATE NOCASE AND status = 'queued'"
+  ).bind(('suppressed: ' + why).slice(0, 500), stamp(), addr).run();
+  const cleared = Number(((info && info.meta) || {}).changes || 0);
+  return { ok: true, address: addr, cleared: cleared, error: '' };
+}
+
+/** 解除抑制（地址同样先归一）；本来就不在名单里也返回 ok:true（removed=0），不抛 */
+export async function unsuppress(db, address) {
+  const addr = normAddress(address);
+  await ensureOutbox(db);
+  const info = await db.prepare('DELETE FROM mail_suppression WHERE address = ?').bind(addr).run();
+  const removed = Number(((info && info.meta) || {}).changes || 0);
+  return { ok: true, address: addr, removed: removed };
+}
+
+/** 在不在抑制名单里（布尔，不抛）；空地址或不含 @ 一律 false */
+export async function isSuppressed(db, address) {
+  const addr = normAddress(address);
+  if (badAddress(addr)) return false;
+  await ensureOutbox(db);
+  const row = await db.prepare('SELECT 1 AS hit FROM mail_suppression WHERE address = ?').bind(addr).first();
+  return !!row;
+}
+
+/** 抑制名单一页：created_at 倒序（同一毫秒按写入先后倒序），total 是全表条数 */
+export async function listSuppressed(db, limit = 50, offset = 0) {
+  await ensureOutbox(db);
+  const off = Math.max(0, Math.floor(Number(offset) || 0));
+  const c = await db.prepare('SELECT COUNT(*) AS n FROM mail_suppression').first();
+  const rows = await db.prepare(
+    'SELECT address, reason, source, created_at FROM mail_suppression' +
+    ' ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?'
+  ).bind(clampLimit(limit, 50, 500), off).all();
+  return { total: Number((c && c.n) || 0), items: (rows && rows.results) || [] };
+}
+
+/**
+ * 送达率概览（后台页 / 文档用）。
+ * 口径：totals 是 mail_outbox 全表**此刻**的状态计数（复用 stats()），不是 from~to 窗口内发生的事件；
+ * from / to / days 只把窗口标出来给页面显示（窗口内的事件流要另建表，本模块不存事件）。
+ * rate = sent / (sent + failed + bounced)，分母为 0 时回 null（一封都没发过谈不上送达率），保留 4 位小数。
+ * byTag 按 tag 聚合（total 降序、最多 12 条）；topErrors 取 failed / bounced 行的 last_error 前 80 字做键
+ * （count 降序、最多 10 条）。纯读，不写库。
+ */
+export async function deliveryStats(db, days = 7, now = Date.now()) {
+  await ensureOutbox(db);
+  const span = Math.floor(Number(days));
+  const winDays = Number.isFinite(span) && span > 0 ? span : 7;
+  const raw = now instanceof Date ? now.getTime()
+    : (typeof now === 'string' ? Date.parse(String(now).trim().replace(' ', 'T')) : Number(now));
+  const end = Number.isFinite(raw) ? raw : Date.now();
+  const totals = await stats(db);
+  const denom = totals.sent + totals.failed + totals.bounced;
+  const rows = await db.prepare(
+    'SELECT tag,' +
+    " SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent," +
+    " SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed," +
+    " SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) AS bounced," +
+    ' COUNT(*) AS n FROM mail_outbox GROUP BY tag ORDER BY n DESC, tag ASC LIMIT 12'
+  ).all();
+  const errs = await db.prepare(
+    'SELECT substr(last_error, 1, 80) AS error, COUNT(*) AS n FROM mail_outbox' +
+    " WHERE status IN ('failed', 'bounced')" +
+    ' GROUP BY substr(last_error, 1, 80) ORDER BY n DESC, error ASC LIMIT 10'
+  ).all();
+  return {
+    from: stamp(end - winDays * 86400000),
+    to: stamp(end),
+    days: winDays,
+    totals: totals,
+    rate: denom > 0 ? Number((totals.sent / denom).toFixed(4)) : null,
+    byTag: ((rows && rows.results) || []).map((r) => ({
+      tag: String(r.tag || ''),
+      sent: Number(r.sent || 0),
+      failed: Number(r.failed || 0),
+      bounced: Number(r.bounced || 0),
+      total: Number(r.n || 0)
+    })),
+    topErrors: ((errs && errs.results) || []).map((r) => ({ error: String(r.error || ''), count: Number(r.n || 0) }))
+  };
 }

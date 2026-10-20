@@ -51,7 +51,13 @@
     "test:rules-chess": "node tools/rules-chess-test.mjs",
     "test:meili": "node tools/meili-index-test.mjs",
     "test:feed": "node tools/feed-test.mjs",
-    "test:replay": "node tools/replay-search-test.mjs"
+    "test:replay": "node tools/replay-search-test.mjs",
+    "test:outbox-report": "node tools/mail-report-test.mjs",
+    "test:mail-admin": "node tools/mail-admin-test.mjs",
+    "test:push": "node tools/push-test.mjs",
+    "test:push-wiring": "node tools/push-wiring-test.mjs",
+    "test:rewards": "node tools/daily-reward-test.mjs",
+    "test:replay-identity": "node tools/replay-identity-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

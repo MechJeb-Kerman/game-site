@@ -179,7 +179,9 @@ function baselineRow(row) {
   return {
     id: Number(row.id), game: row.game, hostName: row.host_name || '黑方', guestName: row.guest_name || '白方',
     result: row.result || '', winner: baselineWinner(row), moveCount: Number(row.move_count || 0),
-    plays: Number(row.plays || 0), createdAt: Number(row.created_at || 0)
+    plays: Number(row.plays || 0), createdAt: Number(row.created_at || 0),
+    // 账号级绑定（第十批）后每行多带两个字段；老基线行都是 0/0
+    hostUserId: 0, guestUserId: 0
   };
 }
 function baselineWinner(row) {

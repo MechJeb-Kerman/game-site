@@ -420,6 +420,32 @@ export function migrate() {
       id       INTEGER PRIMARY KEY AUTOINCREMENT,
       data_b64 TEXT NOT NULL
     );
+
+    -- 第十一批：Web Push 订阅（VAPID）。endpoint UNIQUE 让同一浏览器换账号登录时认领订阅，
+    -- disabled 是连续投递失败 5 次后的熔断位，只有重新订阅能复活（见 src/push.js）。
+    CREATE TABLE IF NOT EXISTS push_subs (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL,
+      endpoint   TEXT NOT NULL UNIQUE,
+      p256dh     TEXT NOT NULL,
+      auth       TEXT NOT NULL,
+      ua         TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      ok_at      TEXT DEFAULT '',
+      fail_count INTEGER NOT NULL DEFAULT 0,
+      disabled   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs(user_id, disabled);
+
+    -- 第十三批：邮件抑制名单（退信 / 投诉 / 硬失败自动进名单，也能在 /admin/mail 手工加）。
+    -- 与 src/outbox.js 的 SUPPRESSION_DDL / worker/schema.js 同名同形，模块内也幂等自建一次。
+    CREATE TABLE IF NOT EXISTS mail_suppression (
+      address    TEXT PRIMARY KEY,
+      reason     TEXT NOT NULL DEFAULT '',
+      source     TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mail_suppression_created ON mail_suppression(created_at DESC);
   `);
 
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核
@@ -454,6 +480,14 @@ export function migrate() {
   // 第六批：观战凭证（房间内玩家可分享的只读钥匙）与已存档的棋谱 id
   addColumn('play_rooms', 'watch_token', "watch_token TEXT NOT NULL DEFAULT ''");
   addColumn('play_rooms', 'replay_id', 'replay_id INTEGER DEFAULT 0');
+
+  // 第十批：「只看我的」从昵称匹配升级成账号级绑定 —— 房间记住两位玩家的账号 id
+  // （0 = 未登录 / 匿名），棋谱落库时从房间行拷过去，检索才能按 id 匹配（改昵称也认）。
+  // 老库这两列都没有，靠上面的 addColumn 补；老棋谱补出来是 0，检索侧用昵称回退兜住。
+  addColumn('play_rooms', 'host_user_id', 'host_user_id INTEGER NOT NULL DEFAULT 0');
+  addColumn('play_rooms', 'guest_user_id', 'guest_user_id INTEGER NOT NULL DEFAULT 0');
+  addColumn('play_replays', 'host_user_id', 'host_user_id INTEGER NOT NULL DEFAULT 0');
+  addColumn('play_replays', 'guest_user_id', 'guest_user_id INTEGER NOT NULL DEFAULT 0');
 
   // 第八批：论坛精华（置顶/锁定是既有的 pinned/locked；featured 是新增列）
   addColumn('forum_threads', 'featured', 'featured INTEGER NOT NULL DEFAULT 0');

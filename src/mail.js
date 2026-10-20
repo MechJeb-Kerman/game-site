@@ -40,6 +40,12 @@ export async function sendMail({ to, subject, text, html = '', tag = '' } = {}) 
   };
   if (!mail.to) return { ok: false, id: 0, queued: false, error: 'no_recipient' };
 
+  // 抑制名单：退信过 / 后台手动拉黑的地址不再真发（enqueue 里也有一道闸，这里挡的是 HTTP 直投那条路）
+  if (outboxStore.isSuppressed(mail.to)) {
+    console.log('[mail:suppressed] 跳过 ' + mail.to + ' | ' + mail.subject);
+    return { ok: false, id: 0, queued: false, suppressed: true, error: 'suppressed' };
+  }
+
   const id = enqueue(mail);
 
   if (!mailConfigured()) {
@@ -68,6 +74,7 @@ export async function sendMail({ to, subject, text, html = '', tag = '' } = {}) 
 export async function deliverNow(mail) {
   const to = String((mail && mail.to) || '');
   if (!to) return { ok: false, status: 0, error: 'no_recipient' };
+  if (outboxStore.isSuppressed(to)) return { ok: false, status: 0, error: 'suppressed' };
   if (!mailConfigured()) return { ok: false, status: 0, error: 'not_configured' };
   const api = process.env.MAIL_API_URL || 'https://api.resend.com/emails';
   try {

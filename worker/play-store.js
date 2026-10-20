@@ -60,8 +60,17 @@ export async function sweep(db, now = Date.now()) {
   await run(db, 'DELETE FROM play_rooms WHERE status <> ? AND updated_at < ?', [STATUS.WAITING, now - TTL_PLAYING_MS]);
 }
 
-/** 建房：6 位房间码，撞了就重摇（最多 8 次） */
-export async function createRoom(db, game, name, now = Date.now()) {
+/**
+ * 房间里的玩家 id：0 = 未登录 / 匿名（老调用点不传 opts 时就是这个值，落库行为与改前逐字相同）。
+ * 非数字 / NaN / 负数 / 小数都归一成 0 或正整数，避免把脏值写进库。
+ */
+function userIdOf(opts) {
+  const n = Number((opts && opts.userId) || 0);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+}
+
+/** 建房：6 位房间码，撞了就重摇（最多 8 次）；opts.userId 是建房者的账号 id（0 = 匿名） */
+export async function createRoom(db, game, name, now = Date.now(), opts = {}) {
   const g = cleanGame(game);
   if (!g) return { error: 'bad_game' };
   await sweep(db, now);
@@ -77,16 +86,16 @@ export async function createRoom(db, game, name, now = Date.now()) {
   const watch = randomHex(12);
   const info = await run(
     db,
-    'INSERT INTO play_rooms (code, game, status, host_name, guest_name, host_token, guest_token, turn, move_count, result, rematch, watch_token, replay_id, created_at, updated_at) ' +
-      "VALUES (?, ?, 'waiting', ?, '', ?, '', 0, 0, '', 0, ?, 0, ?, ?)",
-    [code, g, cleanName(name), token, watch, now, now]
+    'INSERT INTO play_rooms (code, game, status, host_name, guest_name, host_token, guest_token, turn, move_count, result, rematch, watch_token, replay_id, host_user_id, guest_user_id, created_at, updated_at) ' +
+      "VALUES (?, ?, 'waiting', ?, '', ?, '', 0, 0, '', 0, ?, 0, ?, 0, ?, ?)",
+    [code, g, cleanName(name), token, watch, userIdOf(opts), now, now]
   );
   // 注意：只回 publicRoom + 本人的 token，绝不能把整行丢出去（里面有 host_token/guest_token）
   return { room: publicRoom(await room(db, Number(info.meta.last_row_id)), 0), token, seat: 0 };
 }
 
-/** 用房间码加入；座位只有一个，先到先得（UPDATE 里的 guest_token = '' 是并发闸门） */
-export async function joinRoom(db, code, name, now = Date.now()) {
+/** 用房间码加入；座位只有一个，先到先得（UPDATE 里的 guest_token = '' 是并发闸门）；opts.userId 是加入者的账号 id（0 = 匿名） */
+export async function joinRoom(db, code, name, now = Date.now(), opts = {}) {
   const c = cleanCode(code);
   if (!c) return { error: 'bad_code' };
   const r = await one(db, 'SELECT * FROM play_rooms WHERE code = ?', [c]);
@@ -97,15 +106,15 @@ export async function joinRoom(db, code, name, now = Date.now()) {
   const token = randomHex(16);
   const info = await run(
     db,
-    "UPDATE play_rooms SET guest_name = ?, guest_token = ?, status = 'playing', turn = 0, updated_at = ? WHERE id = ? AND guest_token = ''",
-    [cleanName(name), token, now, r.id]
+    "UPDATE play_rooms SET guest_name = ?, guest_user_id = ?, guest_token = ?, status = 'playing', turn = 0, updated_at = ? WHERE id = ? AND guest_token = ''",
+    [cleanName(name), userIdOf(opts), token, now, r.id]
   );
   if (!info.meta.changes) return { error: 'full' };
   return { room: publicRoom(await room(db, r.id), 1), token, seat: 1 };
 }
 
-/** 快速匹配：同一局游戏里最早那间空房，没有就自己开一间 */
-export async function quickMatch(db, game, name, now = Date.now()) {
+/** 快速匹配：同一局游戏里最早那间空房，没有就自己开一间；opts.userId 原样带给 joinRoom / createRoom */
+export async function quickMatch(db, game, name, now = Date.now(), opts = {}) {
   const g = cleanGame(game);
   if (!g) return { error: 'bad_game' };
   const wait = await one(
@@ -115,9 +124,9 @@ export async function quickMatch(db, game, name, now = Date.now()) {
   );
   if (wait) {
     const full = await one(db, 'SELECT * FROM play_rooms WHERE code = ?', [wait.code]);
-    if (full && !isExpired(full, now)) return { ...(await joinRoom(db, wait.code, name, now)), created: false };
+    if (full && !isExpired(full, now)) return { ...(await joinRoom(db, wait.code, name, now, opts)), created: false };
   }
-  return { ...(await createRoom(db, g, name, now)), created: true };
+  return { ...(await createRoom(db, g, name, now, opts)), created: true };
 }
 
 /**
@@ -129,15 +138,19 @@ export async function saveReplay(db, r, now = Date.now()) {
   if (!r || r.status !== STATUS.DONE) return 0;
   const saved = Number(r.replay_id || 0);
   if (saved) return saved;
+  // 玩家 id 优先取显式字段（r.hostUserId / r.guestUserId），其次取房间行的原始列
+  // （内部调用传的就是 room(db, id) 整行，列名是 snake_case），都没有 = 0 = 匿名 / 老调用
+  const hostUserId = userIdOf({ userId: r.hostUserId !== undefined ? r.hostUserId : r.host_user_id });
+  const guestUserId = userIdOf({ userId: r.guestUserId !== undefined ? r.guestUserId : r.guest_user_id });
   const res = await stmt(db, 'SELECT seat, move FROM play_moves WHERE room_id = ? ORDER BY seq ASC LIMIT 2000', [r.id]).all();
   const rows = (res && res.results) || [];
   if (!rows.length) return 0;
   const info = await run(
     db,
-    'INSERT INTO play_replays (game, room_code, host_name, guest_name, result, move_count, moves, plays, created_at) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)',
+    'INSERT INTO play_replays (game, room_code, host_name, guest_name, result, move_count, moves, plays, host_user_id, guest_user_id, created_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)',
     [r.game, r.code || '', r.host_name || '', r.guest_name || '', r.result || '', rows.length,
-      JSON.stringify(rows.map((x) => [Number(x.seat), x.move])), now]
+      JSON.stringify(rows.map((x) => [Number(x.seat), x.move])), hostUserId, guestUserId, now]
   );
   const id = Number(info.meta.last_row_id);
   await run(db, 'UPDATE play_rooms SET replay_id = ? WHERE id = ?', [id, r.id]);
@@ -213,10 +226,10 @@ function replayDay(ms) {
  * - player：昵称子串匹配（LIKE，ASCII 大小写不敏感），命中 host_name 或 guest_name 任一边；
  * - result：只认 host / guest / draw；
  * - from / to：YYYY-MM-DD 或数字时间戳，闭区间，解析不了的忽略；
- * - mine：'1' / 'on' / 'true' =「只看我的」，匹配谁由调用方按登录用户算（见 replayList 的 mine）。
- * 「只看我的」的口径：play_replays 没有任何用户列（worker/schema.js 只有建房时客户端填的昵称），
- * 全站也没有「账号 ↔ 昵称」的绑定（src/elo.js:22 说天梯身份键同样由昵称派生），
- * 所以只能按昵称精确匹配 —— 改过昵称、或与别人重名时结果会不准，页面文案也写明了。
+ * - mine：'1' / 'on' / 'true' =「只看我的」，匹配谁由调用方按登录用户算（见 replayList 的 mine / ownerId）。
+ * 「只看我的」的口径（第十批改成账号级）：play_replays 有 host_user_id / guest_user_id 两列
+ * （0 = 匿名 / 这次改动之前落的老棋谱），登录用户按 id 匹配（ownerId），改昵称也认；
+ * 老棋谱那两列是 0，所以调用方把昵称一起传（mine）在同一组 OR 里兜底 —— 昵称不唯一，回退不保证不误命中。
  */
 export function replayFilters(raw = {}) {
   const r = raw && typeof raw === 'object' ? raw : {};
@@ -242,10 +255,12 @@ export function replayFilters(raw = {}) {
 
 /**
  * 棋谱列表（game / player / result / 日期区间过滤，id 倒序）。
- * 旧调用 replayList(db, { game, limit, offset }) 与之前逐字相同：没有筛选时 SQL 文本与夹紧口径都没变。
+ * 旧调用 replayList(db, { game, limit, offset })：筛选条件（WHERE 的文本与参数顺序）与夹紧口径逐字没变；
+ * 返回的行多了 hostUserId / guestUserId 两个字段（第十批的账号级绑定，见 replayRow）。
  * @param {object} [opts] replayFilters 的那些原始参数，外加
  *   limit（默认 12，夹 1..maxLimit）、offset（≥0）、maxLimit（默认 50，夹 1..REPLAY_MAX_LIMIT，导出传 500）、
- *   mine（登录用户名数组：host_name / guest_name 精确匹配其中之一，空数组 = 不筛）
+ *   mine（登录用户名数组：host_name / guest_name 精确匹配其中之一，空数组 = 不筛；老棋谱的用户列是 0，靠它兜底）、
+ *   ownerId（登录用户 id：> 0 时按 host_user_id / guest_user_id 匹配；与 mine 同时给就并进同一组 OR）
  */
 export async function replayList(db, opts = {}) {
   const o = opts && typeof opts === 'object' ? opts : {};
@@ -268,12 +283,21 @@ export async function replayList(db, opts = {}) {
   const mine = Array.isArray(o.mine)
     ? o.mine.map((x) => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 4)
     : [];
+  // ownerId 是登录用户的账号 id：不传 / 0 / 负数 / NaN 都当「没给」，此时下面的筛选 SQL 与改前逐字一致
+  const ownerId = Number(o.ownerId) > 0 ? Math.trunc(Number(o.ownerId)) : 0;
   if (mine.length) {
-    where.push('(' + mine.map(() => '(LOWER(TRIM(host_name)) = LOWER(?) OR LOWER(TRIM(guest_name)) = LOWER(?))').join(' OR ') + ')');
+    const byName = mine.map(() => '(LOWER(TRIM(host_name)) = LOWER(?) OR LOWER(TRIM(guest_name)) = LOWER(?))').join(' OR ');
+    // 给了 ownerId 就并进同一组 OR：id 认新棋谱（改名也认），昵称认老棋谱（用户列是 0）
+    where.push(ownerId ? '(' + byName + ' OR host_user_id = ? OR guest_user_id = ?)' : '(' + byName + ')');
     for (const n of mine) params.push(n, n);
+    if (ownerId) params.push(ownerId, ownerId);
+  } else if (ownerId) {
+    // 只给 ownerId：不再按昵称匹配（否则会把同名的别人的棋谱捞进来）
+    where.push('(host_user_id = ? OR guest_user_id = ?)');
+    params.push(ownerId, ownerId);
   }
 
-  const cols = 'id, game, host_name, guest_name, result, move_count, plays, created_at';
+  const cols = 'id, game, host_name, guest_name, result, move_count, plays, created_at, host_user_id, guest_user_id';
   const cond = where.length ? ' WHERE ' + where.join(' AND ') : '';
   const res = await stmt(db, 'SELECT ' + cols + ' FROM play_replays' + cond + ' ORDER BY id DESC LIMIT ? OFFSET ?',
     params.concat([lim, off])).all();
@@ -285,7 +309,9 @@ function replayRow(row) {
   return {
     id: Number(row.id), game: row.game, hostName: row.host_name || '黑方', guestName: row.guest_name || '白方',
     result: row.result || '', winner: winnerName(row), moveCount: Number(row.move_count || 0),
-    plays: Number(row.plays || 0), createdAt: Number(row.created_at || 0)
+    plays: Number(row.plays || 0), createdAt: Number(row.created_at || 0),
+    // 第十批：账号级绑定（0 = 匿名 / 这批之前落的老棋谱）—— 加在末尾，既有字段名与顺序不动
+    hostUserId: Number(row.host_user_id || 0), guestUserId: Number(row.guest_user_id || 0)
   };
 }
 

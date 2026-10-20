@@ -4,12 +4,25 @@
  * 统计口径务必保持一致（comments/threads/replies 只数 status = 1，ratings 认 visitor = 用户 id）。
  */
 import { dayKey, pickDaily, streakOf, makeupCheck, calendarCells, monthPerfect } from '../src/daily.js';
-import { badgesOf, levelOf, titleOf } from '../src/badges.js';
+import { badgesOf } from '../src/badges.js';
+// 打卡奖励的经验（8 档，快照口径）并进等级：与徽章经验各算各的、可叠加
+import { rewardLevelOf } from '../src/rewards.js';
+// Web Push：notify() 写完站内通知顺手推一条（与 src/social.js:12 的同名 import 对应）
+import { notifyPush } from './push.js';
 import { listGames } from './data.js';
 
 function stmt(db, sql, params) {
   const st = db.prepare(sql);
   return params && params.length ? st.bind.apply(st, params) : st;
+}
+
+// Web Push 的 env（VAPID 密钥）不在数据库里：D1 线由 app.js 每个请求进来时注入一次。
+// 没注入时 pushConfigured({}) 判未配置，推送整条空转——与线上没配 VAPID 的行为一致。
+let pushEnv = {};
+
+/** 注入本次请求的 env（worker/app.js 在 appFetch 开头调）。 */
+export function usePushEnv(env) {
+  pushEnv = env || {};
 }
 
 async function one(db, sql, params) {
@@ -173,6 +186,8 @@ export async function statsOf(db, userId) {
     daily: daily.total,
     streak: daily.streak,
     doneToday: daily.doneToday,
+    // 当月全勤（perfect-month 徽章读这个数字；perfect 是对象，badgesOf 直接读 stats[b.stat] 读不到）
+    perfectMonths: daily.perfect && daily.perfect.perfect ? 1 : 0,
     joinedAt: u.created_at || ''
   };
 }
@@ -181,7 +196,8 @@ export async function statsOf(db, userId) {
 export async function profileOf(db, userId) {
   const stats = await statsOf(db, userId);
   if (!stats) return null;
-  const level = levelOf(stats);
+  // rewardLevelOf = levelOf 的字段 + 把打卡奖励经验并进来（多一个 bonus）
+  const level = rewardLevelOf(stats);
   return Object.assign({}, stats, {
     badges: badgesOf(stats),
     badgesOwned: badgesOf(stats).filter((b) => b.done).length,
@@ -190,7 +206,8 @@ export async function profileOf(db, userId) {
     xpFloor: level.floor,
     xpNext: level.next,
     xpNeed: level.need,
-    title: titleOf(level.level)
+    xpBonus: level.bonus,
+    title: level.title
   });
 }
 
@@ -392,7 +409,19 @@ export async function notify(db, userId, { kind, actorId = 0, targetType = '', t
     'INSERT INTO notifications (user_id, kind, actor_id, target_type, target_id, body) VALUES (?, ?, ?, ?, ?, ?)',
     [uid, k, actor, tt, tid, flat(body, NOTIFY_MAX)]
   ).run();
-  return { id: Number((info && info.meta && info.meta.last_row_id) || 0) };
+  const id = Number((info && info.meta && info.meta.last_row_id) || 0);
+  // 通知落库成功才推：push.js 自己判 VAPID 配置、kind 白名单与「自己给自己」
+  if (id) {
+    notifyPush(db, pushEnv, uid, {
+      kind: k,
+      actorId: actor,
+      actorName: actor ? nameOf(await userBrief(db, actor)) : '',
+      targetType: tt,
+      targetId: tid,
+      body: flat(body, NOTIFY_MAX)
+    });
+  }
+  return { id: id };
 }
 
 /**

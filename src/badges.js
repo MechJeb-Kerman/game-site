@@ -25,13 +25,25 @@ export const BADGES = [
   { id: 'mail-ok', icon: '📧', name: '邮箱已验证', desc: '完成邮箱验证', stat: 'verified', need: 1 },
   { id: 'veteran-30', icon: '🕰️', name: '老玩家', desc: '注册满 30 天', stat: 'days', need: 30 },
   { id: 'author', icon: '🎁', name: '投稿者', desc: '提交 1 款游戏', stat: 'submitted', need: 1 },
-  { id: 'published', icon: '🚀', name: '作者认证', desc: '提交的游戏被收录上架', stat: 'published', need: 1 }
+  { id: 'published', icon: '🚀', name: '作者认证', desc: '提交的游戏被收录上架', stat: 'published', need: 1 },
+
+  /* ---------- 第九批：每日挑战的实质奖励（配套 src/rewards.js，只追加、不动上面 16 枚）----------
+   * stat 仍是 statsOf() 的字段名：streak = 连续天数（补做不续连续）、daily = 累计完成次数、
+   * perfectMonths = 当月全勤（0/1）。perfectMonths **要 statsOf() 提供**：src/social.js 的
+   * statsOf() 里 daily.perfect 已经算好了，加一行 `perfectMonths: daily.perfect.perfect ? 1 : 0`
+   * 即可（worker/social.js 同理）；没接线时这枚停在 0/1，不会误点亮。
+   */
+  { id: 'streak-14', icon: '⚡', name: '双周不辍', desc: '连续 14 天完成每日挑战', stat: 'streak', need: 14 },
+  { id: 'streak-30', icon: '🌋', name: '月度不熄', desc: '连续 30 天完成每日挑战', stat: 'streak', need: 30 },
+  { id: 'daily-100', icon: '📚', name: '百战之身', desc: '累计完成 100 次每日挑战', stat: 'daily', need: 100 },
+  { id: 'perfect-month', icon: '🏅', name: '当月全勤', desc: '当月每一天都完成每日挑战', stat: 'perfectMonths', need: 1 }
 ];
 
 /** 每个统计项的权重（算经验值用） */
 const XP = {
   comments: 5, favorites: 3, ratings: 5, threads: 10, replies: 3,
-  daily: 20, streak: 10, verified: 10, days: 1, submitted: 20, published: 50
+  daily: 20, streak: 10, verified: 10, days: 1, submitted: 20, published: 50,
+  perfectMonths: 100 // 当月全勤（0/1，见 BADGES 末尾）：与 src/rewards.js 的奖励经验各算各的、可叠加
 };
 
 /** 按统计算徽章：返回全部徽章（含未拿到的进度），已拿到的排在前面 */

@@ -4,8 +4,12 @@
  */
 import { db } from './db.js';
 import { dayKey, pickDaily, streakOf, makeupCheck, calendarCells, monthPerfect } from './daily.js';
-import { badgesOf, levelOf, titleOf } from './badges.js';
+import { badgesOf } from './badges.js';
+// 打卡奖励的经验（8 档，快照口径）并进等级：与徽章经验各算各的、可叠加
+import { rewardLevelOf } from './rewards.js';
 import { listGames } from './data.js';
+// Web Push：通知落库后顺带推一条到用户浏览器（没配 VAPID 时整条空转，见 src/push.js:236）
+import { notifyPush } from './push.js';
 
 const one = (sql, ...args) => Number((db.prepare(sql).get(...args) || {}).n || 0);
 
@@ -156,6 +160,8 @@ export function statsOf(userId) {
     daily: daily.total,
     streak: daily.streak,
     doneToday: daily.doneToday,
+    // 当月全勤（perfect-month 徽章读这个数字；perfect 是对象，badgesOf 直接读 stats[b.stat] 读不到）
+    perfectMonths: daily.perfect && daily.perfect.perfect ? 1 : 0,
     joinedAt: u.created_at || ''
   };
 }
@@ -164,7 +170,8 @@ export function statsOf(userId) {
 export function profileOf(userId) {
   const stats = statsOf(userId);
   if (!stats) return null;
-  const level = levelOf(stats);
+  // rewardLevelOf = levelOf 的字段 + 把打卡奖励经验并进来（多一个 bonus）
+  const level = rewardLevelOf(stats);
   return Object.assign({}, stats, {
     badges: badgesOf(stats),
     badgesOwned: badgesOf(stats).filter((b) => b.done).length,
@@ -173,7 +180,8 @@ export function profileOf(userId) {
     xpFloor: level.floor,
     xpNext: level.next,
     xpNeed: level.need,
-    title: titleOf(level.level)
+    xpBonus: level.bonus,
+    title: level.title
   });
 }
 
@@ -419,7 +427,19 @@ export function notify(userId, { kind, actorId = 0, targetType = '', targetId = 
   const info = db
     .prepare('INSERT INTO notifications (user_id, kind, actor_id, target_type, target_id, body) VALUES (?, ?, ?, ?, ?, ?)')
     .run(uid, k, actor, tt, tid, flat(body, NOTIFY_MAX));
-  return { id: Number(info.lastInsertRowid) || 0 };
+  const id = Number(info.lastInsertRowid) || 0;
+  // 通知落库成功才推：push.js 自己判 VAPID 配置、kind 白名单与「自己给自己」
+  if (id) {
+    notifyPush(uid, {
+      kind: k,
+      actorId: actor,
+      actorName: actor ? nameOf(userBrief(actor)) : '',
+      targetType: tt,
+      targetId: tid,
+      body: flat(body, NOTIFY_MAX)
+    });
+  }
+  return { id: id };
 }
 
 /**

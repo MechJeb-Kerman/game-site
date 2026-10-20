@@ -25,6 +25,7 @@ import * as outbox from './outbox.js';
 import * as attach from './attachments.js';
 import * as rules from '../src/rules/index.js';
 import { seasonOf } from '../src/elo.js';
+import * as push from './push.js';
 
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
@@ -1089,6 +1090,102 @@ async function pageAdmin(ctx) {
   }));
 }
 
+/** 送达率 / 抑制名单后台页（对应 Express 的 GET /admin/mail） */
+async function pageAdminMail(ctx) {
+  return okHtml(ctx, ui.mailAdminPage({
+    origin: ctx.origin, user: ctx.user,
+    stats: await outbox.deliveryStats(ctx.db, 7),
+    suppressed: await outbox.listSuppressed(ctx.db, 50),
+    bounces: (await outbox.bounceSummary(ctx.db, 20)).rows,
+    webhook: { ready: !!String(ctx.env.MAIL_WEBHOOK_SECRET || ''), path: '/webhooks/mail-bounce' },
+    notice: String(ctx.url.searchParams.get('ok') || '')
+  }));
+}
+
+async function adminMailSuppress(ctx) {
+  const b = await readBody(ctx.request);
+  const address = String(b.address || '').trim().slice(0, 200);
+  const reason = String(b.reason || '').trim().slice(0, 120);
+  const r = await outbox.suppress(ctx.db, address, reason, 'manual');
+  if (!r.ok) return redirectTo(ctx, '/admin/mail?ok=bad');
+  await data.logAudit(ctx.db, ctx.user, 'mail.suppress', r.address, reason + (r.cleared ? ' 清掉排队 ' + r.cleared + ' 封' : ''));
+  return redirectTo(ctx, '/admin/mail?ok=suppress');
+}
+
+async function adminMailUnsuppress(ctx) {
+  const b = await readBody(ctx.request);
+  const address = String(b.address || '').trim().slice(0, 200);
+  const r = await outbox.unsuppress(ctx.db, address);
+  if (!r.removed) return redirectTo(ctx, '/admin/mail?ok=missing');
+  await data.logAudit(ctx.db, ctx.user, 'mail.unsuppress', r.address, '');
+  return redirectTo(ctx, '/admin/mail?ok=unsuppress');
+}
+
+/* ---------- 邮件：服务商退信 / 投诉回调（对应 Express 的 POST /webhooks/mail-bounce） ---------- */
+
+/** 定长时间比较（Worker 里没有 node:crypto 的 timingSafeEqual，照 worker/auth.js 的写法） */
+function tokenEqual(a, b) {
+  const x = String(a || '');
+  const y = String(b || '');
+  if (!y || x.length !== y.length) return false;
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return diff === 0;
+}
+
+/** 只有退信/投诉/投递失败才抑制；其它事件（送达、打开）照收 200，免得服务商重投 */
+const BOUNCE_EVENT_RE = /bounce|complain|failed/; // Resend 的投诉事件名是 email.complained（-ed），别只写 complaint
+
+/** 回调体里的收件人：Resend 是 {type:'email.bounced', data:{to:[…]}}，也认扁平的 {to, reason} */
+function bounceAddresses(body, query) {
+  const q = query || {};
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const d = b.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : {};
+  const out = [];
+  const push = (v) => {
+    if (Array.isArray(v)) { for (const x of v) push(x); return; }
+    if (v && typeof v === 'object') { push(v.email || v.address || v.recipient || ''); return; }
+    const s = String(v || '').trim();
+    if (s.includes('@')) out.push(s);
+  };
+  push(b.to); push(d.to); push(b.email); push(d.email); push(b.recipient); push(d.recipient); push(q.to);
+  return Array.from(new Set(out)).slice(0, 20);
+}
+
+/** 事件类型与原因；type 为空时按「服务商既然打到了这个端点」当成退信处理 */
+function bounceKind(body, query) {
+  const q = query || {};
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const d = b.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : {};
+  const bounce = (d.bounce && typeof d.bounce === 'object') ? d.bounce
+    : ((b.bounce && typeof b.bounce === 'object') ? b.bounce : {});
+  const type = String(b.type || b.event || b.event_type || b.eventType || q.type || '').toLowerCase();
+  const reason = String(b.reason || d.reason || bounce.message || b.description || d.description || type || '').slice(0, 200);
+  const hard = /permanent|hard/i.test(String(bounce.type || b.bounce_type || ''));
+  return { type: type, reason: reason, hit: !type || hard || BOUNCE_EVENT_RE.test(type) };
+}
+
+async function webhookMailBounce(ctx) {
+  const secret = String(ctx.env.MAIL_WEBHOOK_SECRET || '');
+  const bearer = String(ctx.request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const got = String(bearer || ctx.url.searchParams.get('token') || '').trim();
+  if (!tokenEqual(got, secret)) {
+    return okJson(ctx, { ok: false, error: secret ? 'forbidden' : 'not_configured' }, 403);
+  }
+  const body = await readBody(ctx.request);
+  const addresses = bounceAddresses(body, { to: ctx.url.searchParams.get('to') || '' });
+  if (!addresses.length) return okJson(ctx, { ok: false, error: 'no_recipient' }, 400);
+  const k = bounceKind(body, { type: ctx.url.searchParams.get('type') || '' });
+  if (!k.hit) return okJson(ctx, { ok: true, ignored: k.type || 'unknown', suppressed: 0, addresses: [] });
+  const done = [];
+  for (const addr of addresses) {
+    const r = await outbox.markBounced(ctx.db, addr, 'provider: ' + (k.reason || k.type || 'bounce'));
+    if (r.ok) done.push(addr);
+  }
+  if (done.length) await data.logAudit(ctx.db, null, 'mail.bounce', done.join(','), (k.reason || k.type || 'bounce'));
+  return okJson(ctx, { ok: true, type: k.type || 'bounce', suppressed: done.length, addresses: done });
+}
+
 /** 后台预览：待审核的投稿也能按玩家视角打开 */
 async function adminPreview(ctx, params) {
   const game = await data.getGameAny(ctx.db, String(params.slug));
@@ -1768,6 +1865,11 @@ function playReply(ctx, r, status = 200) {
   return okJson(ctx, Object.assign({ ok: true }, r), status);
 }
 
+/** 已登录请求的用户 id，没登录就是 0（匿名也能玩，落库时记 0；与 Express 线的 userIdOf 同口径） */
+function userIdOf(ctx) {
+  return Number(ctx.user && ctx.user.id) || 0;
+}
+
 function playThrottled(ctx, key) {
   const ip = ctx.request.headers.get('cf-connecting-ip') || 'local';
   return !dedupe(key + ':' + ip, 1000);
@@ -1776,19 +1878,19 @@ function playThrottled(ctx, key) {
 async function apiPlayCreate(ctx) {
   const b = await readBody(ctx.request);
   if (playThrottled(ctx, 'play-new')) return okJson(ctx, { ok: false, error: 'busy', hint: '别急，稍等一秒' }, 429);
-  return playReply(ctx, await play.createRoom(ctx.db, b.game, b.name, Date.now()), 201);
+  return playReply(ctx, await play.createRoom(ctx.db, b.game, b.name, Date.now(), { userId: userIdOf(ctx) }), 201);
 }
 
 async function apiPlayQuick(ctx) {
   const b = await readBody(ctx.request);
   if (playThrottled(ctx, 'play-new')) return okJson(ctx, { ok: false, error: 'busy', hint: '别急，稍等一秒' }, 429);
-  const r = await play.quickMatch(ctx.db, b.game, b.name, Date.now());
+  const r = await play.quickMatch(ctx.db, b.game, b.name, Date.now(), { userId: userIdOf(ctx) });
   return playReply(ctx, r, r.created ? 201 : 200);
 }
 
 async function apiPlayJoin(ctx) {
   const b = await readBody(ctx.request);
-  return playReply(ctx, await play.joinRoom(ctx.db, b.code, b.name, Date.now()));
+  return playReply(ctx, await play.joinRoom(ctx.db, b.code, b.name, Date.now(), { userId: userIdOf(ctx) }));
 }
 
 async function apiPlayPoll(ctx) {
@@ -2073,6 +2175,37 @@ async function apiMessagesUnread(ctx) {
   return okJson(ctx, { ok: true, unread: (t.items || []).reduce(function (n, x) { return n + Number(x.unread || 0); }, 0) });
 }
 
+/* ---------- Web Push：浏览器订阅（没配 VAPID 时 enabled:false，前端不显示按钮） ---------- */
+
+/** 公钥：前端拿它当 applicationServerKey 订阅（views.js 的 pushScript 认 configured/publicKey/subscribed） */
+async function apiPushKey(ctx) {
+  const key = push.vapidPublicKey(ctx.env);
+  const subs = ctx.user ? await push.listSubscriptions(ctx.db, ctx.user.id) : [];
+  return okJson(ctx, {
+    ok: true,
+    configured: !!key,
+    publicKey: key,
+    subscribed: (subs || []).some(function (s) { return !s.disabled; })
+  });
+}
+
+/** 订阅：body 收 { subscription }，也兼容直接收订阅对象本身 */
+async function apiPushSubscribe(ctx) {
+  if (!ctx.user) return okJson(ctx, { ok: false, error: 'login_required' }, 401);
+  const b = await readBody(ctx.request);
+  const sub = (b && (b.subscription || b)) || null;
+  const r = await push.subscribe(ctx.db, ctx.user.id, sub, ctx.request.headers.get('user-agent') || '');
+  return okJson(ctx, { ok: !!r.ok, id: r.id || 0, error: r.error || '' }, r.ok ? 200 : 400);
+}
+
+/** 退订：不带 endpoint = 这个账号的全部订阅都退 */
+async function apiPushUnsubscribe(ctx) {
+  if (!ctx.user) return okJson(ctx, { ok: false, error: 'login_required' }, 401);
+  const b = await readBody(ctx.request);
+  const r = await push.unsubscribe(ctx.db, ctx.user.id, (b && b.endpoint) || '');
+  return okJson(ctx, { ok: true, removed: r.removed });
+}
+
 /* ---------- 通知钩子：动作成功后补写通知，失败只记日志，绝不影响主流程 ---------- */
 
 /** 回复主题之后：楼主收 reply，正文里 @ 到的人收 mention */
@@ -2153,11 +2286,16 @@ function replayFiltersFor(ctx) {
   const f = play.replayFilters(replayQuery(ctx.url));
   // 页面沿用老口径：game 只认天梯里的六款，其余一律当没填（与 Express 线一字不差）
   const game = LADDER_GAMES.indexOf(f.game) >= 0 ? f.game : '';
-  // 「只看我的」没有账号列可 JOIN（play_replays 只存建房时的昵称），所以按昵称精确匹配当前用户的名字
+  // 「只看我的」优先按账号 id 匹配（play_replays.host_user_id / guest_user_id），
+  // 昵称一起传是为了老棋谱（落库时还没有用户列，记为 0）靠建房昵称回退命中——与 Express 线一字不差。
   const u = ctx.user || null;
   const names = u ? [u.name, u.username].filter(Boolean) : [];
-  const mine = f.mine && names.length > 0;
-  return { filters: Object.assign({}, f, { game: game, mine: mine }), mine: mine ? names : [] };
+  const mine = f.mine && !!u;
+  return {
+    filters: Object.assign({}, f, { game: game, mine: mine }),
+    mine: mine ? names : [],
+    ownerId: mine ? Number(u.id) || 0 : 0
+  };
 }
 
 /** 棋谱列表：只列裁判棋的对局（?game= 过滤、?page= 翻页，另支持上面那组检索参数） */
@@ -2172,6 +2310,7 @@ async function pageReplays(ctx) {
     from: q.filters.from,
     to: q.filters.to,
     mine: q.mine,
+    ownerId: q.ownerId,
     limit: PAGE,
     offset: (asked2 - 1) * PAGE
   });
@@ -2230,6 +2369,7 @@ async function apiReplays(ctx) {
     from: q.filters.from,
     to: q.filters.to,
     mine: q.mine,
+    ownerId: q.ownerId,
     limit: limit,
     offset: 0,
     maxLimit: play.REPLAY_MAX_LIMIT
@@ -2316,6 +2456,10 @@ const ROUTES = [
   { m: 'GET', p: '/submit', fn: pageSubmit, need: 'user' },
   { m: 'POST', p: '/submit', fn: doSubmit, need: 'user' },
   { m: 'GET', p: '/admin', fn: pageAdmin, need: 'admin' },
+  { m: 'GET', p: '/admin/mail', fn: pageAdminMail, need: 'admin' },
+  { m: 'POST', p: '/admin/mail/suppress', fn: adminMailSuppress, need: 'admin' },
+  { m: 'POST', p: '/admin/mail/unsuppress', fn: adminMailUnsuppress, need: 'admin' },
+  { m: 'POST', p: '/webhooks/mail-bounce', fn: webhookMailBounce },
   { m: 'GET', p: '/admin/games/:slug/delete', fn: adminDeletePage, need: 'admin' },
   { m: 'POST', p: '/admin/games/:slug/delete', fn: adminDelete, need: 'admin' },
   { m: 'POST', p: '/admin/games/:slug/status', fn: adminSetGame, need: 'admin' },
@@ -2324,6 +2468,10 @@ const ROUTES = [
   // 社交：导航小红点的未读数
   { m: 'GET', p: '/api/notifications/unread', fn: apiNotificationsUnread },
   { m: 'GET', p: '/api/messages/unread', fn: apiMessagesUnread },
+  // Web Push：订阅（公钥 / 订阅 / 退订）
+  { m: 'GET', p: '/api/push/key', fn: apiPushKey },
+  { m: 'POST', p: '/api/push/subscribe', fn: apiPushSubscribe },
+  { m: 'POST', p: '/api/push/unsubscribe', fn: apiPushUnsubscribe },
   { m: 'POST', p: '/api/auth/login', fn: apiLogin },
   { m: 'POST', p: '/api/auth/register', fn: apiRegister },
   { m: 'POST', p: '/api/auth/logout', fn: apiLogout },
@@ -2937,6 +3085,51 @@ self.addEventListener('message', function (event) {
     self.skipWaiting();
   }
 });
+
+/* ------------------------------------------------------------------ 主动推送（Web Push） */
+
+/* 服务端用 src/push-core.js 加密后 POST 到订阅端点，这里只负责把 payload 变成系统通知。
+   载荷缺失（有些浏览器会给空 push）时也要弹一条兜底通知，否则 Chrome 会按「静默推送」限流。 */
+self.addEventListener('push', function (event) {
+  var data = null;
+  try {
+    if (event.data) data = event.data.json();
+  } catch (e) {
+    try { data = { body: event.data.text() }; } catch (e2) { data = null; }
+  }
+  data = data || {};
+  var title = data.title || '趣玩小游戏';
+  var options = {
+    body: data.body || '有新的通知，点开看看',
+    tag: data.tag || 'qw-notice',
+    icon: '/static/icons/icon-192.png',
+    badge: '/static/icons/icon-192.png',
+    lang: 'zh-CN',
+    data: { url: data.url || '/notifications', kind: data.kind || '' }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+/* 点通知：同源已有窗口就聚焦并跳过去，没有就开一个。深链由服务端在 pushPayload 里算好。 */
+self.addEventListener('notificationclick', function (event) {
+  event.notification.close();
+  var target = (event.notification.data && event.notification.data.url) || '/notifications';
+  var url = new URL(target, self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if (new URL(c.url).origin !== self.location.origin) continue;
+        if ('navigate' in c) {
+          return c.navigate(url).then(function () { return c.focus(); }).catch(function () { return self.clients.openWindow(url); });
+        }
+        return c.focus().catch(function () { return self.clients.openWindow(url); });
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
 `;
 
 /* ================= PWA：图标 ================= */
@@ -3028,6 +3221,7 @@ export async function mailRetryTick(ctx) {
       const r = await mail.deliverNow(ctx.env, { to: row.to_addr, subject: row.subject, text: row.body_text });
       if (r.ok) { await outbox.markSent(ctx.db, row.id); done++; }
       else if (r.error === 'not_configured') break;
+      else if (r.error === 'suppressed') { await outbox.markFailed(ctx.env, ctx.db, row.id, r.error, { retry: false }); failed++; }  // 拉黑的地址不再重投
       else { await outbox.markFailed(ctx.env, ctx.db, row.id, r.error); failed++; }
     }
   } catch (err) {
@@ -3079,6 +3273,8 @@ export async function appFetch(request, env, execCtx) {
 
   let res;
   try {
+    // Web Push：把本次请求的 env（VAPID 密钥）注入 social 的通知挂钩（worker/social.js 没别的途径拿 env）
+    social.usePushEnv(env);
     await ensureReady(env);
     ctx.user = await auth.currentUser(env.DB, request);
     res = await route(ctx);
