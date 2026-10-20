@@ -1,7 +1,23 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 04:36";
-export const CHANGELOG_TOTAL = 52;
+export const CHANGELOG_GENERATED = "2026-10-20 05:42";
+export const CHANGELOG_TOTAL = 54;
 export const CHANGELOG = [
+  {
+    "hash": "77c492b",
+    "date": "2026-10-20 13:42",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "浏览器推送接线、邮件抑制与后台、打卡奖励与棋谱账号级绑定"
+  },
+  {
+    "hash": "3345b3c",
+    "date": "2026-10-20 12:36",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "更新说明补上本轮提交（52 条）"
+  },
   {
     "hash": "91d8940",
     "date": "2026-10-20 12:32",
