@@ -1,7 +1,23 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 05:46";
-export const CHANGELOG_TOTAL = 55;
+export const CHANGELOG_GENERATED = "2026-10-20 07:05";
+export const CHANGELOG_TOTAL = 57;
 export const CHANGELOG = [
+  {
+    "hash": "2fbaab6",
+    "date": "2026-10-20 15:05",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "附件对象存储与图片复核、棋谱专用格式导出、OG 预生成、奖励流水、跨实例规则缓存、离线队列与静态封面"
+  },
+  {
+    "hash": "d4d9ccb",
+    "date": "2026-10-20 13:46",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "更新说明补上本轮提交（55 条）"
+  },
   {
     "hash": "b70006d",
     "date": "2026-10-20 13:42",
