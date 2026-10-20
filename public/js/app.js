@@ -460,4 +460,24 @@
     });
   })();
 
+  /* 未读角标：通知与私信（导航里带 data-unread 的链接，数字只进 title，视觉上就是一个小红点） */
+  (function () {
+    var slots = document.querySelectorAll('[data-unread]');
+    if (!slots.length || !window.fetch) return;
+    var paths = { notifications: '/api/notifications/unread', messages: '/api/messages/unread' };
+    Array.prototype.forEach.call(slots, function (slot) {
+      var url = paths[slot.getAttribute('data-unread')];
+      if (!url) return;
+      fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          var n = Number((d && d.unread) || 0);
+          if (!n) return;
+          slot.title = n + ' 条未读';
+          var dot = slot.querySelector('.dot');
+          if (dot) dot.hidden = false;
+        })
+        .catch(function () { });
+    });
+  })();
 })();

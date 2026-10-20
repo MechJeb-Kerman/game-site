@@ -30,7 +30,14 @@
     "test:worker-play": "node tools/worker-play-test.mjs",
     "test:boards": "node tools/board-games-test.mjs",
     "gen:icons": "node tools/gen-icons.mjs",
-    "test:pwa": "node tools/pwa-test.mjs"
+    "gen:sw": "node tools/gen-sw.mjs",
+    "gen:precache": "node tools/gen-precache.mjs",
+    "test:pwa": "node tools/pwa-test.mjs",
+    "test:rules": "node tools/rules-test.mjs",
+    "test:cards": "node tools/cards-test.mjs",
+    "test:adapters": "node tools/adapters-test.mjs",
+    "test:search": "node tools/search-fallback-test.mjs",
+    "test:worker-search": "node tools/worker-search-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

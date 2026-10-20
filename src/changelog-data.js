@@ -1,7 +1,15 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-19 17:25";
-export const CHANGELOG_TOTAL = 46;
+export const CHANGELOG_GENERATED = "2026-10-20 01:15";
+export const CHANGELOG_TOTAL = 47;
 export const CHANGELOG = [
+  {
+    "hash": "46367c2",
+    "date": "2026-10-20 01:25",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "重跑更新说明（46 条提交，含本次 20 款游戏与平台功能）"
+  },
   {
     "hash": "12f6a66",
     "date": "2026-10-20 01:25",

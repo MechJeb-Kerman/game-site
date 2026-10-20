@@ -1,4 +1,4 @@
-/* 联机对战（房间 + 走法中继）接口验收测试。
+/* 联机对战（房间 + 走法）接口验收测试：支持的棋类由服务端规则引擎判定走法合法性与胜负。
  * 前置条件：站点已在 BASE 上跑起来（默认 http://127.0.0.1:3000）。
  *   node tools/play-api-test.mjs          # Express 线，或 pnpm test:play
  *   node tools/worker-play-test.mjs       # Workers + D1 线（本机假 D1），或 pnpm test:worker-play
@@ -101,20 +101,20 @@ async function main() {
   ok('房间不存在 → 404 not_found', r.status === 404 && r.data.error === 'not_found', r.status + ' ' + r.text.slice(0, 120));
 
   /* ---------- 走法与轮流 ---------- */
-  r = await post('/api/play/move', { id: roomId, token: guestToken, move: { x: 1, y: 1 } });
+  r = await post('/api/play/move', { id: roomId, token: guestToken, move: '1,1' });
   ok('没轮到就落子 → 409 not_your_turn', r.status === 409 && r.data.error === 'not_your_turn', r.status + ' ' + r.text.slice(0, 120));
 
-  r = await post('/api/play/move', { id: roomId, token: hostToken, move: { x: 7, y: 7 } });
+  r = await post('/api/play/move', { id: roomId, token: hostToken, move: '7,7' });
   ok('房主第一手 → 200，seq=1，未结束', r.status === 200 && r.data.seq === 1 && r.data.finished === false, r.status + ' ' + r.text.slice(0, 160));
   ok('落子后轮到对手（turn=1）', r.data.room.turn === 1 && r.data.room.myTurn === false && r.data.room.moveCount === 1, JSON.stringify({ t: r.data.room.turn }));
 
-  r = await post('/api/play/move', { id: roomId, token: hostToken, move: { x: 0, y: 0 } });
+  r = await post('/api/play/move', { id: roomId, token: hostToken, move: '0,0' });
   ok('连下两手 → 409 not_your_turn', r.status === 409 && r.data.error === 'not_your_turn', r.status + ' ' + r.text.slice(0, 120));
 
   r = await post('/api/play/poll', { id: roomId, token: guestToken, since: 0 });
   ok('对手轮询拿到增量走法（seq + 座位 + 内容）',
     r.status === 200 && r.data.moves.length === 1 && r.data.moves[0].seq === 1 && r.data.moves[0].seat === 0 &&
-    JSON.parse(r.data.moves[0].move).x === 7, JSON.stringify(r.data.moves));
+    r.data.moves[0].move === '7,7', JSON.stringify(r.data.moves));
   r = await post('/api/play/poll', { id: roomId, token: guestToken, since: 1 });
   ok('since 之后没有新走法 → 空增量', r.status === 200 && r.data.moves.length === 0, JSON.stringify(r.data.moves));
 
@@ -123,13 +123,32 @@ async function main() {
   r = await post('/api/play/move', { id: roomId, token: guestToken, move: 'x'.repeat(300) });
   ok('走法超长（>256）→ 400 bad_move', r.status === 400 && r.data.error === 'bad_move', r.status + ' ' + r.text.slice(0, 120));
 
-  r = await post('/api/play/move', { id: roomId, token: guestToken, move: { x: 7, y: 8 }, result: 'guest' });
-  const fin = r.data || {};   /* 终局响应：后面那局棋的回放断言要用它的 replayId（重赛会把房间的 replay_id 归零） */
-  ok('对手落子并声明胜负 → 对局结束', r.status === 200 && r.data.finished === true && r.data.result === 'guest' && r.data.room.status === 'done',
+  r = await post('/api/play/move', { id: roomId, token: guestToken, move: '7,8', result: 'guest' });
+  ok('客户端乱报 result 不被采信：引擎说没终局 → finished=false、房间还在 playing、result 为空',
+    r.status === 200 && r.data.finished === false && r.data.result === '' && r.data.room.status === 'playing' && r.data.room.result === '',
     r.status + ' ' + r.text.slice(0, 160));
-  ok('client 声明的 result 原样转发（服务端不判棋）', r.data.room.result === 'guest', r.data.room.result);
 
-  r = await post('/api/play/move', { id: roomId, token: hostToken, move: { x: 1, y: 1 } });
+  r = await post('/api/play/move', { id: roomId, token: hostToken, move: '7,7' });
+  ok('下到已占的点 → 400 illegal_move（服务端按规则拒收）', r.status === 400 && r.data.error === 'illegal_move', r.status + ' ' + r.text.slice(0, 160));
+  r = await post('/api/play/poll', { id: roomId, token: hostToken, since: 0 });
+  ok('被拒的那手没进棋谱（仍是 2 手）', r.status === 200 && r.data.moves.length === 2, JSON.stringify(r.data.moves));
+  r = await post('/api/play/move', { id: roomId, token: hostToken, move: '20,20' });
+  ok('越界的点 → 400 illegal_move', r.status === 400 && r.data.error === 'illegal_move', r.status + ' ' + r.text.slice(0, 160));
+
+  /* 接着把这局棋下到终局：乙在 y=8 连成五子；最后一手照旧带一个撒谎的 result='host' */
+  const tail = [[hostToken, '0,0'], [guestToken, '6,8'], [hostToken, '0,1'], [guestToken, '5,8'],
+    [hostToken, '0,2'], [guestToken, '4,8'], [hostToken, '0,3'], [guestToken, '3,8']];
+  for (let i = 0; i < tail.length; i++) {
+    const body = { id: roomId, token: tail[i][0], move: tail[i][1] };
+    if (i === tail.length - 1) body.result = 'host';
+    r = await post('/api/play/move', body);
+  }
+  const fin = r.data || {};   /* 终局响应：后面那局棋的回放断言要用它的 replayId（重赛会把房间的 replay_id 归零） */
+  ok('乙连成五子 → 服务端判乙胜，最后一手撒谎的 result=host 不作数',
+    r.status === 200 && r.data.finished === true && r.data.result === 'guest' && r.data.room.status === 'done' && r.data.room.result === 'guest',
+    r.status + ' ' + r.text.slice(0, 160));
+
+  r = await post('/api/play/move', { id: roomId, token: hostToken, move: '1,1' });
   ok('结束后再落子 → 409 done', r.status === 409 && r.data.error === 'done', r.status + ' ' + r.text.slice(0, 120));
 
   /* ---------- 再来一局 ---------- */
@@ -153,7 +172,7 @@ async function main() {
   ok('离开 → 房间关闭', r.status === 200 && r.data.room.status === 'closed', r.status + ' ' + r.text.slice(0, 160));
   r = await post('/api/play/poll', { id: roomId, token: hostToken, since: 0 });
   ok('对手下一次轮询看到「对方已离开」（closed 也能轮询到）', r.status === 200 && r.data.room.status === 'closed', r.status + ' ' + r.text.slice(0, 120));
-  r = await post('/api/play/move', { id: roomId, token: hostToken, move: { x: 2, y: 2 } });
+  r = await post('/api/play/move', { id: roomId, token: hostToken, move: '2,2' });
   ok('关闭后落子 → 409 closed', r.status === 409 && r.data.error === 'closed', r.status + ' ' + r.text.slice(0, 120));
   r = await post('/api/play/resign', { id: roomId, token: hostToken });
   ok('关闭后再认输 → 409 closed', r.status === 409 && r.data.error === 'closed', r.status + ' ' + r.text.slice(0, 120));
@@ -176,7 +195,7 @@ async function main() {
   r = await post('/api/play/quick', { game: qg2, name: '快4' });
   ok('不同棋种不互相匹配', r.status === 201 && r.data.room.game === qg2 && r.data.seat === 0, r.status + ' ' + r.text.slice(0, 160));
 
-  /* ---------- 棋谱回放：用上面那局 2 手的棋（甲 7,7 → 乙 7,8 收尾） ---------- */
+  /* ---------- 棋谱回放：用上面那局 10 手的棋（甲 7,7 开局 → 乙 3,8 五连收尾） ---------- */
   const replayId = Number(fin.replayId || 0);
   ok('终局响应里带 replayId', replayId > 0, JSON.stringify({ replayId: fin.replayId, result: fin.result }));
   ok('房间视图里带的是同一个 replayId', Number((fin.room && fin.room.replayId) || 0) === replayId, String(fin.room && fin.room.replayId));
@@ -184,13 +203,13 @@ async function main() {
   r = await getRaw('/api/replays/' + replayId);
   const rep = (r.data && r.data.replay) || {};
   ok('读棋谱 → 200 {ok:true}', r.status === 200 && r.data && r.data.ok === true, r.status + ' ' + r.text.slice(0, 160));
-  ok('棋谱记的是这款棋，手数＝实际走子数（2）',
-    rep.game === 'gomoku' && rep.moveCount === 2, JSON.stringify({ game: rep.game, moveCount: rep.moveCount }));
+  ok('棋谱记的是这款棋，手数＝实际走子数（10）',
+    rep.game === 'gomoku' && rep.moveCount === 10, JSON.stringify({ game: rep.game, moveCount: rep.moveCount }));
   ok('moves 长度与 moveCount 一致，首手座位是 0/1、内容是字符串',
     Array.isArray(rep.moves) && rep.moves.length === rep.moveCount &&
     (rep.moves[0].seat === 0 || rep.moves[0].seat === 1) && typeof rep.moves[0].move === 'string' && rep.moves[0].move.length > 0,
     JSON.stringify(rep.moves));
-  ok('两手棋按座位 0 → 1 记', !!rep.moves && rep.moves.length === 2 && rep.moves[0].seat === 0 && rep.moves[1].seat === 1,
+  ok('十手棋按座位 0 → 1 交替记', !!rep.moves && rep.moves.length === 10 && rep.moves[0].seat === 0 && rep.moves[1].seat === 1,
     JSON.stringify(rep.moves));
 
   r = await getRaw('/api/replays/abc');
@@ -220,9 +239,9 @@ async function main() {
   const wGuest = r.data || {};
   ok('第二个人加入观战房 → 1 号座位、开局',
     r.status === 200 && wGuest.seat === 1 && !!wGuest.room && wGuest.room.status === 'playing', r.status + ' ' + r.text.slice(0, 160));
-  r = await post('/api/play/move', { id: wRoom.id, token: wHost.token, move: { x: 7, y: 7 } });
+  r = await post('/api/play/move', { id: wRoom.id, token: wHost.token, move: '7,7' });
   ok('观战房第一手（房主）', r.status === 200 && r.data.seq === 1, r.status + ' ' + r.text.slice(0, 120));
-  r = await post('/api/play/move', { id: wRoom.id, token: wGuest.token, move: { x: 7, y: 8 } });
+  r = await post('/api/play/move', { id: wRoom.id, token: wGuest.token, move: '7,8' });
   ok('观战房第二手（对手），棋还没下完', r.status === 200 && r.data.seq === 2 && r.data.finished === false, r.status + ' ' + r.text.slice(0, 120));
 
   r = await post('/api/play/watch', { key: wKey, since: 0 });
@@ -250,6 +269,37 @@ async function main() {
   ok('房间号对、钥匙不对 → 403 bad_token', r.status === 403 && !!r.data && r.data.error === 'bad_token', r.status + ' ' + r.text.slice(0, 120));
   r = await post('/api/play/watch', { key: '99999999-' + 'a'.repeat(24), since: 0 });
   ok('钥匙格式合法但房间不存在 → 404 not_found', r.status === 404 && !!r.data && r.data.error === 'not_found', r.status + ' ' + r.text.slice(0, 120));
+
+  /* ---------- 服务端裁判：不支持的棋类仍然旧中继（防回归） ---------- */
+  r = await post('/api/play/create', { game: 'xiangqi', name: '象棋甲' });
+  const xHost = r.data || {};
+  const xRoom = xHost.room || {};
+  ok('另开一间象棋房（规则引擎不支持这款棋）', r.status === 201 && !!xRoom.id, r.status + ' ' + r.text.slice(0, 120));
+  r = await post('/api/play/join', { code: xRoom.code, name: '象棋乙' });
+  ok('第二个人坐下 → 开局', r.status === 200 && (r.data || {}).seat === 1, r.status + ' ' + r.text.slice(0, 120));
+  r = await post('/api/play/move', { id: xRoom.id, token: xHost.token, move: 'h2e2', result: 'host' });
+  ok('不支持的棋类照旧中继：客户端声明的 result 原样收下（旧行为不回归）',
+    r.status === 200 && r.data.finished === true && r.data.result === 'host' && r.data.room.status === 'done',
+    r.status + ' ' + r.text.slice(0, 160));
+
+  /* ---------- 服务端裁判：连成四子的一手，客户端撒谎说对手赢也不作数 ---------- */
+  r = await post('/api/play/create', { game: 'connect4', name: '四子甲' });
+  const cHost = r.data || {};
+  const cRoom = cHost.room || {};
+  r = await post('/api/play/join', { code: cRoom.code, name: '四子乙' });
+  const cGuest = r.data || {};
+  ok('另开一间四子棋房并开局', !!cRoom.id && cGuest.seat === 1, r.status + ' ' + r.text.slice(0, 120));
+  ok('开局响应不带客户端声明的结果（服务端还没判）', r.data.room.status === 'playing' && r.data.room.result === '', JSON.stringify(r.data.room.result));
+  const cSeq = [['0', cHost.token], ['1', cGuest.token], ['0', cHost.token], ['1', cGuest.token],
+    ['0', cHost.token], ['1', cGuest.token], ['0', cHost.token]];
+  for (let i = 0; i < cSeq.length; i++) {
+    const body = { id: cRoom.id, token: cSeq[i][1], move: cSeq[i][0] };
+    if (i === cSeq.length - 1) body.result = 'guest';   /* 最后一手撒谎说对手赢 */
+    r = await post('/api/play/move', body);
+  }
+  ok('四子连成一线 → 服务端判房主胜，撒谎的 result=guest 不作数',
+    r.status === 200 && r.data.finished === true && r.data.result === 'host' && r.data.room.status === 'done' && r.data.room.result === 'host',
+    r.status + ' ' + r.text.slice(0, 160));
 
   console.log('');
   console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

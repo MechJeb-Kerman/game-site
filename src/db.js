@@ -282,7 +282,7 @@ export function migrate() {
     CREATE INDEX IF NOT EXISTS idx_nonces_created ON form_nonces(created_at);
 
     -- 第五批：联机对战房间（五子棋 / 中国象棋 / 国际象棋等共用一套房间与走法中继）
-    -- 服务端只做轮流与中继：不校验走法合法性、不判胜负，规则在客户端
+    -- 服务端做轮流与中继；接入 src/rules/ 的棋类（四子棋 / 黑白棋 / 国际跳棋 / 五子棋）由服务端判走法与胜负
     CREATE TABLE IF NOT EXISTS play_rooms (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       code        TEXT UNIQUE NOT NULL,

@@ -721,3 +721,36 @@ body{overscroll-behavior-y:contain}          /* 玩游戏时别一拉就整页�
   .logo-ico{font-size:25px}
 }
 
+/* 社交：未读角标 / 通知列表 / 私信气泡 / 关注列表（第七批） */
+.dot{display:inline-block;width:7px;height:7px;margin-left:5px;border-radius:50%;background:#f87171;vertical-align:top}
+.note-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.note-item{display:flex;align-items:flex-start;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px}
+.note-item.unread{border-color:rgba(99,102,241,.55);background:var(--card-2)}
+.note-ico{font-size:18px;line-height:1.4;text-decoration:none}
+.note-main{flex:1;min-width:0}
+.note-head{display:flex;align-items:center;gap:8px;margin:0 0 4px;flex-wrap:wrap}
+.note-head a{font-weight:600}
+.note-body{margin:0;color:#c3cbe6;font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.msg-list{list-style:none;margin:0 0 18px;padding:0;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:78%;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 13px}
+.msg.mine{margin-left:auto;background:rgba(99,102,241,.18);border-color:rgba(99,102,241,.45)}
+.msg-body{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.7}
+.msg-time{margin:4px 0 0;font-size:12px}
+.people-list{list-style:none;margin:0;padding:0;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.people-item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 13px}
+.people-item b{display:block;font-size:14px}
+
+/* 分享：复制链接按钮 + 卡片预览（第八批） */
+.share{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+.share-btn{flex:0 0 auto}
+.share-url{flex:1 1 260px;min-width:0;background:var(--card-2);border:1px solid var(--line-2);border-radius:var(--r-sm);color:var(--txt);padding:9px 11px;font-size:13px}
+.share-url:focus{outline:2px solid var(--brand);outline-offset:1px}
+.share-msg{font-size:13px;color:var(--dim)}
+.share-msg.ok{color:#6ee7b7}
+.share-msg.warn{color:#fcd34d}
+.share-card{display:block;margin-top:16px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--bg-soft);max-width:100%}
+.share-card[hidden]{display:none}
+.share-card img{display:block;width:100%;height:auto;aspect-ratio:1200/630;object-fit:cover}
+.share-card:hover{border-color:rgba(99,102,241,.55)}
+@media (max-width:560px){.share{flex-direction:column;align-items:stretch}.share-btn{width:100%}}
+

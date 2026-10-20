@@ -63,7 +63,12 @@ function pwaRegisterScript() {
 </script>`;
 }
 
-function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true, bodyClass = '' }) {
+/**
+ * 页面骨架。
+ * ogImage：社交平台预览图，必须是**绝对地址**（如 origin + '/play/1/card.svg'）；不传就退回站内默认图
+ * origin + '/static/img/og.svg'，其它页面的输出与改动前逐字节一致。
+ */
+function layout({ origin = '', title, description, path = '/', content, jsonLd = null, preload = '', user = null, noindex = false, chrome = 'site', titleSuffix = true, bodyClass = '', ogImage = '' }) {
   const bare = chrome === 'none';
   const full = title ? (titleSuffix ? title + ' - ' + SITE.name : title) : SITE.name;
   const ld = jsonLd
@@ -84,12 +89,12 @@ ${noindex ? '<meta name="robots" content="noindex,follow">' : ''}
 <meta property="og:title" content="${esc(full)}">
 <meta property="og:description" content="${esc(description || SITE.tagline)}">
 <meta property="og:url" content="${esc(origin + path)}">
-<meta property="og:image" content="${esc(origin)}/static/img/og.svg">
+<meta property="og:image" content="${esc(ogImage || origin + '/static/img/og.svg')}">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png">
-<link rel="stylesheet" href="/static/css/style.css?v=7">
+<link rel="stylesheet" href="/static/css/style.css?v=9">
 ${preload}${ld}${STATIC_MODE ? '' : pwaRegisterScript()}
 </head>
 <body${bodyClass ? ' class="' + bodyClass + '"' : ''}>
@@ -97,7 +102,7 @@ ${preload}${ld}${STATIC_MODE ? '' : pwaRegisterScript()}
 ${bare ? '' : header(user)}
 <main id="main">${content}</main>
 ${bare ? '' : footer()}
-<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=7" defer></script>
+<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=9" defer></script>
 </body>
 </html>`;
 }
@@ -110,6 +115,9 @@ function header(user = null) {
     ? '<span class="who"><b>' + esc(user.name) + '</b>' + (user.role === 'admin' ? '<i>站长</i>' : '') +
         (user.email && !user.email_verified ? '<i class="warn" title="邮箱还没验证">邮箱未验证</i>' : '') + '</span>' +
       '<a href="/favorites">收藏夹</a>' +
+      // 未读数由 app.js 拉 /api/notifications/unread 与 /api/messages/unread 填，红点默认藏着
+      '<a href="/notifications" data-unread="notifications">通知<em class="dot" hidden></em></a>' +
+      '<a href="/messages" data-unread="messages">私信<em class="dot" hidden></em></a>' +
       '<a href="/account">账号</a>' +
       (user.role === 'admin' ? '<a href="/admin">后台</a>' : '') +
       '<form class="inline" action="/logout" method="post"><button class="linkbtn" type="submit">退出</button></form>'
@@ -1790,10 +1798,104 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
 </div>`;
   return layout({
     origin, user, path: '/daily',
+    ogImage: origin + '/daily/card.svg',
     title: '每日挑战',
     description: '每天一款游戏，玩一次即打卡。累计与连续打卡天数、今日打卡榜都在这里。',
     content
   });
+}
+
+/* ---------- 分享（复制链接 + 卡片预览） ---------- */
+
+/** 分享卡片地址：与 /play/:id/card.svg、/u/:name/card.svg 两条路由一一对应 */
+const replayCardUrl = (origin, id) => origin + '/play/' + encodeURIComponent(String(id ?? '')) + '/card.svg';
+const profileCardUrl = (origin, username) => origin + '/u/' + encodeURIComponent(String(username ?? '')) + '/card.svg';
+
+/**
+ * 分享条：复制链接按钮 + 剪贴板不可用时的兜底输入框（默认藏着，复制失败才亮出来让用户手动复制）。
+ * 这里只出标记，行为统一由 shareScript() 在 document 级接线；url 必须是绝对地址（社交平台只认绝对 URL）。
+ */
+function shareBar(url, label = '🔗 复制链接') {
+  return '<div class="share">' +
+      '<button class="btn share-btn" type="button" data-share-url="' + esc(url) + '">' + esc(label) + '</button>' +
+      '<input class="share-url" type="text" readonly hidden value="' + esc(url) + '" aria-label="要分享的链接">' +
+      '<span class="share-msg" role="status" aria-live="polite"></span>' +
+    '</div>';
+}
+
+/** 分享卡片预览：点开就是那张 SVG 原图（可另存 / 发到聊天里）；图拿不到时由脚本整块藏掉，不留破图 */
+function shareCard(url, alt = '分享预览图') {
+  return '<a class="share-card" data-share-card href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="打开或另存这张分享图">' +
+      '<img src="' + esc(url) + '" alt="' + esc(alt) + '" loading="lazy" decoding="async">' +
+    '</a>';
+}
+
+/**
+ * 分享行为的内联脚本（全页一段，document 级接线，页面上有几个分享条都管）。
+ * 复制顺序：navigator.clipboard（https / localhost 才有）→ execCommand('copy') 兜底 → 都失败就把链接亮出来让用户手动复制。
+ * 与站内其它内联脚本同一套写法（IIFE + var + 内联，靠 CSP 的 'unsafe-inline'），不引任何外部脚本。
+ */
+function shareScript() {
+  return `<script>
+(function () {
+  function q(root, sel) { return root && root.querySelector ? root.querySelector(sel) : null; }
+  function say(root, text, kind) {
+    var m = q(root, '.share-msg');
+    if (!m) return;
+    m.textContent = text;
+    m.className = 'share-msg' + (kind ? ' ' + kind : '');
+  }
+  function hideInput(root) { var i = q(root, '.share-url'); if (i) i.hidden = true; }
+  function copied(root) { hideInput(root); say(root, '✅ 链接已复制，去粘贴给朋友吧', 'ok'); }
+  function manual(root, url) {
+    var i = q(root, '.share-url');
+    if (i) {
+      i.value = url;
+      i.hidden = false;
+      try { i.focus(); i.select(); } catch (e) {}
+    }
+    say(root, '浏览器没给剪贴板权限，请手动复制下面的链接', 'warn');
+  }
+  function legacyCopy(input, url) {
+    try {
+      input.value = url;
+      input.hidden = false;
+      input.focus();
+      input.select();
+      return !!(document.execCommand && document.execCommand('copy'));
+    } catch (e) { return false; }
+  }
+  var btns = document.querySelectorAll('[data-share-url]');
+  for (var i = 0; i < btns.length; i++) {
+    (function (btn) {
+      btn.addEventListener('click', function () {
+        var root = btn.parentNode;
+        var url = location.href || btn.getAttribute('data-share-url') || '';
+        function fallback() {
+          var input = q(root, '.share-url');
+          if (input && legacyCopy(input, url)) copied(root); else manual(root, url);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            var p = navigator.clipboard.writeText(url);
+            if (p && p.then) p.then(function () { copied(root); }, fallback); else fallback();
+          } catch (e) { fallback(); }
+        } else { fallback(); }
+      });
+    })(btns[i]);
+  }
+  /* 卡片预览：路由还没上线或图挂了，就把整块藏掉，别在页面上留个破图 */
+  var cards = document.querySelectorAll('[data-share-card]');
+  for (var j = 0; j < cards.length; j++) {
+    (function (card) {
+      var img = card.querySelector('img');
+      if (!img) { card.hidden = true; return; }
+      img.addEventListener('error', function () { card.hidden = true; });
+      if (img.complete && img.naturalWidth === 0) card.hidden = true;
+    })(cards[j]);
+  }
+})();
+</script>`;
 }
 
 /* ---------- 棋谱回放 ---------- */
@@ -1837,11 +1939,15 @@ export function replayPage({ origin, user = null, replay, game = null, more = []
     </div>
     <p class="player-hint">▶ 播放器在棋盘下方：⏮ 上一手 / ▶ 播放 / ⏭ 下一手，还能调速、跳到最后和复制分享链接。</p>
     <p class="dim" style="margin-top:10px">回放链接：<code>${esc(origin + '/replay/' + r.id)}</code></p>
+    ${shareBar(origin + '/replay/' + r.id, '🔗 复制这局棋谱的链接')}
+    ${shareCard(replayCardUrl(origin, r.id), host + ' vs ' + guest + ' · ' + title + ' 的分享图')}
   </div>
   ${moreBox}
-</div>`;
+</div>
+${shareScript()}`;
   return layout({
     origin, user, path: '/replay/' + r.id,
+    ogImage: replayCardUrl(origin, r.id),
     title: title + ' 棋谱回放',
     description: host + ' 对 ' + guest + ' 的' + title + '对局回放，共 ' + moves + ' 手。',
     content
@@ -1851,8 +1957,20 @@ export function replayPage({ origin, user = null, replay, game = null, more = []
 /* ---------- 个人主页 ---------- */
 
 /** 个人主页：只展示公开信息（昵称、等级、徽章、公开计数），邮箱之类一概不出现在这里 */
-export function profilePage({ origin, user = null, profile, isSelf = false }) {
+export function profilePage({ origin, user = null, profile, isSelf = false, counts = null, following = false, notice = '' }) {
   const p = profile || {};
+  const c = counts || { followers: 0, following: 0, friends: 0 };
+  const uname = encodeURIComponent(p.username || '');
+  // 关注是表单 POST（无 JS 也能用）；已关注时按钮变成「取消关注」，样式走 ghost 区分
+  const actions = isSelf
+    ? '<a class="btn" href="/account">账号设置</a>'
+    : user
+      ? '<form class="inline" action="/u/' + uname + '/follow" method="post">' +
+          '<input type="hidden" name="next" value="' + esc('/u/' + uname) + '">' +
+          '<button class="btn' + (following ? ' ghost' : '') + '" type="submit">' +
+          (following ? '已关注（点击取消）' : '＋ 关注') + '</button></form>' +
+        '<a class="btn ghost" href="/messages/' + uname + '">私信</a>'
+      : '<a class="btn" href="/login?next=' + encodeURIComponent('/u/' + uname) + '">登录后可关注</a>';
   const initial = String(p.name || p.username || '?').slice(0, 1);
   const badges = p.badges || [];
   const owned = badges.filter((b) => b.done);
@@ -1877,11 +1995,18 @@ export function profilePage({ origin, user = null, profile, isSelf = false }) {
           <i style="display:block;height:100%;width:${pct}%;background:linear-gradient(135deg,#6366f1,#22d3ee)"></i>
         </div>
       </div>
-      <div>${isSelf ? '<a class="btn" href="/account">账号设置</a>' : ''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${actions}</div>
     </div>
+    ${shareBar(origin + '/u/' + uname, isSelf ? '🔗 复制我的主页链接' : '🔗 复制这个主页的链接')}
+    ${shareCard(profileCardUrl(origin, p.username), (p.name || p.username || '玩家') + ' 的主页分享图')}
   </div>
 
+  ${notice ? '<p class="auth-ok">' + esc(notice) + '</p>' : ''}
+
   <div class="stats">
+    <a class="stat" href="/u/${uname}/followers"><b>${fmtNum(c.followers)}</b><span>粉丝</span></a>
+    <a class="stat" href="/u/${uname}/following"><b>${fmtNum(c.following)}</b><span>关注</span></a>
+    <a class="stat" href="/u/${uname}/friends"><b>${fmtNum(c.friends)}</b><span>好友（互关）</span></a>
     <div class="stat"><b>${fmtNum(p.comments)}</b><span>评论</span></div>
     <div class="stat"><b>${fmtNum(p.favorites)}</b><span>收藏</span></div>
     <div class="stat"><b>${fmtNum(p.ratings)}</b><span>评分</span></div>
@@ -1900,12 +2025,200 @@ export function profilePage({ origin, user = null, profile, isSelf = false }) {
 
   ${isSelf ? '' : '<p class="dim">只展示公开数据：评论、收藏、评分、论坛发帖与每日打卡。邮箱、登录记录等隐私信息不会出现在这里。</p>'}
   <p class="dim">想有自己的主页？<a href="/register">注册</a> 或 <a href="/login">登录</a> 后就有了，顺手去 <a href="/daily">每日挑战</a> 打卡。</p>
-</div>`;
+</div>
+${shareScript()}`;
   return layout({
     origin, user, path: '/u/' + encodeURIComponent(p.username || ''),
+    ogImage: profileCardUrl(origin, p.username),
     title: (p.name || p.username || '玩家') + ' 的主页',
     description: (p.name || p.username) + ' 在' + SITE.name + '的公开主页：等级、徽章与公开数据统计。',
     content
+  });
+}
+
+
+/* ---------- 通知中心 / 私信 / 关注列表（第七批：社交） ---------- */
+
+/** 通知与私信存的是毫秒时间戳；论坛那套 ftime 只吃 datetime 字符串，这里另写一个 */
+function sinceTime(ms) {
+  const n = Number(ms) || 0;
+  if (!n) return '';
+  const d = new Date(n);
+  const p = (x) => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+const NOTICE_ICON = { reply: '💬', mention: '📣', follow: '➕', message: '✉️', comment: '🗨️', system: '🔔' };
+const NOTICE_TAG = { reply: '回复', mention: '提到你', follow: '关注', message: '私信', comment: '评论', system: '系统' };
+
+/** 通知指向哪里：只认站内类型，认不出来就不给按钮 */
+function noticeHref(type, id) {
+  const t = String(type || '').toLowerCase();
+  const v = String(id || '');
+  if (!v) return '';
+  if (t === 'thread') return '/forum/t/' + encodeURIComponent(v);
+  if (t === 'game') return '/game/' + encodeURIComponent(v);
+  if (t === 'user') return '/u/' + encodeURIComponent(v);
+  if (t === 'replay') return '/replay/' + encodeURIComponent(v);
+  if (t === 'daily') return '/daily';
+  return '';
+}
+
+/** 列表分页：与论坛共用同一套 .pager 标记，两种页面长得一样 */
+function listPager(base, page, pages) {
+  if (pages <= 1) return '';
+  const href = (p) => base + (base.indexOf('?') < 0 ? '?' : '&') + 'page=' + p;
+  return '<nav class="pager" aria-label="分页">' +
+    (page > 1 ? '<a class="pg" href="' + esc(href(page - 1)) + '" rel="prev">‹ 上一页</a>' : '<span class="pg off">‹ 上一页</span>') +
+    '<span class="pg-info">' + page + ' / ' + pages + ' 页</span>' +
+    (page < pages ? '<a class="pg" href="' + esc(href(page + 1)) + '" rel="next">下一页 ›</a>' : '<span class="pg off">下一页 ›</span>') +
+  '</nav>';
+}
+
+/** 通知中心：谁、做了什么、指向哪里一眼看完；未读带竖线与底色 */
+export function notificationsPage({ origin, user, list = null, page = 1, notice = '' }) {
+  const l = list || { total: 0, unread: 0, items: [] };
+  const items = l.items || [];
+  const pages = Math.max(1, Math.ceil(Number(l.total || 0) / 20));
+  const rows = items.map((n) => {
+    const href = noticeHref(n.targetType, n.targetId);
+    const who = n.actorName
+      ? '<a href="/u/' + encodeURIComponent(n.actorName) + '">' + esc(n.actorName) + '</a>'
+      : '系统';
+    return '<li class="note-item' + (n.read ? '' : ' unread') + '">' +
+      '<span class="note-ico" aria-hidden="true">' + (NOTICE_ICON[n.kind] || '🔔') + '</span>' +
+      '<div class="note-main">' +
+        '<p class="note-head">' + who + '<span class="pill">' + esc(NOTICE_TAG[n.kind] || '通知') + '</span>' +
+        '<span class="dim">' + esc(sinceTime(n.createdAt)) + '</span></p>' +
+        '<p class="note-body">' + ftext(n.body || '') + '</p>' +
+      '</div>' +
+      (href ? '<a class="btn btn-sm ghost" href="' + esc(href) + '">去看看</a>' : '') +
+    '</li>';
+  }).join('');
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>通知</b></nav>
+  <div class="sec-head">
+    <h2>🔔 通知</h2>
+    <span class="pill">${Number(l.unread) ? fmtNum(l.unread) + ' 条未读 · ' : ''}共 ${fmtNum(l.total)} 条</span>
+  </div>
+  ${notice ? '<p class="auth-ok">' + esc(notice) + '</p>' : ''}
+  ${Number(l.unread) ? '<form class="inline" method="post" action="/notifications/read"><input type="hidden" name="next" value="/notifications"><button class="btn btn-sm ghost" type="submit">全部标为已读</button></form>' : ''}
+  ${items.length
+    ? '<ul class="note-list">' + rows + '</ul>' + listPager('/notifications', page, pages)
+    : '<div class="panel"><p class="dim">还没有通知。别人回复你的帖子、在帖子里 @你、关注你或给你发私信时，这里会有记录。</p></div>'}
+  <p class="dim">通知只按站内动作生成，同一件事 10 分钟内只提醒一次。</p>
+</div>`;
+  return layout({
+    origin, user, path: '/notifications', title: '通知', noindex: true,
+    description: '站内通知：回复、提到、关注与私信。', content
+  });
+}
+
+/** 私信：会话列表与单条会话共用一个页面，登录后才能进 */
+export function messagesPage({ origin, user, threads = null, thread = null, peer = null, notice = '', error = '' }) {
+  const okMsg = notice ? '<p class="auth-ok">' + esc(notice) + '</p>' : '';
+  const errMsg = error ? '<p class="auth-err">' + esc(error) + '</p>' : '';
+
+  if (peer) {
+    const t = thread || { total: 0, items: [] };
+    const items = t.items || [];
+    const uname = encodeURIComponent(peer.username || '');
+    const pname = peer.name || peer.username || '对方';
+    const rows = items.map((m) => '<li class="msg' + (m.mine ? ' mine' : '') + '">' +
+      '<p class="msg-body">' + ftext(m.body || '') + '</p>' +
+      '<p class="msg-time dim">' + esc(sinceTime(m.createdAt)) + (m.mine ? ' · 我' : '') + '</p></li>').join('');
+    const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><a href="/messages">私信</a><span>›</span><b>${esc(pname)}</b></nav>
+  <div class="sec-head">
+    <h2>✉️ 与 ${esc(pname)} 的私信</h2>
+    <a class="btn btn-sm ghost" href="/u/${uname}">看主页</a>
+  </div>
+  ${okMsg}${errMsg}
+  ${Number(t.total || 0) > items.length ? '<p class="dim">只显示最近 ' + items.length + ' 条（共 ' + fmtNum(t.total) + ' 条）</p>' : ''}
+  ${items.length ? '<ul class="msg-list">' + rows + '</ul>' : '<div class="panel"><p class="dim">还没有消息，打个招呼吧。</p></div>'}
+  <form class="panel cmt-form" method="post" action="/messages/${uname}">
+    <input type="hidden" name="next" value="/messages/${uname}">
+    <label for="msgBody" style="display:block;margin-bottom:6px;color:var(--dim)">发消息</label>
+    <textarea id="msgBody" name="body" rows="3" maxlength="1000" required placeholder="最多 1000 字，回车换行"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+      <button class="btn" type="submit">发送</button>
+      <span class="dim">对方会收到站内通知；不想收可以忽略这条消息。</span>
+    </div>
+  </form>
+</div>`;
+    return layout({
+      origin, user, path: '/messages/' + uname, title: '与 ' + pname + ' 的私信', noindex: true,
+      description: '站内私信', content
+    });
+  }
+
+  const list = threads || { total: 0, items: [] };
+  const items = list.items || [];
+  const rows = items.map((th) => {
+    const uname = encodeURIComponent(th.peerName || '');
+    return '<li class="note-item' + (Number(th.unread) ? ' unread' : '') + '">' +
+      '<span class="note-ico" aria-hidden="true">✉️</span>' +
+      '<div class="note-main">' +
+        '<p class="note-head"><a href="/u/' + uname + '">' + esc(th.peerName || '') + '</a>' +
+        (Number(th.unread) ? '<span class="pill">' + fmtNum(th.unread) + ' 条未读</span>' : '') +
+        '<span class="dim">' + esc(sinceTime(th.lastAt)) + '</span></p>' +
+        '<p class="note-body">' + (th.outgoing ? '我：' : '') + ftext(th.lastBody || '') + '</p>' +
+      '</div>' +
+      '<a class="btn btn-sm ghost" href="/messages/' + uname + '">打开</a>' +
+    '</li>';
+  }).join('');
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>私信</b></nav>
+  <div class="sec-head">
+    <h2>✉️ 私信</h2>
+    <span class="pill">共 ${fmtNum(list.total)} 个会话</span>
+  </div>
+  ${okMsg}${errMsg}
+  ${items.length
+    ? '<ul class="note-list">' + rows + '</ul>'
+    : '<div class="panel"><p class="dim">还没有私信。去 <a href="/u/' + encodeURIComponent((user && user.username) || '') + '">自己的主页</a>看看，或在别人的主页上点「私信」。</p></div>'}
+  <p class="dim">私信只在本站内，收件人可以在通知里看到；骚扰会被记录并可能封号。</p>
+</div>`;
+  return layout({
+    origin, user, path: '/messages', title: '私信', noindex: true,
+    description: '站内私信会话列表', content
+  });
+}
+
+/** 关注列表：粉丝 / 关注 / 好友（互关）三种视图共用一个页面 */
+export function peoplePage({ origin, user, owner, kind = 'followers', list = null, page = 1 }) {
+  const KINDS = { followers: '粉丝', following: '关注', friends: '好友' };
+  const k = KINDS[kind] ? kind : 'followers';
+  const uname = encodeURIComponent((owner && owner.username) || '');
+  const oname = (owner && (owner.name || owner.username)) || '玩家';
+  const items = (list && list.items) || [];
+  const pages = Math.max(1, Math.ceil(Number((list && list.total) || 0) / 24));
+  const rows = items.map((u) => '<li class="people-item">' +
+    '<a class="note-ico" href="/u/' + encodeURIComponent(u.username || '') + '" aria-hidden="true">🐟</a>' +
+    '<div class="note-main">' +
+      '<b><a href="/u/' + encodeURIComponent(u.username || '') + '">' + esc(u.displayName || u.username || '') + '</a></b>' +
+      '<span class="dim">@' + esc(u.username || '') + (u.since ? ' · ' + esc(sinceTime(u.since)) + ' 起' : '') + '</span>' +
+    '</div>' +
+    (u.mutual && k !== 'friends' ? '<span class="pill">互关</span>' : '') +
+  '</li>').join('');
+  const tab = (id, label) => '<a class="chip" href="/u/' + uname + '/' + id + '"' + (id === k ? ' style="border-color:var(--brand)"' : '') + '>' + label + '</a>';
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><a href="/u/${uname}">${esc(oname)}</a><span>›</span><b>${KINDS[k]}</b></nav>
+  <div class="sec-head">
+    <h2>${KINDS[k]} · ${esc(oname)}</h2>
+    <span class="pill">共 ${fmtNum((list && list.total) || 0)} 人</span>
+  </div>
+  <div class="chips">${tab('followers', '粉丝')}${tab('following', '关注')}${tab('friends', '好友')}</div>
+  ${items.length
+    ? '<ul class="people-list" style="margin-top:16px">' + rows + '</ul>' + listPager('/u/' + uname + '/' + k, page, pages)
+    : '<div class="panel" style="margin-top:16px"><p class="dim">' + (k === 'followers' ? '还没有人关注 TA' : k === 'following' ? 'TA 还没有关注任何人' : '还没有好友（互相关注后自动成为好友）') + '。</p></div>'}
+</div>`;
+  return layout({
+    origin, user, path: '/u/' + uname + '/' + k, title: KINDS[k] + ' · ' + oname, noindex: true,
+    description: oname + ' 的' + KINDS[k] + '列表', content
   });
 }
 

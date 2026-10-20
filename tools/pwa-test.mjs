@@ -38,6 +38,16 @@ const SKIP_BROWSER = ARGV.indexOf('--no-browser') >= 0;
 const MANIFEST_FILE = path.join(ROOT, 'public', 'manifest.webmanifest');
 const SW_FILE = path.join(ROOT, 'public', 'sw.js');
 const ICONS_DIR = path.join(ROOT, 'public', 'icons');
+const PRECACHE_FILE = path.join(ROOT, 'public', 'precache.json');
+const GEN_PRECACHE = path.join(HERE, 'gen-precache.mjs');
+/* 常驻在跑的两条线（3000 老进程 / 4400 Worker 静态产物）：只做对照与信息打印，硬断言用自带端口 */
+const LIVE_ORIGIN = 'http://127.0.0.1:3000';
+const LIVE_WORIGIN = 'http://127.0.0.1:4400';
+/* 真离线验收的两款游戏：match3（只依赖 gamepad.js）与 connect4（还要 net-play.js） */
+const OFFLINE_GAMES = [
+  { slug: 'match3', title: '宝石三消' },
+  { slug: 'connect4', title: '四子棋' }
+];
 
 const CHROME_CANDIDATES = [
   process.env.CHROME,
@@ -94,7 +104,28 @@ function readDisk() {
   const manifestText = fs.readFileSync(MANIFEST_FILE, 'utf8');
   const swText = fs.readFileSync(SW_FILE, 'utf8');
   const m = /const SW_VERSION = '([^']+)'/.exec(swText);
-  return { manifestText: manifestText, swText: swText, swVersion: m ? m[1] : '' };
+  const swVersion = m ? m[1] : '';
+  /* 真离线清单：public/precache.json（tools/gen-precache.mjs 产出），读不到不算致命 */
+  const precacheText = fs.existsSync(PRECACHE_FILE) ? fs.readFileSync(PRECACHE_FILE, 'utf8') : '';
+  let precache = null;
+  try { precache = JSON.parse(precacheText); } catch (e) { precache = null; }
+  const pm = /const PRECACHE_VERSION = '([^']+)'/.exec(swText);
+  const precacheVersion = ((precache && precache.version) || (pm ? pm[1] : '')) || '';
+  return {
+    manifestText: manifestText,
+    swText: swText,
+    swVersion: swVersion,
+    precacheText: precacheText,
+    precache: precache,
+    precacheVersion: precacheVersion,
+    /* 缓存桶名 = SW_VERSION + '.' + 清单版本：清单内容一变桶名就变，老桶由 activate 清掉 */
+    swCacheTag: swVersion && precacheVersion ? swVersion + '.' + precacheVersion : swVersion
+  };
+}
+/* 清单里的站内路径（元素可以是字符串，也可以是 { url, revision }） */
+function precacheUrls(disk) {
+  const list = disk.precache && Array.isArray(disk.precache.urls) ? disk.precache.urls : [];
+  return list.map((it) => (typeof it === 'string' ? it : (it && it.url) || '')).filter((u) => u.charAt(0) === '/');
 }
 
 /* ==================== 阶段 A/B：纯 HTTP 断言 ==================== */
@@ -165,7 +196,9 @@ async function httpPhase(origin, label, disk, opts) {
   check(label + ' /sw.js Service-Worker-Allowed = /', swRes.headers.get('service-worker-allowed') === '/', String(swRes.headers.get('service-worker-allowed')));
   check(label + ' /sw.js Cache-Control = no-cache（不发新版就被缓存卡死）', swRes.headers.get('cache-control') === 'no-cache', swRes.headers.get('cache-control') || '(空)');
   const swText = await swRes.text();
-  check(label + ' /sw.js 与 public/sw.js 逐字节一致', swText === disk.swText, swText.length + 'B vs 磁盘 ' + disk.swText.length + 'B');
+  check(label + ' /sw.js 与 public/sw.js 逐字节一致', swText === disk.swText,
+    swText.length + 'B vs 磁盘 ' + disk.swText.length + 'B'
+    + (swText === disk.swText || !(opts && opts.worker) ? '' : '（worker/app.js 里内联的 PWA_SW 还是旧副本：跑 node tools/gen-sw.mjs 同步）'));
   let parseErr = '';
   try { new Function(swText); } catch (e) { parseErr = e.message; }
   check(label + ' /sw.js 语法可解析（inline 进 worker 的转义没坏）', parseErr === '', parseErr || 'new Function 通过');
@@ -179,6 +212,36 @@ async function httpPhase(origin, label, disk, opts) {
   check(label + ' /static/css/style.css 200（SW 的缓存对象）', css.status === 200, 'HTTP ' + css.status);
   const fav = await fetch(origin + '/favicon.svg' + bust);
   check(label + ' /favicon.svg 200', fav.status === 200, 'HTTP ' + fav.status);
+
+  /* ---- 真离线清单 /precache.json：服务端路由缺失只提示，不判失败（路由由 Lead 接） ---- */
+  const urls = precacheUrls(disk);
+  const pcRes = await fetch(origin + '/precache.json' + bust);
+  if (pcRes.status === 200) {
+    const pcCt = pcRes.headers.get('content-type') || '';
+    check(label + ' /precache.json Content-Type 是 JSON', pcCt.indexOf('application/json') === 0, pcCt || '(空)');
+    const pcText = await pcRes.text();
+    let pc = null;
+    try { pc = JSON.parse(pcText); } catch (e) { pc = null; }
+    check(label + ' /precache.json 是合法 JSON', !!pc, pc ? '解析成功' : pcText.slice(0, 80));
+    check(label + ' /precache.json 线上版本号与磁盘一致', !!pc && pc.version === disk.precacheVersion,
+      (pc ? pc.version : '?') + ' vs 磁盘 ' + disk.precacheVersion);
+    const pcPodUrls = (pc && Array.isArray(pc.urls) ? pc.urls : []).map((it) => (typeof it === 'string' ? it : (it && it.url) || ''));
+    check(label + ' /precache.json 线上清单与磁盘逐条一致', pcPodUrls.length === urls.length && pcPodUrls.every((u, i) => u === urls[i]),
+      pcPodUrls.length + ' 条 vs 磁盘 ' + urls.length + ' 条');
+  } else {
+    info(label + ' /precache.json → HTTP ' + pcRes.status + '（路由未接：Express 老进程没重启 / dist-cf 还没跑 build:pages），跳过线上清单断言，只验磁盘文件');
+  }
+  check(label + ' 磁盘 public/precache.json 存在且含 version + urls[]', !!disk.precache && typeof disk.precache.version === 'string' && urls.length >= 20,
+    disk.precache ? 'version=' + disk.precache.version + ' · ' + urls.length + ' 条' : '读不到或不是合法 JSON');
+
+  /* ---- 清单里每个 URL 都必须真能取到（否则预缓存必然缺件）---- */
+  const badUrls = [];
+  for (const u of urls) {
+    try { const r = await fetch(origin + u + bust); if (r.status !== 200) badUrls.push(u + '→HTTP ' + r.status); }
+    catch (e) { badUrls.push(u + '→' + e.message); }
+  }
+  check(label + ' 清单里 ' + urls.length + ' 个 URL 全部 200（预缓存的前置条件）', badUrls.length === 0,
+    badUrls.length ? badUrls.slice(0, 5).join(' ') : '全部 200');
 
   /* ---- 论坛子域（Host: forum.*）：整站 head 在这些主机上也挂了 manifest 与注册脚本，不许 404 ---- */
   const FHOST = 'forum.pwa-probe.local';
@@ -341,6 +404,55 @@ function versionProbeScript() {
     + ' });'
     + ' }); })()';
 }
+/* 版本握手详情：新版 sw.js 还回 precache/cache/pages；旧内联副本只回 version —— 缺字段只提示，不判失败 */
+function versionDetailScript() {
+  return '(function () { return new Promise(function (resolve) {'
+    + ' var done = false;'
+    + ' var t = setTimeout(function () { if (!done) { done = true; resolve("(超时)"); } }, 5000);'
+    + ' navigator.serviceWorker.addEventListener("message", function (e) {'
+    + '   if (!done && e.data && e.data.type === "PWA_VERSION") { done = true; clearTimeout(t);'
+    + '     resolve({ version: String(e.data.version || ""), precache: String(e.data.precache || ""),'
+    + '       cache: String(e.data.cache || ""), pages: Number(e.data.pages || 0) }); }'
+    + ' });'
+    + ' navigator.serviceWorker.ready.then(function (r) {'
+    + '   var sw = r.active || navigator.serviceWorker.controller;'
+    + '   if (sw) sw.postMessage({ type: "PWA_VERSION" });'
+    + '   else { done = true; clearTimeout(t); resolve("(没有 active SW)"); }'
+    + ' });'
+    + ' }); })()';
+}
+/* 预缓存取证：install 里逐条计数（单个 URL 失败只计数、不整体失败）的 ok/total/failedCount */
+function precacheStatusScript() {
+  return '(function () { return new Promise(function (resolve) {'
+    + ' var done = false;'
+    + ' var t = setTimeout(function () { if (!done) { done = true; resolve("(超时)"); } }, 8000);'
+    + ' navigator.serviceWorker.addEventListener("message", function (e) {'
+    + '   if (!done && e.data && e.data.type === "PWA_PRECACHE_STATUS") { done = true; clearTimeout(t);'
+    + '     resolve({ version: String(e.data.version || ""), total: Number(e.data.total || 0), ok: Number(e.data.ok || 0),'
+    + '       failedCount: Number(e.data.failedCount || 0), failed: e.data.failed || [], done: !!e.data.done, at: Number(e.data.at || 0) }); }'
+    + ' });'
+    + ' navigator.serviceWorker.ready.then(function (r) {'
+    + '   var sw = r.active || navigator.serviceWorker.controller;'
+    + '   if (sw) sw.postMessage({ type: "PWA_PRECACHE_STATUS" });'
+    + '   else { done = true; clearTimeout(t); resolve("(没有 active SW)"); }'
+    + ' });'
+    + ' }); })()';
+}
+/* 游戏页探针：离线时页面能开、window.GAME.state() 能算，才算「离线也能玩」 */
+function gameProbeScript() {
+  return '(async function () {'
+    + ' var g = window.GAME || null;'
+    + ' var out = { title: document.title || "", gameSlug: g ? String(g.slug || "") : "",'
+    + '   hasState: !!(g && typeof g.state === "function"), stateJson: "", stateKeys: 0, gameError: "",'
+    + '   nodes: document.querySelectorAll("*").length, board: !!document.querySelector("canvas, #board, .board, #area"),'
+    + '   cached: false, online: navigator.onLine, controller: !!navigator.serviceWorker.controller };'
+    + ' try { var st = out.hasState ? g.state() : null; var s = JSON.stringify(st);'
+    + '   out.stateJson = (s === undefined || s === null) ? "" : String(s);'
+    + '   out.stateKeys = (st && typeof st === "object") ? Object.keys(st).length : 0; } catch (e) { out.gameError = String(e); }'
+    + ' try { out.cached = !!(await caches.match(location.pathname)); } catch (e) { out.cached = false; }'
+    + ' return out;'
+    + ' })()';
+}
 function cacheAuditScript(ver) {
   return '(async function () {'
     + ' var keys = await caches.keys();'
@@ -404,15 +516,39 @@ async function expressBrowserPhase(browser, sink, disk) {
   check('clientsClaim 生效：首个页面就已被 SW 接管', !!(swState && swState.controller), 'controller=' + (swState ? swState.controller : '?'));
   const ver1 = await evalRC(cdp, versionProbeScript(), true);
   check('SW 版本握手（页面 ⇄ sw.js postMessage）', ver1 === disk.swVersion, '实测 ' + String(ver1) + ' · 磁盘 ' + disk.swVersion);
+  const det = await evalRC(cdp, versionDetailScript(), true);
+  if (det && typeof det === 'object') {
+    check('SW 握手带回预缓存清单版本（= ' + disk.precacheVersion + '）', det.precache === disk.precacheVersion, '实测 ' + (det.precache || '(空)'));
+    check('缓存桶名 = SW_VERSION + 清单版本（' + disk.swCacheTag + '）', det.cache === disk.swCacheTag, '实测 ' + (det.cache || '(空)'));
+    check('SW 认得 ' + precacheUrls(disk).length + ' 个预缓存页面（离线导航直接命中）', det.pages >= precacheUrls(disk).length, '实测 pages=' + det.pages);
+  } else {
+    info('SW 只回了旧版握手字段（' + String(det) + '）：worker/app.js 内联的 PWA_SW 还是旧副本，跑 node tools/gen-sw.mjs 同步后才有 precache/cache/pages');
+  }
+  const pcStatus = await evalRC(cdp, precacheStatusScript(), true);
+  if (pcStatus && typeof pcStatus === 'object') {
+    const want = disk.precache ? Number(disk.precache.count || precacheUrls(disk).length) : precacheUrls(disk).length;
+    check('install 预缓存跑完并逐条计数（done=true）', pcStatus.done === true, JSON.stringify({ done: pcStatus.done, total: pcStatus.total, ok: pcStatus.ok }));
+    check('预缓存 ok === total === ' + want + '（一条不缺）', pcStatus.total === want && pcStatus.ok === want, 'total=' + pcStatus.total + ' ok=' + pcStatus.ok + ' failed=' + pcStatus.failedCount);
+    check('预缓存失败条数为 0（单条失败只计数、不整体失败）', pcStatus.failedCount === 0, pcStatus.failedCount ? JSON.stringify(pcStatus.failed) : '0');
+    check('预缓存清单版本与磁盘一致', pcStatus.version === disk.precacheVersion, String(pcStatus.version));
+  } else {
+    info('读不到 PWA_PRECACHE_STATUS（' + String(pcStatus) + '）：这一版 SW 还没实现该消息');
+  }
 
   sink.phase = 'online-2';
   const nav2 = await navigate(cdp, ORIGIN + '/?_cb=' + t());
   const title2 = await evalRC(cdp, 'document.title');
   check('第二次导航（模拟「下次刷新」）正常', String(title2).indexOf('趣玩小游戏') >= 0, String(title2) + (nav2.errorText ? ' navError=' + nav2.errorText : ''));
-  const audit = await evalRC(cdp, cacheAuditScript(disk.swVersion), true);
-  check('缓存里有 qw-shell-' + disk.swVersion, !!(audit && audit.keys && audit.keys.indexOf('qw-shell-' + disk.swVersion) >= 0), (audit && audit.keys || []).join(' ') || '(无缓存)');
-  check('缓存里有 qw-assets-' + disk.swVersion, !!(audit && audit.keys && audit.keys.indexOf('qw-assets-' + disk.swVersion) >= 0), '');
+  const audit = await evalRC(cdp, cacheAuditScript(disk.swCacheTag), true);
+  const hasPrefix = (p) => !!(audit && audit.keys && audit.keys.some((k) => k.indexOf(p) === 0));
+  check('缓存里有 qw-shell-…（前缀 ' + disk.swVersion + '，桶名 = ' + disk.swCacheTag + '）', hasPrefix('qw-shell-' + disk.swVersion), (audit && audit.keys || []).join(' ') || '(无缓存)');
+  check('缓存里有 qw-assets-…（前缀 ' + disk.swVersion + '）', hasPrefix('qw-assets-' + disk.swVersion), '');
   check('静态资源确实进了 assets 缓存', !!(audit && audit.assetUrls.some((u) => u.indexOf('/static/') >= 0)), (audit ? audit.assetUrls.length : 0) + ' 条：' + (audit ? audit.assetUrls.slice(0, 3).join(' ') : ''));
+  const pathOfUrl = (u) => { try { return new URL(u).pathname; } catch (e) { return u; } };
+  const pcUrls = precacheUrls(disk);
+  const pcMissing = pcUrls.filter((u) => !(audit && (audit.assetUrls || []).concat(audit.shellKeys || []).some((a) => pathOfUrl(a) === u)));
+  check('清单里 ' + pcUrls.length + ' 条全在缓存里（含 20 款游戏页，离线才敢说能玩）', pcMissing.length === 0,
+    pcMissing.length ? '缺 ' + pcMissing.length + ' 条：' + pcMissing.slice(0, 5).join(' ') : '一条不缺');
   check('离线壳已预热缓存且内容是站点首页（title 含站名）', !!(audit && audit.shellKeys.length >= 1 && String(audit.shellTitle).indexOf('趣玩小游戏') >= 0),
     (audit ? audit.shellKeys.length : 0) + ' 个键 · title=' + (audit ? audit.shellTitle : '') + ' · ' + (audit ? audit.shellBytes : 0) + 'B');
   const bad = (u) => { try { return /^\/(api|u|account|admin|auth|login|logout|register|forgot|reset|verify|favorites|submit|ugc|comments)(\/|$)/.test(new URL(u).pathname); } catch (e) { return false; } };
@@ -421,7 +557,7 @@ async function expressBrowserPhase(browser, sink, disk) {
 
   await shot(cdp, path.join(SHOTS, 'pwa-home.png'),
     'PWA 在线态 · /manifest.webmanifest 200 · icons 4/4 200 · SW /sw.js active ' + disk.swVersion
-    + ' · controller=yes · 缓存 qw-shell-' + disk.swVersion + ' + qw-assets-' + disk.swVersion);
+    + ' · 清单 ' + disk.precacheVersion + ' · 缓存 qw-shell-' + disk.swCacheTag + ' + qw-assets-' + disk.swCacheTag);
 
   sink.phase = 'offline';
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -432,6 +568,29 @@ async function expressBrowserPhase(browser, sink, disk) {
   check('离线外壳带站点骨架（header/nav/main 之一）', !!(shell && shell.marker), '');
   await shot(cdp, path.join(SHOTS, 'pwa-offline.png'),
     'CDP offline=true · 导航 / 由 Service Worker 的离线壳响应（network-first 落缓存）· title 与 DOM 骨架完整 · 无网络请求成功');
+
+  /* ---- 真离线验收：断网下直接打开游戏页并确认 window.GAME.state() 能算 ---- */
+  sink.phase = 'offline-games';
+  let gameProbeLast = null;
+  for (const gm of OFFLINE_GAMES) {
+    const urlG = ORIGIN + '/games/' + gm.slug + '/index.html?_cb=' + t();
+    const navG = await navigate(cdp, urlG);
+    const probe = await evalRC(cdp, gameProbeScript(), true);
+    gameProbeLast = probe;
+    const tag = '断网导航 /games/' + gm.slug + '/index.html';
+    check(tag + ' 加载成功（title 含「' + gm.title + '」）', !!(probe && String(probe.title).indexOf(gm.title) >= 0),
+      (probe ? 'title=' + probe.title : '读不到') + (navG.errorText ? ' · navError=' + navG.errorText : ''));
+    check(tag + ' window.GAME 存在且 slug = ' + gm.slug, !!(probe && probe.gameSlug === gm.slug), probe ? 'slug=' + JSON.stringify(probe.gameSlug) : '');
+    check(tag + ' window.GAME.state() 可用（离线也能玩的关键）', !!(probe && probe.hasState && probe.stateJson.length > 10 && probe.stateKeys >= 3 && !probe.gameError),
+      probe ? 'state() 返回 ' + probe.stateJson.length + ' 字符 / ' + probe.stateKeys + ' 个字段 · err=' + (probe.gameError || '无') : '');
+    check(tag + ' 页面结构完整（DOM > 30 节点 + 棋盘容器）', !!(probe && probe.nodes > 30 && probe.board), probe ? probe.nodes + ' 个节点 · board=' + probe.board : '');
+    check(tag + ' 这份文档命中了预缓存', !!(probe && probe.cached), probe ? 'cached=' + probe.cached : '');
+    check(tag + ' 浏览器确实处于断网态（navigator.onLine=false）', !!(probe && probe.online === false), probe ? 'online=' + probe.online : '');
+    check(tag + ' 页面仍被 SW 接管', !!(probe && probe.controller), probe ? 'controller=' + probe.controller : '');
+  }
+  await shot(cdp, path.join(SHOTS, 'pwa-offline-games.png'),
+    'CDP offline=true · 直接导航 /games/' + OFFLINE_GAMES.map((g) => g.slug).join('/index.html 与 /games/')
+    + '/index.html 由 SW 预缓存直出 · window.GAME.state() 返回 ' + (gameProbeLast ? gameProbeLast.stateKeys : 0) + ' 个字段 · 零网络可用');
 
   sink.phase = 'online-3';
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -457,8 +616,43 @@ async function workerBrowserPhase(browser, sink, disk) {
   check('Worker 线 active.scriptURL 指向 /sw.js', !!(st && /\/sw\.js$/.test(String(st.script))), String(st && st.script));
   const ver = await evalRC(cdp, versionProbeScript(), true);
   check('Worker 线 SW 版本握手', ver === disk.swVersion, '实测 ' + String(ver) + ' · 磁盘 ' + disk.swVersion);
+  const detW = await evalRC(cdp, versionDetailScript(), true);
+  if (detW && typeof detW === 'object') {
+    check('Worker 线 SW 握手带回预缓存版本', detW.precache === disk.precacheVersion, '实测 ' + (detW.precache || '(空)'));
+  } else {
+    info('Worker 线 SW 是 worker/app.js 里冻结的旧内联副本（只回 version）：跑 node tools/gen-sw.mjs 同步 public/sw.js 后这里才会带上 precache/cache/pages（公共文件不许在本任务改）');
+  }
   const cachesOn = await evalRC(cdp, 'caches.keys().then(function (k) { return k.join(","); })', true);
-  check('Worker 线缓存按版本建立', String(cachesOn).indexOf('qw-shell-' + disk.swVersion) >= 0, String(cachesOn));
+  const onPrefix = (p) => String(cachesOn).split(',').some((k) => k.indexOf(p) === 0);
+  check('Worker 线缓存按版本建立（qw-shell-' + disk.swVersion + '…）', onPrefix('qw-shell-' + disk.swVersion), String(cachesOn));
+}
+
+/* ==================== 阶段 D：常驻在跑的两条线（3000 / 4400）对照 ==================== */
+/* 与 httpPhase 的「清单里每个 URL 都 200」同一断言，但对象是别人正在跑的进程：
+   对方没起来只提示不判失败，路由没接上（老进程 / dist-cf 没 build:pages）也只提示 */
+async function livePrecachePhase(origin, label, disk) {
+  const bust = () => '?_cb=' + Date.now() + Math.random().toString(36).slice(2, 7);
+  let alive = false;
+  try { const r = await fetch(origin + '/' + bust()); alive = r.status < 500; } catch (e) { alive = false; }
+  if (!alive) { info(label + ' ' + origin + ' 没在跑（跳过对照）'); return; }
+  const urls = precacheUrls(disk);
+  const bad = [];
+  for (const u of urls) {
+    try { const r = await fetch(origin + u + bust()); if (r.status !== 200) bad.push(u + '→HTTP ' + r.status); }
+    catch (e) { bad.push(u + '→' + e.message); }
+  }
+  check(label + ' 清单里 ' + urls.length + ' 个 URL 全部 200', bad.length === 0, bad.length ? bad.slice(0, 5).join(' ') : '全部 200 @ ' + origin);
+  const pc = await fetch(origin + '/precache.json' + bust());
+  if (pc.status === 200) {
+    const body = await pc.text();
+    let obj = null;
+    try { obj = JSON.parse(body); } catch (e) { obj = null; }
+    check(label + ' /precache.json 200 且版本与磁盘一致', !!obj && obj.version === disk.precacheVersion,
+      'HTTP 200 · ' + (obj ? obj.version : body.slice(0, 60)));
+  } else {
+    info(label + ' /precache.json → HTTP ' + pc.status
+      + '（路由未接：3000 是改动前启动的老进程，重启即好；4400 走 dist-cf，先跑 node tools/build-pages.mjs 才有产物）');
+  }
 }
 
 /* ==================== 主流程 ==================== */
@@ -470,6 +664,23 @@ async function main() {
   if (!disk.swVersion) { console.log('  \u2717 读不到 public/sw.js 里的 SW_VERSION'); return 1; }
   info('磁盘基准：manifest ' + disk.manifestText.length + 'B · sw.js ' + disk.swText.length + 'B · SW_VERSION=' + disk.swVersion);
   info('图标：' + fs.readdirSync(ICONS_DIR).map((f) => f + '(' + (fs.statSync(path.join(ICONS_DIR, f)).size / 1024).toFixed(1) + 'KB)').join(' '));
+  info('真离线清单：' + (disk.precache
+    ? disk.precache.count + ' 条 · ' + (Number(disk.precache.bytes || 0) / 1024).toFixed(1) + 'KB · 最大单文件 ' + (Number(disk.precache.maxBytes || 0) / 1024).toFixed(1) + 'KB · 版本 ' + disk.precacheVersion
+    : '读不到 public/precache.json（先跑 node tools/gen-precache.mjs）'));
+
+  /* gen-precache --check：清单与磁盘必须一致，过期清单 = 离线缺件 */
+  const pcCheck = await new Promise((resolve) => {
+    let out = '';
+    try {
+      const c = spawn(process.execPath, [GEN_PRECACHE, '--check'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+      c.stdout.on('data', (d) => { out += d.toString(); });
+      c.stderr.on('data', (d) => { out += d.toString(); });
+      c.on('error', (e) => resolve({ code: -1, out: String(e) }));
+      c.on('close', (code) => resolve({ code: code, out: out }));
+    } catch (e) { resolve({ code: -1, out: String(e) }); }
+  });
+  check('gen-precache --check：precache.json 与磁盘一致（退出码 0）', pcCheck.code === 0,
+    'exit=' + pcCheck.code + ' · ' + pcCheck.out.trim().split('\n').slice(-3).join(' / '));
 
   let serverChild = null;
   let worker = null;
@@ -495,6 +706,7 @@ async function main() {
     if (!up) throw new Error('Express 子进程没起来');
 
     await httpPhase(ORIGIN, 'Express 线', disk, { worker: false });
+    await livePrecachePhase(LIVE_ORIGIN, '常驻 dev server(3000)', disk);
 
     if (!SKIP_WORKER) {
       const mod = await import('./serve-worker.mjs');
@@ -502,6 +714,7 @@ async function main() {
       const warm = await worker.warmup();
       info('Worker 线预热：HTTP ' + warm.status + ' · 游戏 ' + warm.games + ' 款');
       await httpPhase(WORIGIN, 'CF（Worker）线', disk, { worker: true });
+      await livePrecachePhase(LIVE_WORIGIN, '常驻 Worker(4400)', disk);
       info('dist-cf 是 tools/build-pages.mjs 的白名单产物：没有 manifest.webmanifest / sw.js / icons —— 这三个都是 worker/app.js 内联提供的（上面「逐字节一致」那几条就是防漂移的闸门）');
     }
 
@@ -513,17 +726,22 @@ async function main() {
     }
 
     console.log('\n== 跨阶段断言 ==');
-    const onlineErrors = sink.errors.filter((e) => e.phase !== 'offline');
+    /* 断网阶段以 'offline' 开头（offline 壳页 + offline-games 游戏页），一律单列 */
+    const isOfflinePhase = (p) => String(p).indexOf('offline') === 0;
+    const onlineErrors = sink.errors.filter((e) => !isOfflinePhase(e.phase));
     check('浏览器全程 console 0 报错 / 0 未捕获异常（断网阶段单列）', onlineErrors.length === 0,
-      onlineErrors.length ? onlineErrors.slice(0, 3).map((e) => e.phase + '/' + e.kind + ': ' + e.text).join(' | ') : sink.errors.length + ' 条报错全部发生在 offline 阶段');
-    const offErrors = sink.errors.filter((e) => e.phase === 'offline');
-    info('断网阶段的报错 ' + offErrors.length + ' 条（预期就是网络中断）' + (offErrors.length ? '：' + offErrors[0].text.slice(0, 90) : ''));
+      onlineErrors.length ? onlineErrors.slice(0, 3).map((e) => e.phase + '/' + e.kind + ': ' + e.text).join(' | ') : sink.errors.length + ' 条报错全部发生在断网阶段');
+    const offErrors = sink.errors.filter((e) => isOfflinePhase(e.phase));
+    info('断网阶段（壳页 + 游戏页）的报错 ' + offErrors.length + ' 条（预期就是网络中断）' + (offErrors.length ? '：' + offErrors[0].text.slice(0, 90) : ''));
     const pathOf = (u) => { try { return new URL(u).pathname; } catch (e) { return u; } };
-    const offFailed = sink.failed.filter((f) => f.phase === 'offline');
+    const offFailed = sink.failed.filter((f) => isOfflinePhase(f.phase));
     const promised = /^\/(static|games|icons|cover)\//;
     const brokePromise = offFailed.filter((f) => promised.test(pathOf(f.url)));
     check('断网期间 SW 承诺缓存的路径（/static /games /icons /cover）一个都没失败', brokePromise.length === 0,
       brokePromise.length ? brokePromise.map((f) => pathOf(f.url) + ' ' + f.err).join(' | ') : '承诺缓存的资源全部命中缓存');
+    const offGameFailed = offFailed.filter((f) => f.phase === 'offline-games' && /^\/games\//.test(pathOf(f.url)));
+    check('断网打开游戏页期间 /games/ 下的子资源 0 失败（页面自足 + 预缓存命中）', offGameFailed.length === 0,
+      offGameFailed.length ? offGameFailed.map((f) => pathOf(f.url) + ' ' + f.err).join(' | ') : '两款游戏页及其引用的 js 全部命中缓存');
     const grouped = {};
     for (const f of offFailed) { const k = pathOf(f.url); grouped[k] = (grouped[k] || 0) + 1; }
     info('断网期间失败的请求（预期只剩「必须走网络」的那些）：' + (Object.keys(grouped).length ? Object.keys(grouped).map((k) => k + '×' + grouped[k]).join('  ') : '无'));
@@ -558,7 +776,7 @@ async function main() {
   console.log('\n──────────────────────────────────────────');
   console.log('  PWA 探针结果：PASS ' + pass + ' · FAIL ' + fail + ' · 耗时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
   if (fails.length) { console.log('  失败项：'); for (const f of fails) console.log('   \u2717 ' + f); }
-  console.log('  截图：docs/screens/pwa-home.png · docs/screens/pwa-offline.png');
+  console.log('  截图：docs/screens/pwa-home.png · docs/screens/pwa-offline.png · docs/screens/pwa-offline-games.png');
   return fail === 0 ? 0 : 1;
 }
 

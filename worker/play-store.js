@@ -4,13 +4,14 @@
  *   1) 第一个参数是 D1 绑定（env.DB），所有查询都 await；
  *   2) 取自增 id 用 meta.last_row_id，判断是否改动用 meta.changes；
  *   3) 需要多条语句一起成功的地方用 db.batch（D1 没有可交互事务）。
- * 规则判定在 src/play.js（两线共享）。
+ * 共享纯逻辑在 src/play.js、棋类裁判在 src/rules/index.js（两线共享）。
  */
 import {
   STATUS, TTL_WAITING_MS, TTL_PLAYING_MS, CODE_LEN, MAX_MOVES_PER_POLL,
   makeCode, cleanName, cleanGame, cleanCode, cleanMove, cleanResult,
   seatOf, isMyTurn, isExpired, publicRoom, mapMoves, parseWatchKey
 } from '../src/play.js';
+import { isSupported, createGame, toResult } from '../src/rules/index.js';
 
 /** 绑定参数：D1 的 prepare() 不带参数，必须 bind() 出新的语句对象 */
 function stmt(db, sql, params) {
@@ -219,7 +220,31 @@ export async function poll(db, id, token, since, now = Date.now()) {
   return { room: publicRoom(r, seat), seat, moves: mapMoves(await movesOf(db, r.id, since)) };
 }
 
-/** 落子：只认「轮到你 + 房间在局中」，不校验走法本身合不合法 */
+/** 重建局面时最多回放多少手（draughts 有「25 回合无进展判和」，实际用不到这么多，留足余量） */
+const MAX_REPLAY_MOVES = 2000;
+
+/**
+ * 按库里已有的走法序列重建局面（服务端裁判用）。
+ * 返回 null 表示这份历史不该交给规则引擎判：走法被 LIMIT 截断，或里面有意外的走法
+ * （上线前遗留的房间：旧代码只中继、什么字符串都存得下）。调用方据此退回旧的中继行为，
+ * 免得把本来没问题的房间卡死；新房间每一手都过引擎，历史里不会再出现非法走法。
+ */
+function replayGame(slug, rows, moveCount) {
+  if (rows.length !== Number(moveCount)) return null;
+  const g = createGame(slug);
+  for (let i = 0; i < rows.length; i++) {
+    if (!g.apply({ seat: Number(rows[i].seat), move: rows[i].move }).ok) return null;
+  }
+  return g;
+}
+
+/**
+ * 落子：轮到你 + 房间在局中。
+ * connect4 / reversi / draughts / gomoku 有服务端规则引擎：按库里的走法重建局面 → 校验这一手
+ * （轮次 / 合法性，非法回引擎的错误码且不落库）→ 终局时按引擎判出的胜负写房间结果，
+ * 客户端声明的那份 result 一律不采信。
+ * 其余棋类（chess / xiangqi / tictactoe …）没有引擎，沿用旧行为：走法只中继、result 由客户端声明。
+ */
 export async function sendMove(db, id, token, move, result, now = Date.now()) {
   const r = await room(db, id);
   if (!r || isExpired(r, now)) return { error: 'not_found' };
@@ -229,9 +254,19 @@ export async function sendMove(db, id, token, move, result, now = Date.now()) {
   if (!isMyTurn(r, seat)) return { error: 'not_your_turn' };
   const m = cleanMove(move);
   if (!m) return { error: 'bad_move' };
-  const res = cleanResult(result);
+  let done = false;
+  let res = '';
+  const g = isSupported(r.game) ? replayGame(r.game, await movesOf(db, r.id, 0, MAX_REPLAY_MOVES), r.move_count) : null;
+  if (g) {
+    const judged = g.apply({ seat: seat, move: m });
+    if (!judged.ok) return { error: judged.error };
+    done = !!judged.status.over;
+    res = done ? toResult(judged) : '';
+  } else {
+    res = cleanResult(result);
+    done = !!res;
+  }
   const seq = Number(r.move_count) + 1;
-  const done = !!res;
   await db.batch([
     stmt(db, 'INSERT INTO play_moves (room_id, seq, seat, move, created_at) VALUES (?, ?, ?, ?, ?)', [r.id, seq, seat, m, now]),
     stmt(db, 'UPDATE play_rooms SET turn = ?, move_count = ?, status = ?, result = ?, updated_at = ? WHERE id = ?', [

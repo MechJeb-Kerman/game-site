@@ -74,6 +74,7 @@
     not_playing: '对局还没开始',
     not_your_turn: '还没轮到你',
     bad_move: '这步棋服务端没收下',
+    illegal_move: '这步不合规则，换一步试试',
     bad_token: '座位凭证失效了，请重新加入',
     bad_watch: '观战钥匙无效或这一局已经结束太久'
   };

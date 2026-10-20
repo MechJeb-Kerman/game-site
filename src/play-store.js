@@ -1,7 +1,7 @@
 /**
  * 联机对战数据层（Express / node:sqlite 版）。
  * 与 worker/play-store.js 一一对应：那边每个函数第一个参数是 D1 绑定、全程 await，
- * 这里的 SQL 完全一样，方便两条线对读。规则判定在 src/play.js（两线共享）。
+ * 这里的 SQL 完全一样，方便两条线对读。共享纯逻辑在 src/play.js、棋类裁判在 src/rules/index.js（都是两线共享）。
  */
 import { randomBytes } from 'node:crypto';
 import { db } from './db.js';
@@ -10,6 +10,7 @@ import {
   makeCode, cleanName, cleanGame, cleanCode, cleanMove, cleanResult,
   seatOf, isMyTurn, isExpired, publicRoom, mapMoves, parseWatchKey
 } from './play.js';
+import { isSupported, createGame, toResult } from './rules/index.js';
 
 function room(id) {
   return db.prepare('SELECT * FROM play_rooms WHERE id = ?').get(Number(id)) || null;
@@ -182,9 +183,30 @@ export function poll(id, token, since, now = Date.now()) {
   return { room: publicRoom(r, seat), seat, moves: mapMoves(movesOf(r.id, since)) };
 }
 
+/** 重建局面时最多回放多少手（draughts 有「25 回合无进展判和」，实际用不到这么多，留足余量） */
+const MAX_REPLAY_MOVES = 2000;
+
 /**
- * 落子：只认「轮到你 + 房间在局中」，不校验走法本身合不合法。
- * result 由客户端判定后带上（'host' / 'guest' / 'draw'），带上即结束这局。
+ * 按库里已有的走法序列重建局面（服务端裁判用）。
+ * 返回 null 表示这份历史不该交给规则引擎判：走法被 LIMIT 截断，或里面有意外的走法
+ * （上线前遗留的房间：旧代码只中继、什么字符串都存得下）。调用方据此退回旧的中继行为，
+ * 免得把本来没问题的房间卡死；新房间每一手都过引擎，历史里不会再出现非法走法。
+ */
+function replayGame(slug, rows, moveCount) {
+  if (rows.length !== Number(moveCount)) return null;
+  const g = createGame(slug);
+  for (let i = 0; i < rows.length; i++) {
+    if (!g.apply({ seat: Number(rows[i].seat), move: rows[i].move }).ok) return null;
+  }
+  return g;
+}
+
+/**
+ * 落子：轮到你 + 房间在局中。
+ * connect4 / reversi / draughts / gomoku 有服务端规则引擎：按库里的走法重建局面 → 校验这一手
+ * （轮次 / 合法性，非法回引擎的错误码且不落库）→ 终局时按引擎判出的胜负写房间结果，
+ * 客户端声明的那份 result 一律不采信。
+ * 其余棋类（chess / xiangqi / tictactoe …）没有引擎，沿用旧行为：走法只中继、result 由客户端声明。
  */
 export function sendMove(id, token, move, result, now = Date.now()) {
   const r = room(id);
@@ -195,15 +217,25 @@ export function sendMove(id, token, move, result, now = Date.now()) {
   if (!isMyTurn(r, seat)) return { error: 'not_your_turn' };
   const m = cleanMove(move);
   if (!m) return { error: 'bad_move' };
-  const res = cleanResult(result);
+  let done = false;
+  let res = '';
+  const g = isSupported(r.game) ? replayGame(r.game, movesOf(r.id, 0, MAX_REPLAY_MOVES), r.move_count) : null;
+  if (g) {
+    const judged = g.apply({ seat: seat, move: m });
+    if (!judged.ok) return { error: judged.error };
+    done = !!judged.status.over;
+    res = done ? toResult(judged) : '';
+  } else {
+    res = cleanResult(result);
+    done = !!res;
+  }
   const seq = Number(r.move_count) + 1;
   db.prepare('INSERT INTO play_moves (room_id, seq, seat, move, created_at) VALUES (?, ?, ?, ?, ?)').run(r.id, seq, seat, m, now);
-  const done = !!(res);
   const next = {
     turn: done ? Number(r.turn) : 1 - seat,
     move_count: seq,
     status: done ? STATUS.DONE : STATUS.PLAYING,
-    result: done ? res : ''
+    result: res
   };
   db.prepare('UPDATE play_rooms SET turn = ?, move_count = ?, status = ?, result = ?, updated_at = ? WHERE id = ?')
     .run(next.turn, next.move_count, next.status, next.result, now, r.id);

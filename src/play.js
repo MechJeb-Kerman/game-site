@@ -3,9 +3,10 @@
  * Express 线 src/play-store.js 与 Workers 线 worker/play-store.js 都 import 这里，
  * 保证房间码、名字清洗、走法校验、状态推导两条线完全一致（先例：src/forum-guard.js）。
  *
- * 设计取舍（服务端只做「轮流 + 走法中继」）：
- *   - 不校验走法是否合法、不判胜负 —— 三条棋的规则都跑在浏览器里（同一个页面文件
- *     在两条线共用），服务端收到的 result 只当玩家声明照单转发；
+ * 设计取舍（服务端做「轮流 + 走法中继」，并对部分棋类自己裁判）：
+ *   - 走法合法性 / 胜负判定在服务端：src/rules/ 覆盖 connect4 / reversi / draughts / gomoku
+ *     （由 play-store.js 的 sendMove 调用）；未接入的棋类（中国象棋 / 国际象棋 / 井字棋）
+ *     仍只中继，result 当玩家声明照单转发；
  *   - 匿名可玩，房间靠 6 位房间码 + 每人一枚随机 token 认领座位，不做账号绑定；
  *   - 没有 Durable Objects，客户端 1~2 秒轮询 /api/play/poll 拉增量走法。
  */

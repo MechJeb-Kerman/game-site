@@ -17,6 +17,9 @@ import { PORTAL_HOSTS } from './src/sites.js';
 import * as play from './src/play-store.js';
 import * as social from './src/social.js';
 import { dayKey } from './src/daily.js';
+import { replayCardSvg, profileCardSvg, dailyCardSvg } from './src/cards.js';
+import { makeSearchBackend, meiliBackend, sqlBackend } from './src/search.js';
+import { createCache, redisLikeAdapter } from './src/rank-cache.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -87,7 +90,7 @@ const UGC_HTML_CSP = [
    论坛有两种访问形态：游戏站上的 /forum/*，以及 forum.fishport.cn 的根路径。
    后者的请求在这里被内部重写成 /forum/*，页面里的链接基址用 req.forumBase（'' 或 '/forum'），
    同一套路由与模板在两种形态下都能用；/forum/* 与全站公共前缀不受影响。 */
-const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|nav|favicon\.ico|robots\.txt|sitemap\.xml|manifest\.webmanifest|sw\.js|icons)(\/|$)/;
+const FORUM_SHARED = /^\/(static|games|cover|ugc|api|auth|login|register|logout|account|admin|forum|nav|favicon\.ico|robots\.txt|sitemap\.xml|manifest\.webmanifest|sw\.js|precache\.json|icons)(\/|$)/;
 
 app.use((req, res, next) => {
   const host = String(req.get('host') || '').split(':')[0].toLowerCase();
@@ -262,25 +265,115 @@ app.get('/tag/:tag', (req, res) => {
   );
 });
 
-app.get('/search', (req, res) => {
+/* ---------- 搜索后端接线：Meilisearch 可选 + SQL 永远兜底 ----------
+ *
+ * 硬规矩：search() 永不抛错。没配 MEILI_HOST 时 primary 为 null，makeSearchBackend 直接走 SQL 兜底，
+ * 结果与接线前完全一致；配了 Meili 但挂了 / 超时 / 熔断了，也只是退回同一套 SQL，请求照样 200。
+ *
+ * env（README 口径，worker 线同名）：
+ *   MEILI_HOST         形如 http://127.0.0.1:7700；空或未设 = 不启用主后端
+ *   MEILI_API_KEY      可空
+ *   MEILI_INDEX        默认 games
+ *   SEARCH_TIMEOUT_MS  单次主后端上限，默认 1500
+ */
+const MEILI_HOST = String(process.env.MEILI_HOST || '').trim();
+const MEILI_INDEX = String(process.env.MEILI_INDEX || '').trim() || 'games';
+const SEARCH_TIMEOUT_MS = Number(process.env.SEARCH_TIMEOUT_MS) > 0 ? Number(process.env.SEARCH_TIMEOUT_MS) : 1500;
+
+/** 列表页与建议接口的条数上限（与接线前一致：60 / 6） */
+const SEARCH_PAGE_LIMIT = 60;
+const SUGGEST_LIMIT = 6;
+
+/**
+ * SQL 兜底腿 = 接线前那两个 data 调用的原样封装。
+ * 它吃的是 opts.rawQuery（路由拿到的原样 q），不是 normalizeQuery 折过空白的 text：
+ * data.searchPlan 自己会 trim + 小写，但不折内部连续空白，用 text 会让 /search?q=a%20%20b 的结果变化。
+ * 站点自己的排序令牌（hot/new/rating）只在兜底腿生效——Meili 腿按它自己的相关度排，
+ * 所以走 opts.siteSort 而不是塞进 Meili 的 body.sort（Meili 的 sort 是 ["field:asc"] 那种形状）。
+ */
+const sqlFallback = sqlBackend(async (q, opts = {}) => {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const args = {
+    q: typeof o.rawQuery === 'string' ? o.rawQuery : q,
+    sort: o.siteSort || 'hot',
+    limit: Number(o.limit) > 0 ? Number(o.limit) : SEARCH_PAGE_LIMIT
+  };
+  return { items: data.listGames(args), total: data.countGames(args) };
+});
+
+/** 惰性建后端：没配 Meili 的部署连这段构造都不跑 */
+let searchBackendInstance = null;
+function getSearchBackend() {
+  if (searchBackendInstance) return searchBackendInstance;
+  const primary = MEILI_HOST
+    ? meiliBackend({
+        url: MEILI_HOST,
+        apiKey: process.env.MEILI_API_KEY || '',
+        index: MEILI_INDEX,
+        fetchImpl: fetch, // 全局 fetch（Node >= 18）；注入是为了可测
+        timeoutMs: SEARCH_TIMEOUT_MS
+      })
+    : null;
+  searchBackendInstance = makeSearchBackend({ primary: primary, fallback: sqlFallback, timeoutMs: SEARCH_TIMEOUT_MS });
+  if (MEILI_HOST) console.log('[search] 主后端 meilisearch ' + MEILI_HOST + ' index=' + MEILI_INDEX);
+  return searchBackendInstance;
+}
+
+/**
+ * 映射层：把后端返回的 items 变成 ui.listPage / 建议接口期望的「完整游戏行」。
+ *   - Meili 命中是 { slug, title, score }，拿 slug 回本站库取整行（与列表页同源），顺序仍按 Meili 的相关度；
+ *     库里查不到的（下架 / 已删）直接丢掉，所以 total 有可能略大于实际渲染条数。
+ *   - SQL 兜底腿给的本来就是完整行（data.listGames 的产物），原样透传。
+ */
+function toFullGames(result) {
+  const items = Array.isArray(result && result.items) ? result.items : [];
+  if (!result || result.backend !== 'meili') return items;
+  const out = [];
+  for (const hit of items) {
+    const g = data.getGame(String((hit && hit.slug) || ''));
+    if (g) out.push(g);
+  }
+  return out;
+}
+
+/**
+ * 跑一次搜索。降级日志只在「配了 Meili 却没答上来」时打一行（形如 [search] fallback ...）；
+ * 没配 Meili 的正常兜底路径不打，否则每个搜索请求都刷屏。
+ */
+async function runSearch(q, opts) {
+  const backend = getSearchBackend();
+  const result = await backend.search(q, opts);
+  if (MEILI_HOST && result.source !== 'primary') {
+    console.log('[search] fallback q=' + JSON.stringify(String(q).slice(0, 40)) +
+      ' reason=' + String(backend.stats().lastError || 'n/a') + ' backend=' + result.backend);
+  }
+  return result;
+}
+
+app.get('/search', (req, res, next) => {
   const q = String(req.query.q || '').slice(0, 50);
   const sort = String(req.query.sort || 'hot');
-  const opts = { q, sort, limit: 60 };
-  res.send(
-    ui.listPage({
-      origin: originOf(req),
-      user: req.user,
-      path: '/search?q=' + encodeURIComponent(q),
-      heading: q ? '「' + q + '」的搜索结果' : '搜索游戏',
-      sub: '输入游戏名、类型或标签进行搜索',
-      list: data.listGames(opts),
-      total: data.countGames(opts),
-      query: q,
-      sort,
-      base: '/search'
+  // rawQuery 交给兜底腿用，保证没配 Meili 时与接线前逐字节一致；siteSort 同上（只在兜底腿生效）
+  runSearch(q, { limit: SEARCH_PAGE_LIMIT, offset: 0, rawQuery: q, siteSort: sort })
+    .then((hit) => {
+      res.send(
+        ui.listPage({
+          origin: originOf(req),
+          user: req.user,
+          path: '/search?q=' + encodeURIComponent(q),
+          heading: q ? '「' + q + '」的搜索结果' : '搜索游戏',
+          sub: '输入游戏名、类型或标签进行搜索',
+          list: toFullGames(hit),
+          total: hit.total,
+          query: q,
+          sort,
+          base: '/search'
+        })
+      );
     })
-  );
+    .catch(next); // 真出错（比如库挂了）交给 Express 错误处理，与接线前的同步抛错同样是 500
 });
+
 
 /** 举报结果提示（落在详情页评论区顶部） */
 const CMT_NOTICE = {
@@ -290,20 +383,59 @@ const CMT_NOTICE = {
   not_found: '这条评论已经不在了'
 };
 
-app.get('/rank', (req, res) => {
-  const board = data.leaderboard(data.boardKind(req.query.kind), 20);
-  res.send(
-    ui.rankPage({
-      origin: originOf(req),
-      user: req.user,
-      kind: board.kind,
-      label: board.label,
-      metric: board.metric,
-      rows: board.rows,
-      boards: Object.entries(data.BOARD_KINDS).map(([k, v]) => ({ kind: k, label: v.label }))
+/* ---------- 榜单缓存：进程内 TTL + 单飞 ----------
+ *
+ * /rank 每次都要对 play_logs 做实时聚合，而它是最热的页面之一；真正常见的是「同一个榜单被一堆人同时刷」，
+ * 靠单飞把那波并发合并成一次聚合，30 秒内复用同一份结果。
+ *
+ * 远程缓存接缝：本仓库零依赖，没有 redis 客户端，所以默认就是纯内存。
+ * 若启动时 globalThis.__QW_REDIS__ 上挂了形如 { get, set, del, keys } 的最小客户端
+ * （node-redis v4 / ioredis 的常用方法就长这样），就用 redisLikeAdapter 包一层走远程；
+ * 接真 Redis 需要在这个部署的启动脚本里引入客户端依赖并挂上去，例如
+ *   globalThis.__QW_REDIS__ = createClient({ url: process.env.REDIS_URL }).connect()
+ * 仓库本身不引依赖。适配器远端一抖就永久退化成纯内存，榜单不会因为 Redis 抖一下整块挂掉。
+ *
+ * RANK_CACHE_TTL_MS 是给测试用的加速旋钮（默认 30000），生产不用管它。
+ */
+const RANK_CACHE_TTL_MS = Number(process.env.RANK_CACHE_TTL_MS) > 0 ? Number(process.env.RANK_CACHE_TTL_MS) : 30000;
+const RANK_CACHE_MAX = 200;
+const rankCache = typeof globalThis.__QW_REDIS__ !== 'undefined' && globalThis.__QW_REDIS__
+  ? redisLikeAdapter(globalThis.__QW_REDIS__, { ttlMs: RANK_CACHE_TTL_MS, maxEntries: RANK_CACHE_MAX, keyPrefix: 'rank:' })
+  : createCache({ ttlMs: RANK_CACHE_TTL_MS, maxEntries: RANK_CACHE_MAX });
+app.locals.rankCache = rankCache; // 测试与排障观察点：stats() 能看出这次请求有没有真打库
+
+/**
+ * 榜单缓存 key：把能影响这次结果的全部入参都编进去。
+ * kind 先过 data.boardKind（非法值回落 today），所以 ?kind=xx 与不带参数共用一份缓存；
+ * range / by / page 目前不参与取数（README:220 写了 ?range= / ?by=，实现只认 ?kind=，已向 Lead 报告），
+ * 照样编进 key——将来真接上时不会串味。
+ */
+function rankKey(query) {
+  const q = query || {};
+  return 'rank:' + data.boardKind(q.kind) + ':' + String(q.range || '') + ':' + String(q.by || '') +
+    ':' + String(q.page || '') + ':' + RANK_CACHE_LIMIT;
+}
+const RANK_CACHE_LIMIT = 20; // data.leaderboard 的条数（接线前就是 20）
+
+app.get('/rank', (req, res, next) => {
+  rankCache
+    .getOrLoad(rankKey(req.query), () => data.leaderboard(data.boardKind(req.query.kind), RANK_CACHE_LIMIT))
+    .then((board) => {
+      res.send(
+        ui.rankPage({
+          origin: originOf(req),
+          user: req.user,
+          kind: board.kind,
+          label: board.label,
+          metric: board.metric,
+          rows: board.rows,
+          boards: Object.entries(data.BOARD_KINDS).map(([k, v]) => ({ kind: k, label: v.label }))
+        })
+      );
     })
-  );
+    .catch(next); // loader 抛错（比如库挂了）原样交给错误处理，与接线前同样 500
 });
+
 
 app.get('/game/:slug', (req, res) => {
   const game = data.getGame(req.params.slug);
@@ -383,6 +515,24 @@ app.get('/daily', (req, res) => {
   );
 });
 
+/** 分享卡统一出口：SVG 必须带 charset，5 分钟公共缓存（内容随数据变，别让 CDN 存太久） */
+function sendCard(res, svg) {
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.send(svg);
+}
+
+/** 每日挑战成绩卡：游客也能拿（没有打卡记录时卡片按 0 处理） */
+app.get('/daily/card.svg', (req, res) => {
+  const day = dayKey();
+  sendCard(res, dailyCardSvg({
+    day,
+    game: data.getGame(social.dailySlug(day)),
+    stats: req.user ? social.dailyStats(req.user.id) : null,
+    origin: originOf(req)
+  }));
+});
+
 /** 个人主页：昵称、等级、徽章与公开计数；邮箱之类只出现在 /account。 */
 app.get('/u/:name', (req, res) => {
   const profile = social.profileByName(req.params.name);
@@ -392,9 +542,19 @@ app.get('/u/:name', (req, res) => {
       origin: originOf(req),
       user: req.user,
       profile,
-      isSelf: !!(req.user && Number(req.user.id) === Number(profile.id))
+      isSelf: !!(req.user && Number(req.user.id) === Number(profile.id)),
+      counts: social.followCounts(profile.id),
+      following: req.user ? social.isFollowing(req.user.id, profile.id) : false,
+      notice: FOLLOW_TEXT[String(req.query.notice || '')] || ''
     })
   );
+});
+
+/** 个人主页成绩卡：昵称 / 等级 / 徽章，取不到昵称就是 404 */
+app.get('/u/:name/card.svg', (req, res) => {
+  const profile = social.profileByName(req.params.name);
+  if (!profile) return res.status(404).type('text/plain').send('not found');
+  sendCard(res, profileCardSvg({ profile, origin: originOf(req) }));
 });
 
 /** 棋谱回放：对局结束时已落库（play-store.saveReplay），这里只负责渲染播放器。 */
@@ -412,6 +572,18 @@ app.get('/replay/:id', (req, res) => {
       more: play.replayList({ game: replay.game, limit: 10 }).items.filter((x) => Number(x.id) !== id).slice(0, 6)
     })
   );
+});
+
+/**
+ * 棋谱分享卡：id 就是 play_replays.id（和 /replay/:id 同一份棋谱）。
+ * 非法 id 给 400 而不是 404 —— 「地址写错了」和「棋谱没了」分得开。
+ */
+app.get('/play/:id/card.svg', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).type('text/plain').send('bad id');
+  const replay = play.replay(id);
+  if (!replay) return res.status(404).type('text/plain').send('not found');
+  sendCard(res, replayCardSvg({ replay, game: data.getGame(replay.game), origin: originOf(req) }));
 });
 
 app.get('/changelog', (req, res) => {
@@ -460,6 +632,13 @@ app.get('/sw.js', (req, res) => {
     .setHeader('Cache-Control', 'no-cache')
     .setHeader('Service-Worker-Allowed', '/');
   res.sendFile(join(PUBLIC_DIR, 'sw.js'));
+});
+
+// PWA 真离线：预缓存清单。由 tools/gen-precache.mjs 扫描仓库生成，sw.js 在 install 时拉取；
+// 与 manifest/sw.js 一样以 public/ 下的文件为单一事实来源，改完即生效。
+app.get('/precache.json', (req, res) => {
+  res.type('application/json; charset=utf-8').setHeader('Cache-Control', 'public, max-age=600');
+  res.sendFile(join(PUBLIC_DIR, 'precache.json'));
 });
 
 app.get('/robots.txt', (req, res) => {
@@ -556,18 +735,23 @@ app.get('/api/games/:slug', (req, res) => {
  * 搜索建议：走的是和列表页同一套相关度排序（标题 > 拼音前缀 > 拼音包含 > 副标题 > 标签）。
  * 输入拼音/首字母也能出结果，例如 tanchishe / tcs → 贪吃蛇。
  */
-app.get('/api/search/suggest', (req, res) => {
+app.get('/api/search/suggest', (req, res, next) => {
   const q = String(req.query.q || '').trim().slice(0, 40);
   if (!q) return res.json({ q: '', items: [] });
-  const items = data.listGames({ q, limit: 6 }).map((g) => ({
-    slug: g.slug,
-    title: g.title,
-    emoji: g.emoji,
-    category: g.category ? g.category.name : '',
-    plays: g.plays,
-    rating: g.rating
-  }));
-  res.json({ q, items });
+  // 与 /search 同一条后端链（Meili 主 + SQL 兜底）；rawQuery 仍是这份 trim 过的 q，兜底腿与接线前一致
+  runSearch(q, { limit: SUGGEST_LIMIT, offset: 0, rawQuery: q })
+    .then((hit) => {
+      const items = toFullGames(hit).map((g) => ({
+        slug: g.slug,
+        title: g.title,
+        emoji: g.emoji,
+        category: g.category ? g.category.name : '',
+        plays: g.plays,
+        rating: g.rating
+      }));
+      res.json({ q, items });
+    })
+    .catch(next);
 });
 
 /** 评论分页 JSON（详情页评论区 / 无刷新翻页用） */
@@ -624,14 +808,15 @@ app.post('/api/games/:slug/rate', (req, res) => {
 
 // ---------- 联机对战（房间 + 走法中继） ----------
 //
-// 服务端只做两件事：轮流（谁的回合）与转发走法。走法是否合法、谁赢谁输都由客户端规则判定，
-// result 由客户端声明后照单转发——棋类规则（禁手、将军、将死）放在页面里，服务端不做裁判。
+// 服务端做三件事：轮流（谁的回合）、转发走法，以及对接入规则引擎的棋类（connect4 / reversi /
+// draughts / gomoku）自己裁判走法与胜负（判在 src/play-store.js 的 sendMove 里）。
+// 其余棋类（中国象棋 / 国际象棋 / 井字棋）照旧只中继，result 采信客户端声明。
 // 客户端 1.2s 轮询 /api/play/poll 拉增量（since = 已应用的最大 seq），不用 Durable Objects。
 
 /** store 的 { error } → HTTP 状态码；成功统一补 ok:true。绝不外泄 host_token/guest_token。 */
 const PLAY_STATUS = {
   not_found: 404, bad_token: 403, full: 409, busy: 503,
-  bad_code: 400, bad_game: 400, bad_move: 400,
+  bad_code: 400, bad_game: 400, bad_move: 400, illegal_move: 400,
   not_your_turn: 409, not_playing: 409, done: 409, closed: 409, playing: 409, waiting: 409
 };
 function playReply(res, r, status = 200) {
@@ -646,6 +831,7 @@ function playHint(code) {
     not_found: '房间不存在或已过期', bad_token: '座位凭证无效（清掉浏览器数据后请重新创建房间）',
     full: '房间已经满员', busy: '暂时没有可加入的房间，请稍后再试',
     bad_code: '房间码是 6 位字母数字', bad_game: '游戏标识不合法', bad_move: '走法数据不合法',
+    illegal_move: '这步不合规则（服务端已裁判）',
     not_your_turn: '还没轮到你', not_playing: '对局还没开始', done: '对局已经结束',
     closed: '房间已经关闭', playing: '房间已在对局中', waiting: '还没等到对手'
   }[code] || '';
@@ -960,6 +1146,97 @@ app.get('/favorites', requireLogin, (req, res) => {
     origin: originOf(req), user: req.user, list, total: list.length
   }));
 });
+// ---------- 通知中心 / 私信 / 关注（第七批：社交） ----------
+
+const NOTICE_PAGE = 20;
+const PEOPLE_PAGE = 24;
+const FOLLOW_TEXT = { followed: '已关注', unfollowed: '已取消关注', self_follow: '不能关注自己', no_user: '没有这个用户' };
+
+/** 页码：非法或负数一律回第 1 页 */
+function pageOf(v) {
+  return Math.max(1, Number(v) || 1);
+}
+
+app.get('/notifications', requireLogin, (req, res) => {
+  const page = pageOf(req.query.page);
+  const list = social.listNotifications(req.user.id, { limit: NOTICE_PAGE, offset: (page - 1) * NOTICE_PAGE });
+  res.send(ui.notificationsPage({
+    origin: originOf(req), user: req.user, list, page,
+    notice: String(req.query.notice || '') === 'read' ? '全部标为已读' : ''
+  }));
+});
+
+/** 标为已读：带 id 只标那条，不带（或不合法）就把全部未读标掉 */
+app.post('/notifications/read', loginPageGuard('/notifications'), (req, res) => {
+  const b = req.body || {};
+  social.markRead(req.user.id, Number(b.id) || 0);
+  res.redirect(withQuery(safeNext(b.next || '/notifications'), 'notice=read'));
+});
+
+app.get('/messages', requireLogin, (req, res) => {
+  res.send(ui.messagesPage({
+    origin: originOf(req), user: req.user,
+    threads: social.listMessageThreads(req.user.id, { limit: 50 })
+  }));
+});
+
+app.get('/messages/:name', requireLogin, (req, res) => {
+  const peer = social.profileByName(String(req.params.name || ''));
+  if (!peer || Number(peer.id) === Number(req.user.id)) {
+    return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  }
+  social.markThreadRead(req.user.id, peer.id);
+  const err = String(req.query.error || '');
+  res.send(ui.messagesPage({
+    origin: originOf(req), user: req.user, peer,
+    thread: social.threadMessages(req.user.id, peer.id, { limit: 30 }),
+    notice: String(req.query.notice || '') === 'sent' ? '已发送' : '',
+    error: err === 'too_long' ? '私信最多 ' + social.MESSAGE_MAX + ' 字' : (err === 'empty' ? '私信不能为空' : '')
+  }));
+});
+
+app.post('/messages/:name', loginPageGuard('/messages'), (req, res) => {
+  const name = String(req.params.name || '');
+  const back = '/messages/' + encodeURIComponent(name);
+  const peer = social.profileByName(name);
+  if (!peer) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  const r = social.sendMessage(req.user.id, peer.id, (req.body || {}).body);
+  res.redirect(r.error ? withQuery(back, 'error=' + encodeURIComponent(r.error)) : withQuery(back, 'notice=sent'));
+});
+
+/** 关注列表：粉丝 / 关注 / 好友（互关）三个 tab 共用一套渲染 */
+function peopleHandler(kind) {
+  return (req, res) => {
+    const owner = social.profileByName(String(req.params.name || ''));
+    if (!owner) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+    const page = pageOf(req.query.page);
+    res.send(ui.peoplePage({
+      origin: originOf(req), user: req.user, owner, kind, page,
+      list: social.followList(owner.id, kind, { limit: PEOPLE_PAGE, offset: (page - 1) * PEOPLE_PAGE })
+    }));
+  };
+}
+
+app.get('/u/:name/followers', peopleHandler('followers'));
+app.get('/u/:name/following', peopleHandler('following'));
+app.get('/u/:name/friends', peopleHandler('friends'));
+
+/** 关注 / 取关：同一个地址，按钮自带 action=follow|unfollow；没带就按当前状态取反 */
+app.post('/u/:name/follow', loginPageGuard('/u'), (req, res) => {
+  const name = String(req.params.name || '');
+  const back = '/u/' + encodeURIComponent(name);
+  const peer = social.profileByName(name);
+  if (!peer) return res.status(404).send(ui.notFoundPage({ origin: originOf(req), user: req.user }));
+  const action = String((req.body || {}).action || '');
+  const want = action === 'unfollow' ? false : (action === 'follow' ? true : !social.isFollowing(req.user.id, peer.id));
+  const r = want ? social.follow(req.user.id, peer.id) : social.unfollow(req.user.id, peer.id);
+  const key = r.error ? r.error : (want ? 'followed' : 'unfollowed');
+  // 只在「新关注」时发通知：social.notify 自己还会按 (user,kind,actor,target) 去重
+  if (!r.error && want) {
+    social.notify(peer.id, { kind: 'follow', actorId: req.user.id, targetType: 'user', targetId: req.user.id });
+  }
+  res.redirect(withQuery(back, 'notice=' + encodeURIComponent(key)));
+});
 
 // ---------- 投稿 ----------
 
@@ -1165,6 +1442,19 @@ app.post('/admin/users/:id/verify', requireAdmin, (req, res) => {
 
 app.get('/api/me', (req, res) => res.json({ user: req.user }));
 
+/** 导航上的小红点：通知未读数（app.js 每页拉一次） */
+app.get('/api/notifications/unread', (req, res) => {
+  if (!req.user) return res.status(401).json({ ok: false, error: 'login_required', unread: 0 });
+  res.json({ ok: true, unread: social.unreadCount(req.user.id) });
+});
+
+/** 导航上的小红点：私信未读数（按会话汇总，条数不大） */
+app.get('/api/messages/unread', (req, res) => {
+  if (!req.user) return res.status(401).json({ ok: false, error: 'login_required', unread: 0 });
+  const t = social.listMessageThreads(req.user.id, { limit: 100 });
+  res.json({ ok: true, unread: (t.items || []).reduce(function (n, x) { return n + Number(x.unread || 0); }, 0) });
+});
+
 app.post('/api/auth/login', (req, res) => {
   const b = req.body || {};
   const r = auth.login(String(b.username || ''), b.password);
@@ -1195,6 +1485,17 @@ app.post('/api/games/:slug/favorite', (req, res) => {
   res.json(r);
 });
 
+/**
+ * 通知钩子统一入口：只在写库成功之后调用，内部任何异常都只记一行日志。
+ * 通知是附加价值，发帖 / 评论本身不能因为它失败而失败。
+ */
+function notifySafe(fn) {
+  try { return fn(); } catch (e) {
+    console.warn('[notify] ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
 /** 评论限流：同一用户对同一游戏 10 秒内只能发一条（防手抖连点） */
 const commentGate = new Map();
 
@@ -1217,6 +1518,15 @@ app.post('/api/games/:slug/comments', (req, res) => {
   }
   commentGate.set(key, now);
   if (commentGate.size > 5000) commentGate.clear();
+  // 通知作品作者（submitted_by，游戏没记作者就是 0，social 内部会跳过）与正文里 @ 到的人
+  notifySafe(() => {
+    const game = data.getGame(slug);
+    if (!game) return;
+    social.notifyComment({
+      actorId: req.user.id, gameSlug: slug,
+      ownerId: game.submitted_by, commentId: r.id, body: r.body
+    });
+  });
   res.json({ id: r.id, body: r.body, name: req.user.name, parent_id: r.parent_id });
 });
 
@@ -1374,6 +1684,12 @@ app.post('/forum/new', loginPageGuard('/forum/new'), (req, res) => {
   if (r.error) return forumTo(res, back, null, r.error);
   data.logAudit(req.user, 'forum.thread.create', String(r.id),
     (Number(r.status) === 1 ? '直接发布' : '转待审' + (r.reason ? '（' + r.reason + '）' : '')) + '：' + String(tv.value).slice(0, 40));
+  // 新帖：作者就是楼主，reply 通知会被 self 规则吃掉，这一步实际是把正文里 @ 到的人喊上
+  // 待审内容一律不通知，免得没过审的正文借通知漏给收件人
+  if (Number(r.status) === 1) notifySafe(() => social.notifyReply({
+    actorId: req.user.id, threadId: r.id, threadTitle: tv.value,
+    ownerId: req.user.id, postId: 0, body: bv.value
+  }));
   forumTo(res, req.forumBase + '/t/' + r.id, Number(r.status) === 1 ? 'published' : 'pending');
 });
 
@@ -1421,6 +1737,15 @@ app.post('/forum/t/:id/reply', loginPageGuard('/forum'), (req, res) => {
   const r = forum.createReply({ threadId: id, user: req.user, body: bv.value, parentId, fastSubmit: pre.fastSubmit });
   if (r.error) return forumTo(res, back, null, r.error);
   data.logAudit(req.user, 'forum.post.create', String(r.id), '回复主题 #' + id + (Number(r.status) === 1 ? '' : '（转待审）'));
+  // 楼中楼也算「回复」：targetId 仍是 主题#这一楼，@ 展开与 10 分钟去重都在 social 内部
+  if (Number(r.status) === 1) notifySafe(() => {
+    const t = forum.getThread(id, req.user);
+    if (!t || !t.thread) return;
+    social.notifyReply({
+      actorId: req.user.id, threadId: id, threadTitle: t.thread.title,
+      ownerId: t.thread.user_id, postId: r.id, body: bv.value
+    });
+  });
   forumTo(res, back + '#p' + r.id, Number(r.status) === 1 ? 'replied' : 'pending');
 });
 
@@ -1549,7 +1874,7 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   res.status(500).type('text/plain').send('500 Internal Server Error');
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   const s = data.siteStats();
   console.log('');
   console.log('  🎮  ' + ui.SITE.name + ' 已启动');
@@ -1560,3 +1885,7 @@ app.listen(PORT, () => {
   }
   console.log('');
 });
+
+/* 导出给测试与排障用（tools/search-fallback-test.mjs 在进程内 import 本站，直接观察榜单缓存的单飞与 TTL）：
+   server 是 listen 出来的句柄，测试收尾要 close 掉，别把端口留在那儿。 */
+export { app, server, rankCache, getSearchBackend };

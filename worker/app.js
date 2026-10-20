@@ -18,6 +18,9 @@ import { PORTAL_HOSTS } from '../src/sites.js';
 import * as play from './play-store.js';
 import * as social from './social.js';
 import { dayKey } from '../src/daily.js';
+import { replayCardSvg, profileCardSvg, dailyCardSvg } from '../src/cards.js';
+import { makeSearchBackend, sqlBackend, meiliBackend } from '../src/search.js';
+import { createCache, redisLikeAdapter } from '../src/rank-cache.js';
 
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
@@ -67,6 +70,259 @@ const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 10
   '<text x="50" y="54" text-anchor="middle" dominant-baseline="central" font-size="62">🎮</text>' +
   '</svg>';
 
+/* ================= 搜索后端（可选 Meilisearch）与榜单缓存 ================= */
+
+/**
+ * 搜索接线：配了 MEILI_HOST 就用 Meilisearch 当主后端（src/search.js 的 meiliBackend），
+ * 主后端失败 / 超时 / 熔断后自动落到 D1 的 SQL 搜索（sqlBackend 包住原来的 data.listGames），
+ * 请求照常 200 并按兜底结果渲染；没配（未设或空串）时完全走原来的 SQL 路径，页面输出一字不差。
+ *
+ * 配置只从 env 进：Workers 里没有 process.env，读它直接 ReferenceError（本地 dev 由 serve-worker.mjs 塞 env）。
+ *   MEILI_HOST         http://127.0.0.1:7700 这样；空 / 未设 = 不启用
+ *   MEILI_API_KEY      可空
+ *   MEILI_INDEX        默认 games
+ *   SEARCH_TIMEOUT_MS  主后端单次上限，默认 1500
+ *
+ * 降级语义由 makeSearchBackend 保证：search() 永不抛错，三条腿全挂也只是返回空结果。
+ */
+const MEILI_DEFAULT_INDEX = 'games';
+const SEARCH_TIMEOUT_DEFAULT_MS = 1500;
+const SEARCH_BACKEND_CACHE_MAX = 8;
+
+/** 解析搜索配置（纯函数，便于单测直接调） */
+function searchConfig(env) {
+  const e = env || {};
+  const host = String(e.MEILI_HOST || '').trim().replace(/\/+$/, '');
+  const raw = Number(String(e.SEARCH_TIMEOUT_MS || '').trim());
+  return {
+    host: host,
+    apiKey: String(e.MEILI_API_KEY || ''),
+    index: String(e.MEILI_INDEX || '').trim() || MEILI_DEFAULT_INDEX,
+    timeoutMs: Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : SEARCH_TIMEOUT_DEFAULT_MS
+  };
+}
+
+/**
+ * 同一份配置复用同一个适配器实例：熔断状态与命中统计要跨请求才有意义。
+ * （Workers 实例被回收 / 重启后清零；熔断只防「后端挂了还每请求都打一遍」，不承担持久状态。）
+ */
+const searchBackends = new Map();
+
+/** 配好的搜索适配器；没配 MEILI_HOST 返回 null —— 调用方直接走原来的 SQL，行为一点不变 */
+function searchBackendFor(env) {
+  const cfg = searchConfig(env);
+  if (!cfg.host) return null;
+  const key = cfg.host + '\u0000' + cfg.index + '\u0000' + cfg.apiKey + '\u0000' + cfg.timeoutMs;
+  const hit = searchBackends.get(key);
+  if (hit) return hit;
+  const backend = makeSearchBackend({
+    // Workers 全局 fetch；meiliBackend 自己还有一层 AbortController 超时
+    primary: meiliBackend({ url: cfg.host, apiKey: cfg.apiKey, index: cfg.index, fetchImpl: fetch, timeoutMs: cfg.timeoutMs }),
+    // 兜底永远是本站 SQL。db 是每请求的（env 每请求现拼），所以从 opts.db 取，不能闭包在这里。
+    fallback: sqlBackend(function (q, opts) { return sqlSearchLeg(opts && opts.db, q, opts); }),
+    timeoutMs: cfg.timeoutMs
+  });
+  if (searchBackends.size >= SEARCH_BACKEND_CACHE_MAX) {
+    const oldest = searchBackends.keys().next().value;
+    if (oldest !== undefined) searchBackends.delete(oldest);
+  }
+  searchBackends.set(key, backend);
+  return backend;
+}
+
+/**
+ * 兜底腿 = 没配 MEILI_HOST 时用的那两条 SQL —— 保证「降级后看到的就是原来那份结果」。
+ * 注意两条腿拿到的查询串略有差别：搜索引擎那条腿走的是 src/search.js 归一化后的 text
+ * （去首尾空白、折叠空白、截 64），未配置时是原始 q —— 只影响降级瞬间的匹配细节，不影响可见性。
+ */
+async function sqlSearchLeg(db, q, opts) {
+  const o = Object.assign({}, opts, { q: q });
+  const items = await data.listGames(db, o);
+  if (!o.wantTotal) return { items: items, total: items.length };
+  return { items: items, total: await data.countGames(db, o) };
+}
+
+/**
+ * 结果映射层：把搜索适配器给的 items 统一成「游戏整行」，页面模板（gameGrid）只认后者。
+ *   - SQL 腿本来就是整行 → 原样返回（limit 只是再兜一层，正常情况下 SQL 已经限过）；
+ *   - Meili 腿只给 { slug, title, score }（见 src/search.js 的 normalizeHit）→ 按 slug 回 D1 取整行，
+ *     保持相关度顺序；下架的（status !== 1）和查不到的（已删）丢掉，与 SQL 搜索的可见性语义一致。
+ * 也就是说 Meili 只负责「找到哪些」，渲染用的每个字段都来自 D1，播放数/评分不会因为走搜索引擎而变旧。
+ */
+async function searchRowsToGames(db, res, limit) {
+  const cap = Number(limit) > 0 ? Math.floor(Number(limit)) : 0;
+  if (res.backend !== 'meili') return cap ? res.items.slice(0, cap) : res.items;
+  const seen = new Set();
+  const slugs = [];
+  for (const it of res.items) {
+    const slug = it && it.slug ? String(it.slug) : '';
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    slugs.push(slug);
+    if (cap && slugs.length >= cap) break;
+  }
+  const rows = await Promise.all(slugs.map(function (s) { return data.getGame(db, s); }));
+  return rows.filter(function (g) { return g && Number(g.status) === 1; });
+}
+
+/** 降级留痕：主后端没答上来（失败 / 超时 / 熔断）时打一行；页面照常渲染兜底结果，不改 HTML */
+function noteSearchFallback(backend, q, res) {
+  if (!res || res.source === 'primary') return;
+  const st = backend && typeof backend.stats === 'function' ? backend.stats() : {};
+  console.log('[search] fallback source=' + res.source + ' backend=' + res.backend +
+    ' leg=' + (st.lastErrorLeg || '-') + ' err=' + (st.lastError || '-') +
+    ' q=' + JSON.stringify(String(q || '').slice(0, 64)));
+}
+
+/**
+ * 取搜索结果列表（/api/search/suggest 用）。
+ * 没配 MEILI_HOST 时就是原来那一句 data.listGames(ctx.db, opts)（参数一模一样）。
+ */
+async function searchGameList(ctx, q, opts) {
+  const backend = searchBackendFor(ctx.env);
+  if (!backend) return data.listGames(ctx.db, opts);
+  const res = await backend.search(q, Object.assign({}, opts, { q: q, db: ctx.db, wantTotal: false }));
+  noteSearchFallback(backend, q, res);
+  return searchRowsToGames(ctx.db, res, opts && opts.limit);
+}
+
+/**
+ * 取搜索结果列表 + 总数（/search 页面用）。
+ * 没配 MEILI_HOST 或空查询时就是原来那两句：先 listGames 再 countGames，参数与顺序都不变。
+ * （空查询没有「相关度」可言，也没必要把整库丢给搜索引擎，直接走 SQL。）
+ */
+async function searchGamePage(ctx, q, opts) {
+  const backend = searchBackendFor(ctx.env);
+  if (!backend || !String(q || '').trim()) {
+    return { list: await data.listGames(ctx.db, opts), total: await data.countGames(ctx.db, opts) };
+  }
+  const res = await backend.search(q, Object.assign({}, opts, { q: q, db: ctx.db, wantTotal: true }));
+  noteSearchFallback(backend, q, res);
+  const list = await searchRowsToGames(ctx.db, res, opts && opts.limit);
+  // 空结果（三条腿全挂）时 total 用实际条数，免得页面写「共找到 N 款」却一条都列不出来
+  return { list: list, total: res.source === 'empty' ? list.length : res.total };
+}
+
+/* ---------- 榜单缓存（进程内 TTL + 单飞；远程缓存在这儿只留接缝） ---------- */
+
+/**
+ * 榜单（/rank）的缓存：30s TTL、容量 200、同一个 key 并发只查一次库（见 src/rank-cache.js）。
+ * Workers 实例随时会被回收 / 重启，进程内缓存只在实例存活期内有效 —— 这是可接受的：
+ * 它挡的是「榜单页被连续刷」的那一下，不是要一份强一致的持久缓存（榜单本身按天聚合）。
+ *
+ * 远程缓存只留显式接缝（本仓零外部依赖，没有 redis 客户端，所以默认不接）：
+ *   1) setRankStore(store) —— 传一个和 createCache 同形状的实例，redisLikeAdapter(client, {keyPrefix}) 就是；
+ *   2) 导入本模块前挂 globalThis.__QW_REDIS__ = client（要有 get / set / del / 扫描键的能力），
+ *      这里会自动包一层；远端一出错就永久退化成内存（见 redisLikeAdapter 注释）。
+ * 真接 Redis 必须引入客户端依赖（ioredis / node-redis），与「零外部依赖」政策冲突，故留而不接。
+ */
+const RANK_CACHE_OPTS = { ttlMs: 30000, maxEntries: 200 };
+const RANK_CACHE_PREFIX = 'rank:';
+
+function makeRankStore() {
+  const injected = typeof globalThis !== 'undefined' ? globalThis.__QW_REDIS__ : null;
+  if (injected) {
+    try {
+      return redisLikeAdapter(injected, Object.assign({ keyPrefix: 'qw:rank:' }, RANK_CACHE_OPTS));
+    } catch (e) {
+      console.error('[rank] redis adapter failed, fall back to memory: ' + (e && e.message ? e.message : e));
+    }
+  }
+  return createCache(RANK_CACHE_OPTS);
+}
+
+let rankStore = makeRankStore();
+
+/** 换一个缓存实现（测试注入 / 以后接远程缓存）；传 null / 不传就恢复默认 */
+export function setRankStore(store) {
+  rankStore = store || makeRankStore();
+}
+
+/** 榜单缓存运行状态（排障 / 测试用）；store 没提供 stats 就返回 null */
+export function rankCacheStats() {
+  return rankStore && typeof rankStore.stats === 'function' ? rankStore.stats() : null;
+}
+
+/**
+ * 缓存键里的「数据库身份」：一个进程里可能同时开着几个库（本地多端口、多个测试），不区分就会串榜。
+ * LocalD1（node:sqlite）能给出文件路径，优先用它；真 Workers 的 D1 绑定拿不到路径，退回站点 origin。
+ * 绝不能拿绑定对象本身当键：Workers 每次请求现拼 env，对象一变缓存就永远不命中。
+ */
+function rankDbScope(ctx) {
+  const db = ctx && ctx.db;
+  try {
+    if (db && typeof db.location === 'function') {
+      const loc = db.location();
+      if (loc) return String(loc);
+    }
+  } catch (e) { /* 没有这个方法或调用失败：退回 origin */ }
+  return String((ctx && ctx.origin) || 'd1');
+}
+
+/** 榜单缓存键：影响结果的参数一个都不能少（库 / 榜单种类 / 条数） */
+function rankCacheKey(ctx, kind, limit) {
+  return RANK_CACHE_PREFIX + rankDbScope(ctx) + ':' + kind + ':' + limit;
+}
+
+/**
+ * 可选的第二层：Cloudflare Cache API（caches.default）。进程内缓存随实例重启清零，这一层能跨实例。
+ * 本地 dev / 单测里没有 caches 这个全局对象，用 typeof 保护后直接跳过（不报错、不改任何行为）。
+ *
+ * 两个风险必须写清：
+ *   1. 只缓存「榜单行数据」（JSON），绝不缓存整页 HTML —— 页面带登录态（导航栏是用户名），
+ *      缓存 HTML 会把一个用户的页面发给另一个用户；
+ *   2. 缓存是建议性的（边缘按自己的策略淘汰），所以这层「命中算赚、不中不亏」，
+ *      任何一步出错都直接放过，绝不影响渲染。
+ */
+const RANK_CACHE_API_TTL = 30;
+
+function rankApiCache() {
+  if (typeof caches === 'undefined' || !caches || !caches.default) return null;
+  return caches.default;
+}
+
+/** Cache API 的键用站点自己的 /rank URL，带一个只有我们用的标记参数，便于运维辨认与清理 */
+function rankApiCacheUrl(ctx, kind, limit) {
+  return String((ctx && ctx.origin) || '') + '/rank?kind=' + encodeURIComponent(kind) +
+    '&limit=' + encodeURIComponent(limit) + '&__rows=1';
+}
+
+async function rankApiCacheGet(ctx, kind, limit) {
+  const cache = rankApiCache();
+  if (!cache) return null;
+  try {
+    const hit = await cache.match(new Request(rankApiCacheUrl(ctx, kind, limit)));
+    if (!hit) return null;
+    const rows = await hit.json();
+    return Array.isArray(rows) ? rows : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function rankApiCachePut(ctx, kind, limit, rows) {
+  const cache = rankApiCache();
+  if (!cache) return;
+  try {
+    const res = new Response(JSON.stringify(rows), {
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'max-age=' + RANK_CACHE_API_TTL }
+    });
+    const put = cache.put(new Request(rankApiCacheUrl(ctx, kind, limit)), res);
+    if (put && typeof put.catch === 'function') put.catch(function () { /* 写边缘缓存失败只影响下次命中率 */ });
+  } catch (e) { /* 同上：缓存问题不能影响渲染 */ }
+}
+
+/** 榜单行：Cache API（可选，跨实例）→ 进程内 TTL 缓存（单飞）→ D1 聚合 */
+async function loadLeaderboardRows(ctx, kind, limit) {
+  const hot = await rankApiCacheGet(ctx, kind, limit);
+  if (hot) return hot;
+  const rows = await rankStore.getOrLoad(rankCacheKey(ctx, kind, limit), function () {
+    return data.leaderboard(ctx.db, kind, limit).then(function (board) { return board.rows; });
+  });
+  rankApiCachePut(ctx, kind, limit, rows);
+  return rows;
+}
+
 /* ---------- 响应工具 ---------- */
 
 function makeHeaders(ctx, opts) {
@@ -98,6 +354,11 @@ function plainText(ctx, text, status) {
 }
 function redirectTo(ctx, location) {
   return new Response(null, { status: 302, headers: makeHeaders(ctx, { location: location, cache: 'no-store' }) });
+}
+/** 分享卡出口：SVG 必须带 charset，5 分钟公共缓存（内容随数据变，别让 CDN 存太久） */
+const CARD_CACHE = 'public, max-age=300';
+function cardReply(ctx, svg) {
+  return new Response(svg, { status: 200, headers: makeHeaders(ctx, { type: 'image/svg+xml; charset=utf-8', cache: CARD_CACHE }) });
 }
 
 /* ---------- 请求工具 ---------- */
@@ -271,16 +532,19 @@ async function pageTag(ctx, params) {
 }
 
 async function pageSearch(ctx) {
+  // 搜索走适配层：没配 MEILI_HOST 就是原来的 listGames + countGames（同一个 opts、同一个顺序），
+  // 配了则 Meili 优先，失败 / 超时 / 熔断自动兜底到 SQL —— 请求照常 200，降级只打一行日志
   const q = String(ctx.url.searchParams.get('q') || '').slice(0, 50);
   const sort = String(ctx.url.searchParams.get('sort') || 'hot');
   const opts = { q: q, sort: sort, limit: 60 };
+  const found = await searchGamePage(ctx, q, opts);
   return okHtml(ctx, ui.listPage({
     origin: ctx.origin, user: ctx.user,
     path: '/search?q=' + encodeURIComponent(q),
     heading: q ? '「' + q + '」的搜索结果' : '搜索游戏',
     sub: '输入游戏名、类型或标签进行搜索',
-    list: await data.listGames(ctx.db, opts),
-    total: await data.countGames(ctx.db, opts),
+    list: found.list,
+    total: found.total,
     query: q, sort: sort, base: '/search'
   }));
 }
@@ -344,14 +608,18 @@ async function pagePortal(ctx) {
 
 /** 排行榜：热玩榜按天聚合的纯 SQLite 查询，7 个榜单切着看 */
 async function pageRank(ctx) {
-  const board = await data.leaderboard(ctx.db, data.boardKind(ctx.url.searchParams.get('kind')), 20);
+  // 行数据走 30s 缓存（进程内 TTL + 单飞，可选 Cache API 层）；label / metric 仍取自 BOARD_KINDS，
+  // 与缓存前逐字节一致
+  const kind = data.boardKind(ctx.url.searchParams.get('kind'));
+  const spec = data.BOARD_KINDS[kind];
+  const rows = await loadLeaderboardRows(ctx, kind, 20);
   return okHtml(ctx, ui.rankPage({
     origin: ctx.origin,
     user: ctx.user,
-    kind: board.kind,
-    label: board.label,
-    metric: board.metric,
-    rows: board.rows,
+    kind: kind,
+    label: spec.label,
+    metric: spec.metric,
+    rows: rows,
     boards: Object.entries(data.BOARD_KINDS).map(function (e) { return { kind: e[0], label: e[1].label }; })
   }));
 }
@@ -958,6 +1226,7 @@ async function apiComment(ctx, params) {
   }
   commentGate.set(key, now);
   if (commentGate.size > 5000) commentGate.clear();
+  await notifyGameComment(ctx, slug, r.id, r.body);
   return okJson(ctx, { id: r.id, body: r.body, name: ctx.user.name, parent_id: r.parent_id });
 }
 
@@ -1002,7 +1271,8 @@ async function apiNoticeComment(ctx, params) {
 async function apiSuggest(ctx) {
   const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 40);
   if (!q) return okJson(ctx, { q: '', items: [] });
-  const list = await data.listGames(ctx.db, { q: q, limit: 6 });
+  // 走搜索适配层：没配 MEILI_HOST 就是原来那一句 listGames（同一个 opts）；配了 Meili 优先、失败自动兜底
+  const list = await searchGameList(ctx, q, { q: q, limit: 6 });
   return okJson(ctx, {
     q: q,
     items: list.map(function (g) {
@@ -1150,6 +1420,7 @@ async function doForumNew(ctx) {
   if (r.error) return forumTo(ctx, back, null, r.error);
   await data.logAudit(ctx.db, ctx.user, 'forum.thread.create', String(r.id),
     (Number(r.status) === 1 ? '直接发布' : '转待审' + (r.reason ? '（' + r.reason + '）' : '')) + '：' + String(tv.value).slice(0, 40));
+  await notifyThreadMentions(ctx, r.id, bv.value);
   return forumTo(ctx, ctx.forumBase + '/t/' + r.id, Number(r.status) === 1 ? 'published' : 'pending');
 }
 
@@ -1202,6 +1473,7 @@ async function doForumReply(ctx, params) {
   });
   if (r.error) return forumTo(ctx, back, null, r.error);
   await data.logAudit(ctx.db, ctx.user, 'forum.post.create', String(r.id), '回复主题 #' + id + (Number(r.status) === 1 ? '' : '（转待审）'));
+  await notifyThreadReply(ctx, id, r.id, bv.value);
   return forumTo(ctx, back + '#p' + r.id, Number(r.status) === 1 ? 'replied' : 'pending');
 }
 
@@ -1342,19 +1614,21 @@ async function adminForumMuteById(ctx, params) {
 
 /* ================= 联机对战（房间 + 走法中继） ================= */
 //
-// 与 Express 线 server.js 的 /api/play/* 一一对应：服务端只管「轮流」与「转发走法」，
-// 不校验走法合法性、不判胜负（规则在游戏页里）。成功统一 { ok: true, ... }，
-// 失败 { ok: false, error, hint }，错误码映射见 PLAY_STATUS。
+// 与 Express 线 server.js 的 /api/play/* 一一对应：服务端负责「轮流 + 转发走法」，
+// 并对接入了规则引擎的棋类（connect4 / reversi / draughts / gomoku）自己裁判走法与胜负
+// （判在 worker/play-store.js 的 sendMove 里）；其余棋类照旧只中继、采信客户端声明的 result。
+// 成功统一 { ok: true, ... }，失败 { ok: false, error, hint }，错误码映射见 PLAY_STATUS。
 
 const PLAY_STATUS = {
   not_found: 404, bad_token: 403, full: 409, busy: 503,
-  bad_code: 400, bad_game: 400, bad_move: 400,
+  bad_code: 400, bad_game: 400, bad_move: 400, illegal_move: 400,
   not_your_turn: 409, not_playing: 409, done: 409, closed: 409, playing: 409, waiting: 409
 };
 const PLAY_HINT = {
   not_found: '房间不存在或已过期', bad_token: '座位凭证无效（清掉浏览器数据后请重新创建房间）',
   full: '房间已经满员', busy: '暂时没有可加入的房间，请稍后再试',
   bad_code: '房间码是 6 位字母数字', bad_game: '游戏标识不合法', bad_move: '走法数据不合法',
+  illegal_move: '这步不合规则（服务端已裁判）',
   not_your_turn: '还没轮到你', not_playing: '对局还没开始', done: '对局已经结束',
   closed: '房间已经关闭', playing: '房间已在对局中', waiting: '还没等到对手'
 };
@@ -1439,7 +1713,10 @@ async function pageProfile(ctx, params) {
     origin: ctx.origin,
     user: ctx.user,
     profile: profile,
-    isSelf: !!(ctx.user && Number(ctx.user.id) === Number(profile.id))
+    isSelf: !!(ctx.user && Number(ctx.user.id) === Number(profile.id)),
+    counts: await social.followCounts(ctx.db, profile.id),
+    following: ctx.user ? await social.isFollowing(ctx.db, ctx.user.id, profile.id) : false,
+    notice: FOLLOW_TEXT[String(ctx.url.searchParams.get('notice') || '')] || ''
   }));
 }
 
@@ -1474,6 +1751,218 @@ async function apiReplay(ctx, params) {
   return okJson(ctx, { ok: true, replay: rep });
 }
 
+/* ---- 分享卡（与 Express 线 server.js 的三条 /…/card.svg 一一对应，同一份 src/cards.js） ---- */
+
+/** 每日挑战成绩卡：游客也能拿（没有打卡记录时按 0 渲染） */
+async function cardDaily(ctx) {
+  const day = dayKey();
+  const slug = await social.dailySlug(ctx.db, day);
+  const stats = ctx.user ? await social.dailyStats(ctx.db, ctx.user.id) : null;
+  return cardReply(ctx, dailyCardSvg({
+    day: day,
+    game: await data.getGame(ctx.db, slug),
+    stats: stats,
+    origin: ctx.origin
+  }));
+}
+
+/** 个人主页成绩卡：取不到这个人就是 404 */
+async function cardProfile(ctx, params) {
+  const profile = await social.profileByName(ctx.db, String(params.name || ''));
+  if (!profile) return plainText(ctx, 'not found', 404);
+  return cardReply(ctx, profileCardSvg({ profile: profile, origin: ctx.origin }));
+}
+
+/** 棋谱分享卡：非法 id 给 400（地址写错了）而不是 404（棋谱没了） */
+async function cardReplay(ctx, params) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return plainText(ctx, 'bad id', 400);
+  const rep = await play.replay(ctx.db, id);
+  if (!rep) return plainText(ctx, 'not found', 404);
+  return cardReply(ctx, replayCardSvg({ replay: rep, game: await data.getGame(ctx.db, rep.game), origin: ctx.origin }));
+}
+
+/* ================= 社交：通知 / 私信 / 关注 =================
+   第七批：路由与 Express 线 server.js 一一对应（数据层在 worker/social.js，
+   第一参数是 D1 绑定，全程 await）。 */
+
+const NOTICE_PAGE = 20;
+const PEOPLE_PAGE = 24;
+/** 关注动作回跳后的提示文案（对齐 server.js FOLLOW_TEXT） */
+const FOLLOW_TEXT = { followed: '已关注', unfollowed: '已取消关注', self_follow: '不能关注自己', no_user: '没有这个用户' };
+
+/** 页码：非法或负数一律回第 1 页（对齐 server.js pageOf） */
+function pageOf(v) {
+  return Math.max(1, Number(v) || 1);
+}
+
+async function pageNotifications(ctx) {
+  const page = pageOf(ctx.url.searchParams.get('page'));
+  const list = await social.listNotifications(ctx.db, ctx.user.id, { limit: NOTICE_PAGE, offset: (page - 1) * NOTICE_PAGE });
+  return okHtml(ctx, ui.notificationsPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    list: list,
+    page: page,
+    notice: String(ctx.url.searchParams.get('notice') || '') === 'read' ? '全部标为已读' : ''
+  }));
+}
+
+/** 标为已读：带合法 id 只标那条，不带就把全部未读标掉 */
+async function doNotificationsRead(ctx) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/notifications', b);
+  if (guard) return guard;
+  await social.markRead(ctx.db, ctx.user.id, Number(b.id) || 0);
+  return redirectTo(ctx, withQuery(safeNext(b.next || '/notifications'), 'notice=read'));
+}
+
+async function pageMessages(ctx) {
+  return okHtml(ctx, ui.messagesPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    threads: await social.listMessageThreads(ctx.db, ctx.user.id, { limit: 50 })
+  }));
+}
+
+async function pageMessageThread(ctx, params) {
+  const peer = await social.profileByName(ctx.db, String(params.name || ''));
+  if (!peer || Number(peer.id) === Number(ctx.user.id)) {
+    return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  }
+  await social.markThreadRead(ctx.db, ctx.user.id, peer.id);
+  const err = String(ctx.url.searchParams.get('error') || '');
+  return okHtml(ctx, ui.messagesPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    peer: peer,
+    thread: await social.threadMessages(ctx.db, ctx.user.id, peer.id, { limit: 30 }),
+    notice: String(ctx.url.searchParams.get('notice') || '') === 'sent' ? '已发送' : '',
+    error: err === 'too_long' ? '私信最多 ' + social.MESSAGE_MAX + ' 字' : (err === 'empty' ? '私信不能为空' : '')
+  }));
+}
+
+async function doMessageSend(ctx, params) {
+  const name = String(params.name || '');
+  const back = '/messages/' + encodeURIComponent(name);
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/messages', b);
+  if (guard) return guard;
+  const peer = await social.profileByName(ctx.db, name);
+  if (!peer) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  const r = await social.sendMessage(ctx.db, ctx.user.id, peer.id, b.body);
+  return redirectTo(ctx, r.error ? withQuery(back, 'error=' + encodeURIComponent(r.error)) : withQuery(back, 'notice=sent'));
+}
+
+/** 关注列表：粉丝 / 关注 / 好友（互关）三个 tab 共用一套渲染 */
+function peopleHandler(kind) {
+  return async function (ctx, params) {
+    const owner = await social.profileByName(ctx.db, String(params.name || ''));
+    if (!owner) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+    const page = pageOf(ctx.url.searchParams.get('page'));
+    return okHtml(ctx, ui.peoplePage({
+      origin: ctx.origin,
+      user: ctx.user,
+      owner: owner,
+      kind: kind,
+      page: page,
+      list: await social.followList(ctx.db, owner.id, kind, { limit: PEOPLE_PAGE, offset: (page - 1) * PEOPLE_PAGE })
+    }));
+  };
+}
+
+const pageFollowers = peopleHandler('followers');
+const pageFollowing = peopleHandler('following');
+const pageFriends = peopleHandler('friends');
+
+/** 关注 / 取关：同一个地址，按钮自带 action=follow|unfollow；没带就按当前状态取反 */
+async function doFollow(ctx, params) {
+  const name = String(params.name || '');
+  const back = '/u/' + encodeURIComponent(name);
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/u', b);
+  if (guard) return guard;
+  const peer = await social.profileByName(ctx.db, name);
+  if (!peer) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
+  const action = String(b.action || '');
+  const want = action === 'unfollow' ? false : (action === 'follow' ? true : !(await social.isFollowing(ctx.db, ctx.user.id, peer.id)));
+  const r = want ? await social.follow(ctx.db, ctx.user.id, peer.id) : await social.unfollow(ctx.db, ctx.user.id, peer.id);
+  const key = r.error ? r.error : (want ? 'followed' : 'unfollowed');
+  // 只在「新关注」时发通知；social.notify 自己还会按 (user,kind,actor,target) 去重
+  if (!r.error && want) {
+    try {
+      await social.notify(ctx.db, peer.id, { kind: 'follow', actorId: ctx.user.id, targetType: 'user', targetId: ctx.user.id });
+    } catch (e) {
+      console.error('[notify] follow ' + (e && e.message ? e.message : e));
+    }
+  }
+  return redirectTo(ctx, withQuery(back, 'notice=' + encodeURIComponent(key)));
+}
+
+/** 导航上的小红点：通知未读数 */
+async function apiNotificationsUnread(ctx) {
+  if (!ctx.user) return okJson(ctx, { ok: false, error: 'login_required', unread: 0 }, 401);
+  return okJson(ctx, { ok: true, unread: await social.unreadCount(ctx.db, ctx.user.id) });
+}
+
+/** 导航上的小红点：私信未读数（按会话汇总） */
+async function apiMessagesUnread(ctx) {
+  if (!ctx.user) return okJson(ctx, { ok: false, error: 'login_required', unread: 0 }, 401);
+  const t = await social.listMessageThreads(ctx.db, ctx.user.id, { limit: 100 });
+  return okJson(ctx, { ok: true, unread: (t.items || []).reduce(function (n, x) { return n + Number(x.unread || 0); }, 0) });
+}
+
+/* ---------- 通知钩子：动作成功后补写通知，失败只记日志，绝不影响主流程 ---------- */
+
+/** 回复主题之后：楼主收 reply，正文里 @ 到的人收 mention */
+async function notifyThreadReply(ctx, threadId, postId, body) {
+  try {
+    const info = await forum.getThread(ctx.db, threadId, ctx.user);
+    const t = info && info.thread ? info.thread : null;
+    await social.notifyReply(ctx.db, {
+      actorId: ctx.user.id,
+      threadId: threadId,
+      threadTitle: t ? t.title : '',
+      ownerId: t ? Number(t.user_id) || 0 : 0,
+      postId: postId,
+      body: body
+    });
+  } catch (e) {
+    console.error('[notify] reply ' + (e && e.message ? e.message : e));
+  }
+}
+
+/** 发帖之后：楼主就是自己（reply 不发），只把正文里 @ 到的人落成 mention */
+async function notifyThreadMentions(ctx, threadId, body) {
+  try {
+    await social.notifyMentions(ctx.db, {
+      actorId: ctx.user.id,
+      text: body,
+      targetType: 'thread',
+      targetId: String(Number(threadId) || 0),
+      body: body
+    });
+  } catch (e) {
+    console.error('[notify] thread ' + (e && e.message ? e.message : e));
+  }
+}
+
+/** 游戏评论之后：作品作者收 comment，正文里 @ 到的人收 mention（自己评自己不写） */
+async function notifyGameComment(ctx, slug, commentId, body) {
+  try {
+    const game = await data.getGame(ctx.db, slug);
+    await social.notifyComment(ctx.db, {
+      actorId: ctx.user.id,
+      gameSlug: slug,
+      ownerId: game ? Number(game.submitted_by) || 0 : 0,
+      commentId: commentId,
+      body: body
+    });
+  } catch (e) {
+    console.error('[notify] comment ' + (e && e.message ? e.message : e));
+  }
+}
+
 /* ================= 路由表 ================= */
 
 const ROUTES = [
@@ -1490,8 +1979,21 @@ const ROUTES = [
   { m: 'GET', p: '/nav', fn: pagePortal },
   { m: 'GET', p: '/rank', fn: pageRank },
   { m: 'GET', p: '/daily', fn: pageDaily },
+  { m: 'GET', p: '/daily/card.svg', fn: cardDaily },
   { m: 'GET', p: '/u/:name', fn: pageProfile },
+  { m: 'GET', p: '/u/:name/card.svg', fn: cardProfile },
   { m: 'GET', p: '/replay/:id', fn: pageReplay },
+  { m: 'GET', p: '/play/:id/card.svg', fn: cardReplay },
+  // 社交：通知 / 私信 / 关注列表（第七批）
+  { m: 'GET', p: '/notifications', fn: pageNotifications, need: 'user' },
+  { m: 'POST', p: '/notifications/read', fn: doNotificationsRead },
+  { m: 'GET', p: '/messages', fn: pageMessages, need: 'user' },
+  { m: 'GET', p: '/messages/:name', fn: pageMessageThread, need: 'user' },
+  { m: 'POST', p: '/messages/:name', fn: doMessageSend },
+  { m: 'GET', p: '/u/:name/followers', fn: pageFollowers },
+  { m: 'GET', p: '/u/:name/following', fn: pageFollowing },
+  { m: 'GET', p: '/u/:name/friends', fn: pageFriends },
+  { m: 'POST', p: '/u/:name/follow', fn: doFollow },
   { m: 'GET', p: '/login', fn: pageLogin },
   { m: 'POST', p: '/login', fn: doLogin },
   { m: 'GET', p: '/register', fn: pageRegister },
@@ -1508,6 +2010,9 @@ const ROUTES = [
   { m: 'POST', p: '/admin/games/:slug/status', fn: adminSetGame, need: 'admin' },
   { m: 'POST', p: '/admin/comments/:id/status', fn: adminSetComment, need: 'admin' },
   { m: 'GET', p: '/api/me', fn: apiMe },
+  // 社交：导航小红点的未读数
+  { m: 'GET', p: '/api/notifications/unread', fn: apiNotificationsUnread },
+  { m: 'GET', p: '/api/messages/unread', fn: apiMessagesUnread },
   { m: 'POST', p: '/api/auth/login', fn: apiLogin },
   { m: 'POST', p: '/api/auth/register', fn: apiRegister },
   { m: 'POST', p: '/api/auth/logout', fn: apiLogout },
@@ -1683,145 +2188,441 @@ const PWA_MANIFEST = {
 };
 
 /* 与 public/sw.js 逐字节一致（模板字符串里只有反斜杠需要转义） */
-const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略
+const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略 + 真离线
  *
- * 目标：宁可少缓存，也绝不把站点变砖。
- *  - 任何内部异常都退回浏览器默认行为（不 respondWith），服务挂掉也不影响正常访问。
- *  - 鉴权 / 有副作用的路径（/api/ /auth/ /account /admin /u/ /login /register /logout ...）与非 GET 请求一律直连网络，不缓存、不回落。
- *  - 页面导航：network-first；只有网络真的失败时才回落到离线壳。
- *  - 静态资源（/static/ /games/ /icons/ /cover/）：stale-while-revalidate —— 先给缓存、后台更新，下一次刷新必然拿到新版本。
- *    （/cover/ 是站点自己生成的封面 SVG：公开、无鉴权、体积小；不缓存它的话离线壳会满屏破图。）
- *  - manifest.webmanifest 也走同一条缓存：它只是一份清单，离线时少一个必然失败的请求。
+ * 目标：宁可少缓存，也绝不把站点变砖；同时保证「断网也能打开并玩 20 款游戏」。
+ *  - 任何内部异常都退回浏览器默认行为（不 respondWith），SW 出问题也不影响正常访问。
+ *  - 鉴权 / 有副作用的路径（/api/ /auth/ /account /admin /u/ /login …）与非 GET 请求一律直连网络，
+ *    不缓存、不回落 —— /api/ 永远 network-only，绝不拿旧数据骗用户。
+ *  - install：拉 /precache.json（拉不到退 /static/precache.json，再退下方生成块里的内置清单），
+ *    按 urls 逐条预缓存；单条失败只计数、不中断（避开 cache.addAll 的全有或全无语义）。
+ *  - 导航：已预缓存的页面（20 款游戏页 + 首页）走 stale-while-revalidate（先给缓存、后台更新），
+ *    其余页面保持 network-first；网络失败时依次回落「该页面自己的缓存 → 离线壳 → 内置兜底页」。
+ *  - 静态资源（/static/ /games/ /icons/ /cover/ /manifest.webmanifest）：stale-while-revalidate。
  *
- * 版本失效机制：改 SW_VERSION 常量 -> 缓存名整体变化 -> activate 时删掉所有旧版本缓存。
- * 遇到「改了怎么都不生效」，先确认 sw.js 自身没被 HTTP 缓存：两条线的 /sw.js 响应都带 no-cache。
+ * 两层版本号：
+ *  - SW_VERSION 只管「页面 ⇄ SW 的握手协议」，不随内容改（worker/app.js 里的内联副本由
+ *    tools/gen-sw.mjs 同步，改这里就得跑一次那个脚本）。
+ *  - PRECACHE_VERSION 由 tools/gen-precache.mjs 按资源内容算出；CACHE_TAG = 两者拼接，
+ *    缓存名跟着内容走 → 游戏页一更新缓存名就变 → activate 顺手把旧桶删掉。
+ *    遇到「改了怎么都不生效」，先确认 sw.js 自身没被 HTTP 缓存：两条线的 /sw.js 都带 no-cache。
  */
-const SW_VERSION = 'v1';
-const SHELL_CACHE = 'qw-shell-' + SW_VERSION;
-const ASSETS_CACHE = 'qw-assets-' + SW_VERSION;
-/* 离线壳缓存键：带查询串的伪 URL，避免与任何真实导航响应共用一条缓存 */
-const SHELL_KEY = '/?__pwa_offline_shell=' + SW_VERSION;
 
-/* 只走网络：需鉴权或有副作用 */
+/* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
+/* 33 条 · 848.7 KB · 最大单文件 95.8 KB */
+const PRECACHE_VERSION = 'p1-334370f07955';
+const PRECACHE_FALLBACK = [
+  '/',
+  '/games/2048/index.html',
+  '/games/blackhole/index.html',
+  '/games/chess/index.html',
+  '/games/connect4/index.html',
+  '/games/draughts/index.html',
+  '/games/gomoku/index.html',
+  '/games/idiom/index.html',
+  '/games/linkup/index.html',
+  '/games/match3/index.html',
+  '/games/memory/index.html',
+  '/games/minesweeper/index.html',
+  '/games/reversi/index.html',
+  '/games/snake/index.html',
+  '/games/sokoban/index.html',
+  '/games/solitaire/index.html',
+  '/games/sudoku/index.html',
+  '/games/tetris/index.html',
+  '/games/tictactoe/index.html',
+  '/games/whack/index.html',
+  '/games/xiangqi/index.html',
+  '/static/js/app-static.js',
+  '/static/js/app.js',
+  '/static/js/gamepad.js',
+  '/static/js/net-play.js',
+  '/static/css/style.css',
+  '/icons/apple-touch-icon-180.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
+  '/favicon.ico',
+  '/favicon.svg',
+  '/manifest.webmanifest'
+];
+/* PRECACHE:END */
+
+const SW_VERSION = 'v1';
+const CACHE_TAG = SW_VERSION + '.' + PRECACHE_VERSION;
+const SHELL_CACHE = 'qw-shell-' + CACHE_TAG;
+const ASSETS_CACHE = 'qw-assets-' + CACHE_TAG;
+/* 离线壳的缓存键：带版本号，换版本就等于换键，不会读到上一版壳页 */
+const SHELL_KEY = '/?__pwa_offline_shell=' + CACHE_TAG;
+
+/* 永不缓存、永不回落的路径（有副作用或带登录态） */
 const NETWORK_ONLY = [
-  /^\\/api\\//, /^\\/auth\\//, /^\\/account/, /^\\/admin/, /^\\/u\\//,
-  /^\\/login/, /^\\/register/, /^\\/logout/, /^\\/forgot/, /^\\/reset/, /^\\/verify/,
-  /^\\/favorites/, /^\\/submit/, /^\\/ugc/, /^\\/comments\\//
+  /^\\/api\\//,
+  /^\\/auth\\//,
+  /^\\/account/,
+  /^\\/admin/,
+  /^\\/u\\//,
+  /^\\/login/,
+  /^\\/register/,
+  /^\\/logout/,
+  /^\\/forgot/,
+  /^\\/reset/,
+  /^\\/verify/,
+  /^\\/favorites/,
+  /^\\/submit/,
+  /^\\/ugc/,
+  /^\\/comments\\//
 ];
 
-/* 可 stale-while-revalidate 的静态资源 */
-const STATIC_PATHS = [/^\\/static\\//, /^\\/games\\//, /^\\/icons\\//, /^\\/cover\\//, /^\\/manifest\\.webmanifest$/];
+/* 可以进缓存的静态资源前缀 */
+const STATIC_PATHS = [
+  /^\\/static\\//,
+  /^\\/games\\//,
+  /^\\/icons\\//,
+  /^\\/cover\\//,
+  /^\\/manifest\\.webmanifest$/
+];
 
-/* 内置离线兜底页：只在「一次首页都没成功缓存过」时用得到，保持极简、零外部依赖 */
-const OFFLINE_HTML = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
-  '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-  '<title>暂时离线 - 趣玩小游戏</title>' +
-  '<style>' +
-  'body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b1020;color:#e9edfa;font:15px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;padding:24px}' +
-  'main{max-width:26em;text-align:center}' +
-  'h1{font-size:19px;margin:0 0 10px}' +
-  'p{color:#96a0be;margin:0 0 20px}' +
-  'a{display:inline-block;padding:10px 20px;border-radius:12px;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;text-decoration:none}' +
-  '</style></head><body><main>' +
-  '<h1>现在处于离线状态</h1>' +
-  '<p>网络恢复后刷新页面就能继续玩。</p>' +
-  '<a href="/">重新加载</a>' +
-  '</main></body></html>';
+/* 预缓存清单的候选位置：Express 线两条都能取到，Workers 线走静态资源 */
+const PRECACHE_FILES = ['/precache.json', '/static/precache.json'];
+
+/* install 时逐条预缓存的结果，供页面通过 postMessage 查询（测试也用它） */
+const PRECACHE_STATUS = { version: PRECACHE_VERSION, total: 0, ok: 0, failed: [], done: false, at: 0 };
+
+/* 已预缓存的页面路径：导航时决定走 cache-first 还是 network-first。
+   先用生成块里的内置清单打底（模块每次启动都会求值），install 时再按线上清单补全。 */
+const PRECACHED_PATHS = new Set(PRECACHE_FALLBACK.map(function (u) { return String(u).split('?')[0]; }));
+
+/* 兜底离线页：连壳页都没缓存到时候用 */
+const OFFLINE_HTML = [
+  '<!doctype html>',
+  '<html lang="zh-CN">',
+  '<head>',
+  '<meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width, initial-scale=1">',
+  '<title>趣玩小游戏 · 离线</title>',
+  '<style>',
+  'html,body{margin:0;height:100%;background:#0b1020;color:#e8ecf8;font:16px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}',
+  '.wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}',
+  '.card{max-width:420px;width:100%;background:#151a2e;border:1px solid #2a3352;border-radius:16px;padding:28px;text-align:center}',
+  'h1{font-size:20px;margin:0 0 8px}',
+  'p{margin:0 0 18px;color:#9aa6c4}',
+  'a{display:inline-block;padding:10px 20px;border-radius:10px;background:#4f7cff;color:#fff;text-decoration:none}',
+  '</style>',
+  '</head>',
+  '<body>',
+  '<div class="wrap"><div class="card">',
+  '<h1>现在处于离线状态</h1>',
+  '<p>网络恢复后刷新页面就能继续玩；玩过的游戏在断网时也能直接打开。</p>',
+  '<a href="/">重新加载</a>',
+  '</div></div>',
+  '</body>',
+  '</html>'
+].join('\\n');
+
+function htmlResponse(body, status) {
+  return new Response(body, {
+    status: status || 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  });
+}
 
 function isHtml(res) {
-  const ct = (res && res.headers && res.headers.get('content-type')) || '';
-  return ct.indexOf('text/html') === 0 || ct.indexOf('text/html') > 0;
-}
-
-/* 首页 HTML 作为离线壳：只在「匿名请求」时才记，避免把带登录态的页面写进缓存 */
-function rememberShell(req, res) {
-  if (req.headers.get('cookie')) return;          // 带 Cookie = 可能有登录态，不进缓存
-  const cache = SHELL_CACHE;
-  return caches.open(cache).then(function (c) { return c.put(SHELL_KEY, res); }).catch(function () { });
-}
-
-self.addEventListener('install', function (event) {
-  event.waitUntil((async function () {
-    try {
-      const cache = await caches.open(SHELL_CACHE);
-      /* 先用内置兜底页占位：即使没网也能保证离线壳存在 */
-      await cache.put(SHELL_KEY, new Response(OFFLINE_HTML, {
-        headers: { 'content-type': 'text/html; charset=utf-8' }
-      }));
-      /* 再尝试抓一份真正的首页；credentials:omit 拿的是匿名版，不含任何个人数据 */
-      const res = await fetch('/', { credentials: 'omit' });
-      if (res && res.ok && res.type === 'basic' && isHtml(res)) await cache.put(SHELL_KEY, res);
-    } catch (e) { /* 预热失败不影响安装，兜底页已经就位 */ }
-    await self.skipWaiting();
-  })());
-});
-
-self.addEventListener('activate', function (event) {
-  event.waitUntil((async function () {
-    try {
-      const names = await caches.keys();
-      await Promise.all(names.filter(function (n) {
-        const mine = n.indexOf('qw-shell-') === 0 || n.indexOf('qw-assets-') === 0;
-        return mine && n !== SHELL_CACHE && n !== ASSETS_CACHE;
-      }).map(function (n) { return caches.delete(n); }));
-    } catch (e) { }
-    await self.clients.claim();
-  })());
-});
-
-/* 导航：network-first；网络失败才回落离线壳 */
-async function handleNavigate(req) {
   try {
-    const res = await fetch(req);
-    if (res && res.ok && res.type === 'basic' && isHtml(res) && new URL(req.url).pathname === '/') {
-      rememberShell(req, res.clone());
-    }
-    return res;
+    var type = res && res.headers ? res.headers.get('Content-Type') || '' : '';
+    return type.indexOf('text/html') === 0;
   } catch (e) {
-    const hit = await caches.match(SHELL_KEY);
-    if (hit) return hit;
-    return new Response(OFFLINE_HTML, {
-      status: 200,
-      headers: { 'content-type': 'text/html; charset=utf-8' }
-    });
+    return false;
   }
 }
 
-/* 静态资源：stale-while-revalidate */
-async function handleStatic(req) {
-  const cache = await caches.open(ASSETS_CACHE);
-  const hit = await cache.match(req);
-  const update = fetch(req).then(function (res) {
-    if (res && res.ok && res.type === 'basic') return cache.put(req, res.clone()).catch(function () { }).then(function () { return res; });
-    return res;
-  }).catch(function () { return null; });
-  if (hit) return hit;                       // 命中：立即返回，更新在后台跑
-  const res = await update;
-  if (res) return res;
-  return new Response('', { status: 504, statusText: 'Offline' });
+/* 清单里的元素可以是字符串，也可以是 { url, revision } */
+function normalizeList(data) {
+  var raw = (data && data.urls) || [];
+  var out = [];
+  for (var i = 0; i < raw.length; i++) {
+    var item = raw[i];
+    var url = typeof item === 'string' ? item : item && item.url;
+    if (typeof url !== 'string' || url.charAt(0) !== '/') continue;
+    out.push({ url: url, revision: (item && item.revision) || '' });
+  }
+  return out;
 }
 
-self.addEventListener('fetch', function (event) {
-  const req = event.request;
-  try {
-    if (req.method !== 'GET') return;                       // 非 GET：交给浏览器
-    const url = new URL(req.url);
-    if (url.origin !== self.location.origin) return;        // 跨域：一律不碰
-    if (req.cache === 'no-store') return;
-    if (req.headers.get('range')) return;                   // Range 请求缓存会坏事
-    const path = url.pathname;
-    for (const re of NETWORK_ONLY) if (re.test(path)) return;
+/* 线上清单优先，实在拿不到就用 sw.js 里的内置清单 —— 保证 install 永远有活干 */
+function loadPrecacheList() {
+  var chain = Promise.resolve(null);
+  PRECACHE_FILES.forEach(function (file) {
+    chain = chain.then(function (found) {
+      if (found) return found;
+      return fetch(file, { cache: 'no-cache', credentials: 'omit' })
+        .then(function (res) {
+          if (!res || !res.ok) return null;
+          return res.json().then(function (data) {
+            var urls = normalizeList(data);
+            if (!urls.length) return null;
+            return { version: String(data.version || PRECACHE_VERSION), urls: urls, from: file };
+          });
+        })
+        .catch(function () { return null; });
+    });
+  });
+  return chain.then(function (found) {
+    if (found) return found;
+    return { version: PRECACHE_VERSION, urls: normalizeList({ urls: PRECACHE_FALLBACK }), from: 'sw.js 内置清单' };
+  });
+}
 
-    if (req.mode === 'navigate') { event.respondWith(handleNavigate(req)); return; }
-    for (const re of STATIC_PATHS) if (re.test(path)) { event.respondWith(handleStatic(req)); return; }
-  } catch (e) { /* 任何异常都退回默认网络行为 */ }
+/* 逐条预缓存：单条失败只计数（cache.addAll 是全有或全无，这里必须避开） */
+function precacheAll() {
+  return loadPrecacheList().then(function (list) {
+    PRECACHE_STATUS.version = list.version;
+    for (var i = 0; i < list.urls.length; i++) {
+      PRECACHED_PATHS.add(String(list.urls[i].url).split('?')[0]);
+    }
+    return caches.open(ASSETS_CACHE).then(function (cache) {
+      var ok = 0;
+      var failed = [];
+      var chain = Promise.resolve();
+      list.urls.forEach(function (item) {
+        chain = chain.then(function () {
+          return fetch(item.url, { credentials: 'omit', cache: 'reload' })
+            .then(function (res) {
+              if (!res || !res.ok) {
+                failed.push(item.url + ' → HTTP ' + (res ? res.status : '?'));
+                return null;
+              }
+              return cache.put(item.url, res).then(function () { ok += 1; });
+            })
+            .catch(function (err) {
+              failed.push(item.url + ' → ' + (err && err.message ? err.message : err));
+            });
+        });
+      });
+      return chain.then(function () {
+        PRECACHE_STATUS.total = list.urls.length;
+        PRECACHE_STATUS.ok = ok;
+        PRECACHE_STATUS.failed = failed;
+        PRECACHE_STATUS.done = true;
+        PRECACHE_STATUS.at = Date.now();
+        console.log('[sw] 预缓存 ' + ok + '/' + list.urls.length + ' 条（来源：' + list.from + '，清单版本 ' + list.version + '）');
+        if (failed.length) console.warn('[sw] 预缓存失败 ' + failed.length + ' 条：' + failed.join(' | '));
+      });
+    });
+  });
+}
+
+/* 抓一次并写缓存；失败返回 null（不抛出） */
+function fetchAndCache(cache, request) {
+  return fetch(request)
+    .then(function (res) {
+      if (res && res.ok && res.type === 'basic') {
+        return cache.put(request, res.clone()).then(
+          function () { return res; },
+          function () { return res; }
+        );
+      }
+      return res;
+    })
+    .catch(function () { return null; });
+}
+
+/* stale-while-revalidate 的「更新」那一半：不阻塞返回，失败静默 */
+function revalidate(cache, request) {
+  fetchAndCache(cache, request).catch(function () { return null; });
+}
+
+/* 首页 HTML 只在匿名、同源、无 cookie 的前提下才留作离线壳 */
+function rememberShell(request, response) {
+  try {
+    if (!isHtml(response)) return;
+    if (request.headers.get('cookie')) return;
+    if (response.type !== 'basic') return;
+    caches.open(SHELL_CACHE).then(function (cache) {
+      return cache.put(SHELL_KEY, response);
+    }).catch(function () { });
+  } catch (e) { }
+}
+
+/* 页面导航：预缓存的页面（游戏页/首页）缓存优先，其余 network-first，断网逐级回落 */
+function handleNavigate(request) {
+  var pathname = new URL(request.url).pathname;
+  return caches.open(ASSETS_CACHE).then(function (cache) {
+    var precached = PRECACHED_PATHS.has(pathname);
+    var step = precached ? cache.match(request) : Promise.resolve(null);
+    return step.then(function (hit) {
+      if (hit && isHtml(hit)) {
+        revalidate(cache, request);
+        return hit;
+      }
+      return fetch(request)
+        .then(function (res) {
+          if (res && res.ok && pathname === '/' && !request.headers.get('cookie')) {
+            rememberShell(request, res.clone());
+          }
+          return res;
+        })
+        .catch(function () {
+          /* 断网：先看这个页面自己有没有被预缓存，再落离线壳，最后才是内置兜底页 */
+          return cache.match(request, { ignoreSearch: true }).then(function (own) {
+            if (own && isHtml(own)) return own;
+            return cache.match(pathname, { ignoreSearch: true }).then(function (byPath) {
+              if (byPath && isHtml(byPath)) return byPath;
+              return caches.match(SHELL_KEY).then(function (shell) {
+                return shell || htmlResponse(OFFLINE_HTML, 200);
+              });
+            });
+          });
+        });
+    });
+  });
+}
+
+/* 静态资源：stale-while-revalidate；断网且没缓存时给出明确的 504（不伪造 200） */
+function handleStatic(request) {
+  return caches.open(ASSETS_CACHE).then(function (cache) {
+    return cache.match(request).then(function (hit) {
+      if (hit) {
+        revalidate(cache, request);
+        return hit;
+      }
+      /* 版本号（?v=N）升级后，旧条目与预缓存清单里都是不带 query 的 URL：忽略 query 再找一次，
+         这样断网时样式与脚本仍能命中（否则升级一次就会离线掉样式） */
+      return cache.match(request, { ignoreSearch: true }).then(function (loose) {
+        if (loose) {
+          revalidate(cache, request);
+          return loose;
+        }
+        return fetchAndCache(cache, request).then(function (res) {
+          if (res) return res;
+          return new Response('', { status: 504, statusText: 'Offline' });
+        });
+      });
+    });
+  });
+}
+
+/* ------------------------------------------------------------------ 安装 / 激活 */
+
+self.addEventListener('install', function (event) {
+  event.waitUntil(
+    (async function () {
+      /* 1) 内置兜底页先占位：清单一条都拉不到时，离线也不会白屏 */
+      try {
+        var shell = await caches.open(SHELL_CACHE);
+        await shell.put(SHELL_KEY, htmlResponse(OFFLINE_HTML, 200));
+      } catch (e) { }
+
+      /* 2) 按清单逐条预缓存（整体异常也不能把 install 拖挂） */
+      try {
+        await precacheAll();
+      } catch (e) {
+        console.warn('[sw] 预缓存整体失败：' + (e && e.message ? e.message : e));
+      }
+
+      /* 3) 用预缓存下来的首页替换占位兜底页；没有就当场抓一次 */
+      try {
+        var assets = await caches.open(ASSETS_CACHE);
+        var home = await assets.match('/');
+        if (!home) {
+          var res = await fetch('/', { credentials: 'omit' });
+          if (res && res.ok && res.type === 'basic') home = res;
+        }
+        if (home && isHtml(home)) {
+          var shellCache = await caches.open(SHELL_CACHE);
+          await shellCache.put(SHELL_KEY, home);
+        }
+      } catch (e) { }
+
+      await self.skipWaiting();
+    })()
+  );
 });
 
+self.addEventListener('activate', function (event) {
+  event.waitUntil(
+    (async function () {
+      try {
+        var names = await caches.keys();
+        await Promise.all(
+          names.map(function (name) {
+            var mine = name.indexOf('qw-shell-') === 0 || name.indexOf('qw-assets-') === 0;
+            if (!mine) return null;
+            if (name === SHELL_CACHE || name === ASSETS_CACHE) return null;
+            /* 旧版本的桶：内容版本一变缓存名就变，这里顺手清掉 */
+            return caches.delete(name);
+          })
+        );
+      } catch (e) { }
+      await self.clients.claim();
+    })()
+  );
+});
+
+/* ------------------------------------------------------------------ 请求拦截 */
+
+self.addEventListener('fetch', function (event) {
+  var request = event.request;
+  try {
+    if (request.method !== 'GET') return;
+    var url = new URL(request.url);
+    if (url.origin !== self.location.origin) return;
+    /* 页面显式要求绕缓存，或带 Range 的请求，一律交给浏览器默认处理 */
+    if (request.cache === 'no-store') return;
+    if (request.headers.get('range')) return;
+
+    for (var i = 0; i < NETWORK_ONLY.length; i++) {
+      if (NETWORK_ONLY[i].test(url.pathname)) return;
+    }
+
+    if (request.mode === 'navigate') {
+      event.respondWith(handleNavigate(request));
+      return;
+    }
+    for (var j = 0; j < STATIC_PATHS.length; j++) {
+      if (STATIC_PATHS[j].test(url.pathname)) {
+        event.respondWith(handleStatic(request));
+        return;
+      }
+    }
+    /* 清单里点名的零散资源（/favicon.ico、/favicon.svg 之类）也走缓存优先：
+       预缓存了却仍在离线时打网络，会白失败一次（浏览器还会自动请求 favicon） */
+    if (PRECACHED_PATHS.has(url.pathname)) {
+      event.respondWith(handleStatic(request));
+      return;
+    }
+  } catch (e) {
+    /* 任何内部异常都退回浏览器默认行为 */
+  }
+});
+
+/* ------------------------------------------------------------------ 消息通道 */
+
 self.addEventListener('message', function (event) {
-  const msg = event.data;
+  var msg = event.data;
   if (!msg || !event.source || typeof event.source.postMessage !== 'function') return;
-  if (msg.type === 'PWA_VERSION') event.source.postMessage({ type: 'PWA_VERSION', version: SW_VERSION });
-  else if (msg.type === 'SKIP_WAITING') self.skipWaiting();
+  if (msg.type === 'PWA_VERSION') {
+    event.source.postMessage({
+      type: 'PWA_VERSION',
+      version: SW_VERSION,
+      precache: PRECACHE_VERSION,
+      cache: CACHE_TAG,
+      pages: PRECACHED_PATHS.size
+    });
+  } else if (msg.type === 'PWA_PRECACHE_STATUS') {
+    event.source.postMessage({
+      type: 'PWA_PRECACHE_STATUS',
+      version: PRECACHE_STATUS.version,
+      total: PRECACHE_STATUS.total,
+      ok: PRECACHE_STATUS.ok,
+      failedCount: PRECACHE_STATUS.failed.length,
+      failed: PRECACHE_STATUS.failed.slice(0, 8),
+      done: PRECACHE_STATUS.done,
+      at: PRECACHE_STATUS.at
+    });
+  } else if (msg.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 `;
 
@@ -1866,6 +2667,7 @@ function pwaResponse(ctx) {
 const ASSET_CACHE = (pathname) => {
   if (/^\/static\//.test(pathname)) return 'public, max-age=604800';
   if (/^\/games\//.test(pathname)) return 'public, max-age=3600';
+  if (pathname === '/precache.json') return 'public, max-age=600';
   return 'public, max-age=3600';
 };
 
@@ -1990,6 +2792,13 @@ async function route(ctx) {
       status: 200,
       headers: makeHeaders(ctx, { type: 'image/svg+xml', cache: 'public, max-age=86400' })
     });
+  }
+
+  /* PWA 真离线：预缓存清单不进内联常量（它随游戏数量变化），交给静态资源层，
+     构建时由 tools/gen-precache.mjs 生成、tools/build-pages.mjs 搬进产物目录。 */
+  if (pathname === '/precache.json') {
+    const asset = await serveAsset(ctx);
+    if (asset) return asset;
   }
 
   if (/^\/static\//.test(pathname) || /^\/games\//.test(pathname)) {

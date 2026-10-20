@@ -239,6 +239,11 @@ put("favicon.svg", FAVICON);
 const PWA_ICONS = ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon-180.png"];
 put("manifest.webmanifest", fs.readFileSync(path.join(PUBLIC_DIR, "manifest.webmanifest")));
 put("sw.js", fs.readFileSync(path.join(PUBLIC_DIR, "sw.js")));
+/* PWA 真离线：预缓存清单由 tools/gen-precache.mjs 扫描仓库生成，sw.js 在 install 时拉取。
+   Express 线直接读 public/，Workers 线与静态托管都从产物目录拿，所以它必须跟着导出。 */
+const PRECACHE_SRC = path.join(PUBLIC_DIR, "precache.json");
+if (fs.existsSync(PRECACHE_SRC)) put("precache.json", fs.readFileSync(PRECACHE_SRC));
+else console.log("!! 缺少 public/precache.json（PWA 真离线清单）：先跑 node tools/gen-precache.mjs");
 for (const ic of PWA_ICONS) put("icons/" + ic, fs.readFileSync(path.join(PUBLIC_DIR, "icons", ic)));
 
 const HEAD = /<head[^>]*>/i;
@@ -342,6 +347,9 @@ if (CF_MODE) {
     "/manifest.webmanifest",
     "  Cache-Control: public, max-age=3600",
     "",
+    "/precache.json",
+    "  Cache-Control: public, max-age=600",
+    "",
     "/icons/*",
     "  Cache-Control: public, max-age=2592000",
     ""
@@ -372,6 +380,7 @@ if (CF_MODE) {
      产物里必须都有，否则静态托管上就是 404 */
   if (rels.indexOf("manifest.webmanifest") < 0) problems.push("没有产出 manifest.webmanifest（PWA）");
   if (rels.indexOf("sw.js") < 0) problems.push("没有产出 sw.js（PWA Service Worker）");
+  if (rels.indexOf("precache.json") < 0) problems.push("没有产出 precache.json（PWA 真离线清单，先跑 gen:precache）");
   ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon-180.png"].forEach(function (ic) {
     if (rels.indexOf("icons/" + ic) < 0) problems.push("没有产出 icons/" + ic + "（PWA 图标）");
   });

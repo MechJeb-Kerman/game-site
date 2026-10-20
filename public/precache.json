@@ -1,0 +1,242 @@
+{
+  "version": "p1-334370f07955",
+  "generatedAt": "2026-10-20T01:11:11.479Z",
+  "generator": "tools/gen-precache.mjs",
+  "note": "PWA 离线清单：sw.js 在 install 时按 urls 逐条预缓存（单条失败只计数，不整体失败）",
+  "count": 33,
+  "bytes": 869058,
+  "maxBytes": 98130,
+  "urls": [
+    {
+      "url": "/",
+      "kind": "shell",
+      "revision": "dynamic:11a90bd46fc7",
+      "bytes": null,
+      "file": null
+    },
+    {
+      "url": "/games/2048/index.html",
+      "kind": "game",
+      "revision": "4e5d45f2e45a",
+      "bytes": 12374,
+      "file": "games/2048/index.html"
+    },
+    {
+      "url": "/games/blackhole/index.html",
+      "kind": "game",
+      "revision": "3ed31b1a6bc7",
+      "bytes": 98130,
+      "file": "games/blackhole/index.html"
+    },
+    {
+      "url": "/games/chess/index.html",
+      "kind": "game",
+      "revision": "4bf4d50dfea7",
+      "bytes": 48927,
+      "file": "games/chess/index.html"
+    },
+    {
+      "url": "/games/connect4/index.html",
+      "kind": "game",
+      "revision": "bb54971cb10d",
+      "bytes": 44995,
+      "file": "games/connect4/index.html"
+    },
+    {
+      "url": "/games/draughts/index.html",
+      "kind": "game",
+      "revision": "90c87f79488b",
+      "bytes": 44079,
+      "file": "games/draughts/index.html"
+    },
+    {
+      "url": "/games/gomoku/index.html",
+      "kind": "game",
+      "revision": "e881040a70b3",
+      "bytes": 42405,
+      "file": "games/gomoku/index.html"
+    },
+    {
+      "url": "/games/idiom/index.html",
+      "kind": "game",
+      "revision": "ae3109f8b850",
+      "bytes": 51437,
+      "file": "games/idiom/index.html"
+    },
+    {
+      "url": "/games/linkup/index.html",
+      "kind": "game",
+      "revision": "2e015bc099f5",
+      "bytes": 35223,
+      "file": "games/linkup/index.html"
+    },
+    {
+      "url": "/games/match3/index.html",
+      "kind": "game",
+      "revision": "1b1d0bf9dc86",
+      "bytes": 31677,
+      "file": "games/match3/index.html"
+    },
+    {
+      "url": "/games/memory/index.html",
+      "kind": "game",
+      "revision": "6cbf2046502d",
+      "bytes": 8575,
+      "file": "games/memory/index.html"
+    },
+    {
+      "url": "/games/minesweeper/index.html",
+      "kind": "game",
+      "revision": "0dd589c7ca86",
+      "bytes": 28675,
+      "file": "games/minesweeper/index.html"
+    },
+    {
+      "url": "/games/reversi/index.html",
+      "kind": "game",
+      "revision": "a892684fb4b2",
+      "bytes": 47270,
+      "file": "games/reversi/index.html"
+    },
+    {
+      "url": "/games/snake/index.html",
+      "kind": "game",
+      "revision": "5863791f072c",
+      "bytes": 13933,
+      "file": "games/snake/index.html"
+    },
+    {
+      "url": "/games/sokoban/index.html",
+      "kind": "game",
+      "revision": "9764b17af418",
+      "bytes": 33877,
+      "file": "games/sokoban/index.html"
+    },
+    {
+      "url": "/games/solitaire/index.html",
+      "kind": "game",
+      "revision": "e9ea7e647ac3",
+      "bytes": 45837,
+      "file": "games/solitaire/index.html"
+    },
+    {
+      "url": "/games/sudoku/index.html",
+      "kind": "game",
+      "revision": "a1b6b3ff4986",
+      "bytes": 31699,
+      "file": "games/sudoku/index.html"
+    },
+    {
+      "url": "/games/tetris/index.html",
+      "kind": "game",
+      "revision": "ab27fc7e7386",
+      "bytes": 16271,
+      "file": "games/tetris/index.html"
+    },
+    {
+      "url": "/games/tictactoe/index.html",
+      "kind": "game",
+      "revision": "a0e4b2eb6d4a",
+      "bytes": 8947,
+      "file": "games/tictactoe/index.html"
+    },
+    {
+      "url": "/games/whack/index.html",
+      "kind": "game",
+      "revision": "d9ac0dbda657",
+      "bytes": 9474,
+      "file": "games/whack/index.html"
+    },
+    {
+      "url": "/games/xiangqi/index.html",
+      "kind": "game",
+      "revision": "260874afdc2f",
+      "bytes": 45492,
+      "file": "games/xiangqi/index.html"
+    },
+    {
+      "url": "/static/js/app-static.js",
+      "kind": "script",
+      "revision": "1adcd48de606",
+      "bytes": 13792,
+      "file": "public/js/app-static.js"
+    },
+    {
+      "url": "/static/js/app.js",
+      "kind": "script",
+      "revision": "dac983bc2ce3",
+      "bytes": 20880,
+      "file": "public/js/app.js"
+    },
+    {
+      "url": "/static/js/gamepad.js",
+      "kind": "script",
+      "revision": "e4ac01732d42",
+      "bytes": 10212,
+      "file": "public/js/gamepad.js"
+    },
+    {
+      "url": "/static/js/net-play.js",
+      "kind": "script",
+      "revision": "108304868bfc",
+      "bytes": 31267,
+      "file": "public/js/net-play.js"
+    },
+    {
+      "url": "/static/css/style.css",
+      "kind": "style",
+      "revision": "0d35d8d80afb",
+      "bytes": 47152,
+      "file": "public/css/style.css"
+    },
+    {
+      "url": "/icons/apple-touch-icon-180.png",
+      "kind": "icon",
+      "revision": "ea7bd1b313b2",
+      "bytes": 4377,
+      "file": "public/icons/apple-touch-icon-180.png"
+    },
+    {
+      "url": "/icons/icon-192.png",
+      "kind": "icon",
+      "revision": "9a68bed97d13",
+      "bytes": 6815,
+      "file": "public/icons/icon-192.png"
+    },
+    {
+      "url": "/icons/icon-512.png",
+      "kind": "icon",
+      "revision": "46d523ff67b1",
+      "bytes": 22317,
+      "file": "public/icons/icon-512.png"
+    },
+    {
+      "url": "/icons/icon-maskable-512.png",
+      "kind": "icon",
+      "revision": "21a89f40ef59",
+      "bytes": 11585,
+      "file": "public/icons/icon-maskable-512.png"
+    },
+    {
+      "url": "/favicon.ico",
+      "kind": "icon",
+      "revision": "dynamic:fbceb90b2d88",
+      "bytes": null,
+      "file": null
+    },
+    {
+      "url": "/favicon.svg",
+      "kind": "icon",
+      "revision": "dynamic:fbceb90b2d88",
+      "bytes": null,
+      "file": null
+    },
+    {
+      "url": "/manifest.webmanifest",
+      "kind": "manifest",
+      "revision": "380cbbd32f83",
+      "bytes": 1364,
+      "file": "public/manifest.webmanifest"
+    }
+  ]
+}
