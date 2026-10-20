@@ -31,6 +31,7 @@
     "test:boards": "node tools/board-games-test.mjs",
     "gen:icons": "node tools/gen-icons.mjs",
     "gen:sw": "node tools/gen-sw.mjs",
+    "index:meili": "node tools/meili-index.mjs",
     "gen:precache": "node tools/gen-precache.mjs",
     "test:pwa": "node tools/pwa-test.mjs",
     "test:rules": "node tools/rules-test.mjs",
@@ -45,7 +46,12 @@
     "test:oauth": "node tools/oauth-gateway-test.mjs",
     "test:og": "node tools/og-raster-test.mjs",
     "test:outbox": "node tools/outbox-test.mjs",
-    "test:ratelimit": "node tools/ratelimit-test.mjs"
+    "test:ratelimit": "node tools/ratelimit-test.mjs",
+    "test:rules-xiangqi": "node tools/rules-xiangqi-test.mjs",
+    "test:rules-chess": "node tools/rules-chess-test.mjs",
+    "test:meili": "node tools/meili-index-test.mjs",
+    "test:feed": "node tools/feed-test.mjs",
+    "test:replay": "node tools/replay-search-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

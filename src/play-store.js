@@ -126,17 +126,121 @@ export function replay(id) {
   };
 }
 
-/** 棋谱列表（某个游戏的最近对局；game 为空则全部） */
-export function replayList({ game = '', limit = 12, offset = 0 } = {}) {
-  const g = cleanGame(game);
-  const lim = Math.min(Math.max(Number(limit) || 12, 1), 50);
-  const off = Math.max(Number(offset) || 0, 0);
-  const rows = g
-    ? db.prepare('SELECT id, game, host_name, guest_name, result, move_count, plays, created_at FROM play_replays WHERE game = ? ORDER BY id DESC LIMIT ? OFFSET ?').all(g, lim, off)
-    : db.prepare('SELECT id, game, host_name, guest_name, result, move_count, plays, created_at FROM play_replays ORDER BY id DESC LIMIT ? OFFSET ?').all(lim, off);
-  const total = g
-    ? db.prepare('SELECT COUNT(*) AS n FROM play_replays WHERE game = ?').get(g).n
-    : db.prepare('SELECT COUNT(*) AS n FROM play_replays').get().n;
+/* ---------- 棋谱检索（第九批：按玩家 / 日期 / 结果检索 + JSON 导出） ---------- */
+
+/** JSON 导出的硬上限（页面翻页仍是 50 夹紧；导出默认 200、最多 500） */
+export const REPLAY_MAX_LIMIT = 500;
+
+/** 查询参数取单值：数组取第一个（Express 的 ?a=1&a=2），其它非字符串当空串 */
+function paramOne(v) {
+  if (Array.isArray(v)) v = v.length ? v[0] : '';
+  if (v == null || typeof v === 'object') return '';
+  return String(v);
+}
+
+/**
+ * 时间参数 → 毫秒时间戳；解析不了返回 null（调用方忽略这一项，不报错）。
+ * 认两种写法：纯数字（毫秒；小于 1e11 当秒级时间戳再乘 1000）+ YYYY-MM-DD（服务器本地日的边界）。
+ * end=true 取当天 23:59:59.999（用次日 0 点减 1ms，跨夏令时不会丢一天）。
+ */
+function replayTime(v, end) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return null;
+  if (/^\d{1,16}$/.test(s)) {
+    let n = Number(s);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (n < 1e11) n *= 1000;
+    return Math.floor(n);
+  }
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;  // 2026-02-31 这类回读挡掉
+  return end ? new Date(y, mo - 1, d + 1).getTime() - 1 : dt.getTime();
+}
+
+/** 毫秒 → YYYY-MM-DD（本地日，给 <input type="date"> 回填） */
+function replayDay(ms) {
+  if (ms == null) return '';
+  const d = new Date(ms);
+  const p = (n) => (n < 10 ? '0' + n : String(n));
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+/**
+ * 棋谱筛选条件（页面 / 翻页链接 / JSON 导出共用；worker/play-store.js 有一份逐字镜像）。
+ * - game：只认六款裁判棋的 slug（src/rules 的 SLUGS），其它当没传；
+ * - player：昵称子串匹配（LIKE，ASCII 大小写不敏感），命中 host_name 或 guest_name 任一边；
+ * - result：只认 host / guest / draw；
+ * - from / to：YYYY-MM-DD 或数字时间戳，闭区间，解析不了的忽略；
+ * - mine：'1' / 'on' / 'true' =「只看我的」，匹配谁由调用方按登录用户算（见 replayList 的 mine）。
+ * 「只看我的」的口径：play_replays 没有任何用户列（src/db.js:317 只有建房时客户端填的昵称），
+ * 全站也没有「账号 ↔ 昵称」的绑定（src/elo.js:22 说天梯身份键同样由昵称派生），
+ * 所以只能按昵称精确匹配 —— 改过昵称、或与别人重名时结果会不准，页面文案也写明了。
+ */
+export function replayFilters(raw = {}) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const want = paramOne(r.result);
+  const mineRaw = paramOne(r.mine).trim().toLowerCase();
+  const fromRaw = paramOne(r.from).trim();
+  const toRaw = paramOne(r.to).trim();
+  const fromMs = replayTime(fromRaw, false);
+  const toMs = replayTime(toRaw, true);
+  return {
+    game: cleanGame(paramOne(r.game)),
+    player: paramOne(r.player).trim().slice(0, 32),
+    result: want === 'host' || want === 'guest' || want === 'draw' ? want : '',
+    mine: mineRaw === '1' || mineRaw === 'on' || mineRaw === 'true',
+    from: fromRaw,                          // 原样回显（表单 / 翻页链接 / 导出链接）
+    to: toRaw,
+    fromMs: fromMs,                         // null 或毫秒（SQL 用）
+    toMs: toMs,
+    fromDay: replayDay(fromMs),             // 给 <input type="date"> 的值
+    toDay: replayDay(toMs)
+  };
+}
+
+/**
+ * 棋谱列表（game / player / result / 日期区间过滤，id 倒序）。
+ * 旧调用 replayList({ game, limit, offset }) 与之前逐字相同：没有筛选时 SQL 文本与夹紧口径都没变。
+ * @param {object} [opts] replayFilters 的那些原始参数，外加
+ *   limit（默认 12，夹 1..maxLimit）、offset（≥0）、maxLimit（默认 50，夹 1..REPLAY_MAX_LIMIT，导出传 500）、
+ *   mine（登录用户名数组：host_name / guest_name 精确匹配其中之一，空数组 = 不筛）
+ */
+export function replayList(opts = {}) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const f = replayFilters(o);
+  const cap = Math.min(Math.max(Number(o.maxLimit) || 50, 1), REPLAY_MAX_LIMIT);
+  const lim = Math.min(Math.max(Number(o.limit) || 12, 1), cap);
+  const off = Math.max(Number(o.offset) || 0, 0);
+
+  const where = [];
+  const params = [];
+  if (f.game) { where.push('game = ?'); params.push(f.game); }
+  if (f.player) {
+    const like = '%' + f.player.replace(/[\\%_]/g, (c) => '\\' + c) + '%';   // 昵称里的 % _ \ 按字面匹配
+    where.push("(host_name LIKE ? ESCAPE '\\' OR guest_name LIKE ? ESCAPE '\\')");
+    params.push(like, like);
+  }
+  if (f.result) { where.push('result = ?'); params.push(f.result); }
+  if (f.fromMs != null) { where.push('created_at >= ?'); params.push(f.fromMs); }
+  if (f.toMs != null) { where.push('created_at <= ?'); params.push(f.toMs); }
+  const mine = Array.isArray(o.mine)
+    ? o.mine.map((x) => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 4)
+    : [];
+  if (mine.length) {
+    where.push('(' + mine.map(() => '(LOWER(TRIM(host_name)) = LOWER(?) OR LOWER(TRIM(guest_name)) = LOWER(?))').join(' OR ') + ')');
+    for (const n of mine) params.push(n, n);
+  }
+
+  const cols = 'id, game, host_name, guest_name, result, move_count, plays, created_at';
+  const cond = where.length ? ' WHERE ' + where.join(' AND ') : '';
+  const rows = db.prepare('SELECT ' + cols + ' FROM play_replays' + cond + ' ORDER BY id DESC LIMIT ? OFFSET ?')
+    .all(...params, lim, off);
+  const total = db.prepare('SELECT COUNT(*) AS n FROM play_replays' + cond).get(...params).n;
   return { total: Number(total || 0), items: (rows || []).map(replayRow) };
 }
 

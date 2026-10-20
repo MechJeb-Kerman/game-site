@@ -270,15 +270,17 @@ async function main() {
   r = await post('/api/play/watch', { key: '99999999-' + 'a'.repeat(24), since: 0 });
   ok('钥匙格式合法但房间不存在 → 404 not_found', r.status === 404 && !!r.data && r.data.error === 'not_found', r.status + ' ' + r.text.slice(0, 120));
 
-  /* ---------- 服务端裁判：不支持的棋类仍然旧中继（防回归） ---------- */
-  r = await post('/api/play/create', { game: 'xiangqi', name: '象棋甲' });
+  /* ---------- 服务端裁判：不支持的棋类仍然旧中继（防回归） ----------
+     注意：这里必须用一款「没注册进 src/rules/index.js」的棋。中国象棋与国际象棋
+     已在第四批注册，拿它们当样本会发非法走法 → 400 illegal_move/bad_move。 */
+  r = await post('/api/play/create', { game: 'junqi', name: '军棋甲' });
   const xHost = r.data || {};
   const xRoom = xHost.room || {};
-  ok('另开一间象棋房（规则引擎不支持这款棋）', r.status === 201 && !!xRoom.id, r.status + ' ' + r.text.slice(0, 120));
-  r = await post('/api/play/join', { code: xRoom.code, name: '象棋乙' });
+  ok('另开一间军棋房（规则引擎不支持这款棋）', r.status === 201 && !!xRoom.id, r.status + ' ' + r.text.slice(0, 120));
+  r = await post('/api/play/join', { code: xRoom.code, name: '军棋乙' });
   ok('第二个人坐下 → 开局', r.status === 200 && (r.data || {}).seat === 1, r.status + ' ' + r.text.slice(0, 120));
-  r = await post('/api/play/move', { id: xRoom.id, token: xHost.token, move: 'h2e2', result: 'host' });
-  ok('不支持的棋类照旧中继：客户端声明的 result 原样收下（旧行为不回归）',
+  r = await post('/api/play/move', { id: xRoom.id, token: xHost.token, move: '1,1-1,2', result: 'host' });
+  ok('不支持的棋类（军棋）照旧中继：客户端声明的 result 原样收下（旧行为不回归）',
     r.status === 200 && r.data.finished === true && r.data.result === 'host' && r.data.room.status === 'done',
     r.status + ' ' + r.text.slice(0, 160));
 

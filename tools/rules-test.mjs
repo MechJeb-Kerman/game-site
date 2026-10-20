@@ -47,8 +47,8 @@ function sortedNums(list) {
 // ── 各款的元信息与索引契约 ───────────────────────────────────────────────
 console.log('棋类规则引擎回归：' + SLUGS.join(', '));
 
-t('SLUGS = 四款联机棋（国际象棋/中国象棋留扩展点，本轮不做）', () => {
-  assert.deepEqual(SLUGS, ['connect4', 'reversi', 'draughts', 'gomoku']);
+t('SLUGS = 六款联机棋（第四批加上中国象棋 / 国际象棋）', () => {
+  assert.deepEqual(SLUGS, ['connect4', 'reversi', 'draughts', 'gomoku', 'xiangqi', 'chess']);
 });
 
 t('RULES 每款都有 slug/seats/moveFormat/note', () => {
@@ -63,10 +63,9 @@ t('RULES 每款都有 slug/seats/moveFormat/note', () => {
 });
 
 t('未接入的棋类：isSupported=false / createGame 抛错 / judge 报 bad_game', () => {
-  assert.equal(isSupported('chess'), false);
-  assert.equal(isSupported('xiangqi'), false);
-  assert.throws(() => createGame('chess'));
-  assert.equal(judge('chess', []).error, 'bad_game');
+  assert.equal(isSupported('junqi'), false); // 军棋还没接入，留作扩展点
+  assert.throws(() => createGame('junqi'));
+  assert.equal(judge('junqi', []).error, 'bad_game');
 });
 
 t('空串走法重放：over=false / winner=0 / moveCount=0', () => {
@@ -620,11 +619,12 @@ t('judge 遇到非数组/空位/未知棋类时的口径', () => {
   assert.equal(judge('connect4', [null]).error, 'bad_move');
   assert.equal(judge('connect4', [{ seat: 3, move: '0' }]).error, 'bad_move');
   assert.equal(judge('reversi', [{ seat: 0, move: 123 }]).error, 'illegal_move'); // 数字会被转成字符串
-  assert.equal(judge('chess', [{ seat: 0, move: '0' }]).error, 'bad_game');
+  assert.equal(judge('junqi', [{ seat: 0, move: '0' }]).error, 'bad_game');
+  assert.equal(judge('chess', [{ seat: 0, move: '0' }]).error, 'illegal_move'); // 形状对但不是合法着法
 });
 
 t('createGame 未知棋类抛错，已知棋类返回四件套', () => {
-  assert.throws(() => createGame('chess'), /chess/);
+  assert.throws(() => createGame('junqi'), /junqi/);
   for (const slug of SLUGS) {
     const g = createGame(slug);
     assert.equal(g.slug, slug);
@@ -644,6 +644,8 @@ t('每款：同一串走法两次 judge 结果一致（deepEqual）', () => {
     reversi: [{ seat: 0, move: '5,4' }, { seat: 1, move: '5,5' }, { seat: 0, move: '5,6' }, { seat: 1, move: '6,6' }],
     draughts: [{ seat: 0, move: '54-43' }, { seat: 1, move: '25-36' }, { seat: 0, move: '63-54' }, { seat: 1, move: '21-30' }],
     gomoku: [{ seat: 0, move: '7,7' }, { seat: 1, move: '8,8' }, { seat: 0, move: '6,6' }, { seat: 1, move: '9,9' }],
+    xiangqi: [{ seat: 0, move: '7,9-6,7' }, { seat: 1, move: '7,0-6,2' }, { seat: 0, move: '1,7-4,7' }, { seat: 1, move: '1,2-4,2' }],
+    chess: [{ seat: 0, move: 'e2e4' }, { seat: 1, move: 'e7e5' }, { seat: 0, move: 'g1f3' }, { seat: 1, move: 'b8c6' }],
   };
   for (const slug of SLUGS) {
     const moves = samples[slug];

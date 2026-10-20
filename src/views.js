@@ -116,6 +116,7 @@ function header(user = null) {
     ? '<span class="who"><b>' + esc(user.name) + '</b>' + (user.role === 'admin' ? '<i>站长</i>' : '') +
         (user.email && !user.email_verified ? '<i class="warn" title="邮箱还没验证">邮箱未验证</i>' : '') + '</span>' +
       '<a href="/favorites">收藏夹</a>' +
+      '<a href="/feed">好友动态</a>' +
       // 未读数由 app.js 拉 /api/notifications/unread 与 /api/messages/unread 填，红点默认藏着
       '<a href="/notifications" data-unread="notifications">通知<em class="dot" hidden></em></a>' +
       '<a href="/messages" data-unread="messages">私信<em class="dot" hidden></em></a>' +
@@ -2210,6 +2211,88 @@ export function notificationsPage({ origin, user, list = null, page = 1, notice 
   });
 }
 
+/** 动态的图标与动作标签：一眼看出这条是玩 / 评论 / 发帖 / 打卡 */
+const FEED_META = {
+  play: { icon: '🎮', tag: '在玩' },
+  comment: { icon: '💬', tag: '评论' },
+  thread: { icon: '📣', tag: '发帖' },
+  daily: { icon: '🎯', tag: '每日挑战' }
+};
+
+/** 动态指向哪里：评论 / 在玩去游戏页、主题去帖子里、打卡去每日挑战；认不出来就不给按钮 */
+function feedHref(it) {
+  if (it.kind === 'thread' && it.threadId) return '/forum/t/' + encodeURIComponent(it.threadId);
+  if (it.kind === 'daily') return '/daily';
+  if (it.gameSlug) return '/game/' + encodeURIComponent(it.gameSlug);
+  return '';
+}
+
+/**
+ * 好友动态流：我关注的人最近在玩什么、说了什么（数据来自 social.friendFeed）。
+ * 列表复用通知中心的 .note-* 卡片标记，两种页面长得一样；翻页与论坛共用 listPager。
+ * 没登录时也给一页（路由那边本来就拦住了，这里只是别把空 user 渲染成坏页面）。
+ */
+export function feedPage({ origin, user, list = null, page = 1, notice = '' }) {
+  if (!user) {
+    const gate = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>好友动态</b></nav>
+  <div class="sec-head"><h2>👥 好友动态</h2></div>
+  <div class="panel"><p class="dim">登录之后就能看到你关注的人最近在玩什么、说了什么。<a href="/login?next=%2Ffeed">登录</a> · <a href="/register?next=%2Ffeed">注册</a></p></div>
+</div>`;
+    return layout({
+      origin, user: null, path: '/feed', title: '好友动态', noindex: true,
+      description: '关注的人最近在玩什么、说了什么。', content: gate
+    });
+  }
+
+  const l = list || { total: 0, items: [] };
+  const items = l.items || [];
+  const pages = Math.max(1, Math.ceil(Number(l.total || 0) / 20));
+  const rows = items.map((it) => {
+    const kind = String(it.kind || '');
+    const meta = FEED_META[kind] || { icon: '🔔', tag: '动态' };
+    const uname = String(it.username || '');
+    const who = esc(it.displayName || uname || '有人');
+    // 评论 / 发帖带上游戏名，免得「好玩」两个字不知道在说哪一款
+    const game = it.gameTitle ? '《' + esc(it.gameTitle) + '》' : '';
+    const body = kind === 'play'
+      ? '在玩 ' + (game || esc(it.gameSlug || ''))
+      : kind === 'thread'
+      ? esc(it.text || '')
+      : esc(it.text || '') + (game ? ' · ' + game : '');
+    const href = feedHref(it);
+    return '<li class="note-item">' +
+      '<span class="note-ico" aria-hidden="true">' + meta.icon + '</span>' +
+      '<div class="note-main">' +
+        '<p class="note-head">' +
+          (uname ? '<a href="/u/' + encodeURIComponent(uname) + '">' + who + '</a>' : who) +
+          '<span class="pill">' + esc(meta.tag) + '</span>' +
+          '<span class="dim">' + esc(sinceTime(it.at)) + '</span>' +
+        '</p>' +
+        '<p class="note-body">' + body + '</p>' +
+      '</div>' +
+      (href ? '<a class="btn btn-sm ghost" href="' + esc(href) + '">去看看</a>' : '') +
+    '</li>';
+  }).join('');
+
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>好友动态</b></nav>
+  <div class="sec-head">
+    <h2>👥 好友动态</h2>
+    <span class="pill">共 ${fmtNum(l.total)} 条</span>
+  </div>
+  ${notice ? '<p class="auth-ok">' + esc(notice) + '</p>' : ''}
+  ${items.length
+    ? '<ul class="note-list">' + rows + '</ul>' + listPager('/feed', page, pages)
+    : '<div class="panel"><p class="dim">还没有动态。先关注几个人（在别人主页点一下「关注」），他们玩过的游戏、发过的帖子、打卡记录就会出现在这里。</p></div>'}
+  <p class="dim">只显示你关注的人的公开动态：玩过 / 收藏过的游戏、已发布的评论与帖子、每日挑战打卡。同一个人同一款游戏只留最近一条。</p>
+</div>`;
+  return layout({
+    origin, user, path: '/feed', title: '好友动态', noindex: true,
+    description: '关注的人最近在玩什么、说了什么。', content
+  });
+}
+
 /** 私信：会话列表与单条会话共用一个页面，登录后才能进 */
 export function messagesPage({ origin, user, threads = null, thread = null, peer = null, notice = '', error = '' }) {
   const okMsg = notice ? '<p class="auth-ok">' + esc(notice) + '</p>' : '';
@@ -2359,16 +2442,57 @@ export function ladderPage({ origin, user = null, game = '', games = [], board =
   return layout({ origin, user, title: '联机天梯', description: '四款棋类的 Elo 天梯榜，按赛季计分。', path: '/ladder', ogImage: '', content });
 }
 
-/** 棋谱回放列表：联机对局存档，可按游戏筛选并分页 */
-export function replaysPage({ origin, user = null, items = [], total = 0, game = '', games = [], page = 1, pages = 1 }) {
-  const slug = String(game || '');
+/** 棋谱回放列表：联机对局存档，可按游戏 / 玩家 / 结果 / 日期筛选并分页，也能导出 JSON */
+export function replaysPage({ origin, user = null, items = [], total = 0, game = '', games = [], page = 1, pages = 1, filters = {} }) {
+  const f = filters && typeof filters === 'object' ? filters : {};
+  const slug = String(game || f.game || '');
+  const player = String(f.player || '');
+  const result = String(f.result || '');
+  const fromDay = String(f.fromDay || '');
+  const toDay = String(f.toDay || '');
+  const mine = f.mine === true && !!user;   // 未登录一律不认「只看我的」（路由与视图两层都这么判）
+  /** 当前筛选拼成查询串：chips / 翻页 / 导出按钮共用，翻页不会丢条件；extra 覆盖对应键（空值 = 去掉该条件） */
+  const query = (extra) => {
+    const e = extra && typeof extra === 'object' ? extra : {};
+    const parts = [];
+    const put = (k, v) => { if (v) parts.push(k + '=' + encodeURIComponent(v)); };
+    put('game', 'game' in e ? e.game : slug);
+    put('player', player);
+    put('result', result);
+    put('from', f.from);
+    put('to', f.to);
+    if (mine) parts.push('mine=1');
+    put('page', e.page);
+    return parts.length ? '?' + parts.join('&') : '';
+  };
   const tabs = '<div class="chips ladder-tabs">' +
-    '<a class="chip' + (slug ? '' : ' on') + '" href="/replays"' + (slug ? '' : ' aria-current="page"') + '>全部</a>' +
+    '<a class="chip' + (slug ? '' : ' on') + '" href="/replays' + query({ game: '' }) + '"' + (slug ? '' : ' aria-current="page"') + '>全部</a>' +
     (games || []).map((g) => {
       const on = String(g.slug) === slug;
-      return '<a class="chip' + (on ? ' on' : '') + '" href="/replays?game=' + encodeURIComponent(g.slug) + '"' +
+      return '<a class="chip' + (on ? ' on' : '') + '" href="/replays' + query({ game: String(g.slug) }) + '"' +
         (on ? ' aria-current="page"' : '') + '>' + esc(g.icon || '🎮') + ' ' + esc(g.title || g.slug) + '</a>';
     }).join('') + '</div>';
+  const gameOpts = '<option value="">全部棋类</option>' + (games || []).map((g) =>
+    '<option value="' + esc(g.slug) + '"' + (String(g.slug) === slug ? ' selected' : '') + '>' +
+      esc(g.icon || '🎮') + ' ' + esc(g.title || g.slug) + '</option>').join('');
+  const resultOpts = [['', '全部结果'], ['host', '房主胜'], ['guest', '访客胜'], ['draw', '和棋']].map(([v, t]) =>
+    '<option value="' + v + '"' + (v === result ? ' selected' : '') + '>' + t + '</option>').join('');
+  const anyFilter = !!(slug || player || result || f.from || f.to || mine);
+  const mineBox = user
+    ? '<label class="check"><input type="checkbox" name="mine" value="1"' + (mine ? ' checked' : '') + '> 只看我的</label>' +
+      '<span class="hint">棋谱没有账号字段（只记建房时填的昵称），所以这里按昵称精确匹配：改过昵称或与他人重名会不准</span>'
+    : '<span class="hint"><a href="/login?next=%2Freplays">登录</a>后可用「只看我的」（按你的昵称匹配棋谱）</span>';
+  const form = '<form class="filters" method="get" action="/replays">' +
+    '<select name="game" aria-label="棋类">' + gameOpts + '</select>' +
+    '<input name="player" value="' + esc(player) + '" placeholder="玩家名（房主或访客）" maxlength="32" aria-label="玩家名">' +
+    '<select name="result" aria-label="结果">' + resultOpts + '</select>' +
+    '<label class="check">起始日 <input type="date" name="from" value="' + esc(fromDay) + '"></label>' +
+    '<label class="check">结束日 <input type="date" name="to" value="' + esc(toDay) + '"></label>' +
+    mineBox +
+    '<button class="btn btn-sm" type="submit">筛选</button>' +
+    (anyFilter ? '<a class="btn btn-sm" href="/replays">重置</a>' : '') +
+    '<a class="btn btn-sm" href="/replays/export.json' + query({}) + '">⬇ 导出 JSON</a>' +
+    '</form>';
   const rows = (Array.isArray(items) ? items : []).map((it) => {
     const id = encodeURIComponent(String(it.id == null ? '' : it.id));
     const gslug = encodeURIComponent(String(it.game || slug || ''));
@@ -2388,7 +2512,7 @@ export function replaysPage({ origin, user = null, items = [], total = 0, game =
   }).join('');
   const pn = Number(page) || 1;
   const pt = Number(pages) || 1;
-  const href = (n) => '/replays?' + (slug ? 'game=' + encodeURIComponent(slug) + '&' : '') + 'page=' + n;
+  const href = (n) => '/replays' + query({ page: n });
   const pager = pt > 1
     ? '<nav class="pager" aria-label="分页">' +
       (pn > 1 ? '<a class="pg" href="' + href(pn - 1) + '" rel="prev">‹ 上一页</a>' : '<span class="pg off">‹ 上一页</span>') +
@@ -2396,6 +2520,9 @@ export function replaysPage({ origin, user = null, items = [], total = 0, game =
       (pn < pt ? '<a class="pg" href="' + href(pn + 1) + '" rel="next">下一页 ›</a>' : '<span class="pg off">下一页 ›</span>') +
       '</nav>'
     : '';
+  const empty = anyFilter
+    ? '<p class="empty">没有符合条件的棋谱。换个关键词或日期再试，也可以 <a href="/replays">看全部棋谱</a>。</p>'
+    : '<p class="empty">还没有棋谱。联机把一局下完（或认输）就会自动存档，这里能看回放。</p>';
   const content = `<div class="wrap page">
   <nav class="crumb"><a href="/">首页</a><span>›</span><b>棋谱回放</b></nav>
   <div class="page-head">
@@ -2405,7 +2532,8 @@ export function replaysPage({ origin, user = null, items = [], total = 0, game =
   ${tabs}
   <div class="panel">
     <div class="sec-head"><h2>棋谱</h2><span class="more">共 ${fmtNum(total)} 条</span></div>
-    ${rows ? '<ul class="note-list">' + rows + '</ul>' : '<p class="empty">还没有棋谱。联机把一局下完（或认输）就会自动存档，这里能看回放。</p>'}
+    ${form}
+    ${rows ? '<ul class="note-list">' + rows + '</ul>' : empty}
     ${pager}
   </div>
 </div>`;

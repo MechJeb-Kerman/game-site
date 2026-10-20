@@ -788,3 +788,14 @@ body{overscroll-behavior-y:contain}          /* 玩游戏时别一拉就整页�
   .fattach-list{font-size:12px}
 }
 
+
+/* ---------- 棋谱检索条（/replays 的筛选表单） ---------- */
+.filters label.check{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--dim);white-space:nowrap}
+.filters label.check input[type=date]{max-width:158px}
+.filters input[type=checkbox]{accent-color:var(--brand);width:15px;height:15px;cursor:pointer}
+.filters .hint{font-size:12px;color:var(--dim-2);flex-basis:100%;line-height:1.5}
+.filters .hint a{color:var(--brand-2)}
+@media (max-width:560px){
+  .filters input,.filters select{max-width:100%}
+  .filters label.check{white-space:normal}
+}

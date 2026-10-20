@@ -684,3 +684,197 @@ export async function notifyComment(db, { actorId = 0, gameSlug = '', ownerId = 
   return { id: r.id || 0, skipped: r.skipped || '', mentioned: mentioned };
 }
 
+/* ================= 第十批：好友动态流 /feed =================
+ * 「关注的人最近在玩什么」——个人主页 / 关注 / 私信之后，README「后续可做」里剩下的那条。
+ * 与 worker/social.js 的同名函数一一对应：那边第一个参数是 D1 绑定、全程 await，SQL 与口径一样。
+ *
+ * 取数口径（两条线必须一致）：
+ *   · 名单：follows 里 user_id = 我 的行取 followee_id（天然不含我自己），按关注时间倒序最多
+ *     FEED_FOLLOW_MAX 个；一个都没关注就直接空。
+ *   · play：play_logs 只有 (game_id, day) 两个字段、没有 user_id，落不了「谁玩了什么」，
+ *     所以「在玩」只认两张逐人 + 逐游戏 + 带时间戳的表：
+ *       favorites（收藏；UNIQUE(user_id, game_id)，一人一游戏一条）
+ *       ∪ elo_history（服务端裁判的一局；host_id / guest_id 是身份键——登录用户存 String(user.id)，
+ *         匿名存 playerKey(昵称) 即 'n:' 前缀，所以只认纯数字键，并且按 TEXT 传参）
+ *     同一人同一游戏只留最近一条：elo 一人一游戏能堆几十条，不去重会把 feed 刷成一个人的战绩表。
+ *   · comment：comments 只取 status = 1 且 target = 'game'（target = 'post' 时 game_id 是公告帖 id，
+ *     拿它去 join games 会串到别的游戏上）；正文截到 FEED_TEXT 字。
+ *   · thread：forum_threads 只取 status = 1（0 待审 / 2 下架都不外露），正文用标题——
+ *     主题行与首楼同一时间、同一作者，取一处就够，不必再查 forum_posts。
+ *   · daily：daily_results 一天一人一条，指向 /daily，补做的标注出来。
+ * at 一律毫秒：comments / forum_threads / favorites 的 created_at 是 datetime('now','localtime') 文本，
+ * 按仓库既有写法 Date.parse(s.replace(' ', 'T')) 当本地时间解析（同 follows 列表那段）；elo_history 与
+ * daily_results 本身就是毫秒。now 只为与 dailyStats 那组接口对称（测试里可以喂固定时钟）——
+ * 动态流按各行自己的绝对时间排序，不依赖「今天」是哪天。
+ */
+const FEED_TEXT = 60;
+/** 一次最多算多少个关注对象；D1 单条语句最多 100 个绑定参数，所以按 FEED_CHUNK 分批查 */
+const FEED_FOLLOW_MAX = 150;
+const FEED_CHUNK = 30;
+/** 同一毫秒的排序位（数字小的在前），两条线共用一套顺序 */
+const FEED_RANK = { play: 0, comment: 1, thread: 2, daily: 3 };
+
+/** created_at 归一成毫秒：文本 datetime 与整数毫秒都吃；解析不出来给 0（排最后，不会顶到最前面） */
+function feedMs(v) {
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) return n;
+  const t = Date.parse(String(v == null ? '' : v).trim().replace(' ', 'T'));
+  return Number.isFinite(t) && t > 0 ? t : 0;
+}
+
+/** D1 查询的小包装：只关心结果行 */
+async function feedRows(db, sql, params) {
+  const res = await stmt(db, sql, params).all();
+  return (res && res.results) || [];
+}
+
+/**
+ * 好友动态流：我关注的人最近的 play / comment / thread / daily，按 at 倒序。
+ * 与 src/social.js 的 friendFeed 同名同参同返回（第一个参数是 D1 绑定），SQL 与口径逐条对齐。
+ * @param {object} db D1 绑定
+ * @param {number} userId 当前登录用户
+ * @param {{limit?: number, offset?: number, now?: number}} [opts] limit 默认 20、上限 LIST_MAX(50)
+ */
+export async function friendFeed(db, userId, { limit = 20, offset = 0, now = Date.now() } = {}) {
+  void now; // 只为接口对称留着；排序用的是各行自己的绝对时间
+  await ensureDaily(db);
+  const uid = Number(userId) || 0;
+  const size = Math.min(Math.max(Number(limit) || 20, 1), LIST_MAX);
+  const skip = Math.max(Number(offset) || 0, 0);
+  if (!uid) return { total: 0, items: [] };
+  const who = (await feedRows(db,
+    'SELECT followee_id FROM follows WHERE user_id = ? ORDER BY created_at DESC, followee_id DESC LIMIT ?',
+    [uid, FEED_FOLLOW_MAX]))
+    .map((r) => Number(r.followee_id) || 0)
+    .filter((id) => id > 0 && id !== uid);
+  if (!who.length) return { total: 0, items: [] };
+
+  // 每个来源各取「本页之前 + 本页」这么多：先合并去重再切页。分批也安全——一行若在全局前 cap 名里，
+  // 它在自己那一批里也一定在前 cap 名里（行按作者分批，作者之间不会互相顶掉）。
+  const cap = skip + size;
+  const items = [];
+  const play = new Map();
+  let total = 0;
+
+  const addPlay = (r) => {
+    const actor = Number(r.actor) || 0;
+    const slug = String(r.slug || '').trim();
+    if (!actor || !slug) return;
+    const at = feedMs(r.created_at);
+    const key = actor + ':' + slug;
+    const old = play.get(key);
+    if (!old || at > old.at) {
+      play.set(key, { kind: 'play', actorId: actor, gameSlug: slug, gameTitle: String(r.title || slug), text: '', threadId: 0, at: at });
+    }
+  };
+
+  for (let i = 0; i < who.length; i += FEED_CHUNK) {
+    const part = who.slice(i, i + FEED_CHUNK);
+    const qs = part.map(() => '?').join(', ');
+    const keys = part.map(String); // elo 的身份键是 TEXT，别按数字绑
+
+    // play：收藏 ∪ 天梯对局，按（人, 游戏）去重留最近一条
+    (await feedRows(db,
+      'SELECT f.user_id AS actor, g.slug AS slug, g.title AS title, f.created_at AS created_at ' +
+      'FROM favorites f JOIN games g ON g.id = f.game_id WHERE f.user_id IN (' + qs + ') ' +
+      'ORDER BY f.created_at DESC LIMIT ?',
+      part.concat([cap]))).forEach(addPlay);
+    (await feedRows(db,
+      'SELECT q.actor AS actor, q.slug AS slug, g.title AS title, q.at AS created_at FROM (' +
+        'SELECT p.actor AS actor, p.slug AS slug, MAX(p.at) AS at FROM (' +
+          'SELECT CAST(e.host_id AS INTEGER) AS actor, e.game AS slug, e.created_at AS at ' +
+            'FROM elo_history e WHERE e.host_id IN (' + qs + ') ' +
+          'UNION ALL ' +
+          'SELECT CAST(e.guest_id AS INTEGER) AS actor, e.game AS slug, e.created_at AS at ' +
+            'FROM elo_history e WHERE e.guest_id IN (' + qs + ')' +
+        ') p GROUP BY p.actor, p.slug ORDER BY at DESC LIMIT ?' +
+      ') q LEFT JOIN games g ON g.slug = q.slug',
+      keys.concat(keys, [cap]))).forEach(addPlay);
+    total += await count(db,
+      'SELECT COUNT(*) AS n FROM (' +
+        'SELECT f.user_id AS actor, g.slug AS slug FROM favorites f JOIN games g ON g.id = f.game_id ' +
+          'WHERE f.user_id IN (' + qs + ') ' +
+        'UNION ' +
+        'SELECT CAST(e.host_id AS INTEGER) AS actor, e.game AS slug FROM elo_history e WHERE e.host_id IN (' + qs + ') ' +
+        'UNION ' +
+        'SELECT CAST(e.guest_id AS INTEGER) AS actor, e.game AS slug FROM elo_history e WHERE e.guest_id IN (' + qs + ')' +
+      ')',
+      part.concat(keys, keys));
+
+    // comment：已发布 + 挂在游戏上（target = 'game'）
+    total += await count(db,
+      "SELECT COUNT(*) AS n FROM comments c JOIN games g ON g.id = c.game_id " +
+      "WHERE c.status = 1 AND c.target = 'game' AND c.user_id IN (" + qs + ')',
+      part);
+    (await feedRows(db,
+      'SELECT c.user_id AS actor, c.body AS body, c.created_at AS created_at, g.slug AS slug, g.title AS title ' +
+      "FROM comments c JOIN games g ON g.id = c.game_id WHERE c.status = 1 AND c.target = 'game' AND c.user_id IN (" + qs + ') ' +
+      'ORDER BY c.created_at DESC, c.id DESC LIMIT ?',
+      part.concat([cap]))).forEach((r) => {
+      items.push({
+        kind: 'comment', actorId: Number(r.actor) || 0, gameSlug: String(r.slug || ''),
+        gameTitle: String(r.title || ''), text: flat(r.body, FEED_TEXT), threadId: 0, at: feedMs(r.created_at)
+      });
+    });
+
+    // thread：已发布的主题（标题即正文摘要）
+    total += await count(db, 'SELECT COUNT(*) AS n FROM forum_threads t WHERE t.status = 1 AND t.user_id IN (' + qs + ')', part);
+    (await feedRows(db,
+      'SELECT t.id AS id, t.user_id AS actor, t.title AS title, t.created_at AS created_at ' +
+      'FROM forum_threads t WHERE t.status = 1 AND t.user_id IN (' + qs + ') ' +
+      'ORDER BY t.created_at DESC, t.id DESC LIMIT ?',
+      part.concat([cap]))).forEach((r) => {
+      items.push({
+        kind: 'thread', actorId: Number(r.actor) || 0, gameSlug: '', gameTitle: '',
+        text: flat(r.title, FEED_TEXT), threadId: Number(r.id) || 0, at: feedMs(r.created_at)
+      });
+    });
+
+    // daily：一天一人一条
+    total += await count(db, 'SELECT COUNT(*) AS n FROM daily_results d WHERE d.user_id IN (' + qs + ')', part);
+    (await feedRows(db,
+      'SELECT d.user_id AS actor, d.day AS day, d.slug AS slug, d.makeup AS makeup, d.created_at AS created_at, g.title AS title ' +
+      'FROM daily_results d LEFT JOIN games g ON g.slug = d.slug WHERE d.user_id IN (' + qs + ') ' +
+      'ORDER BY d.day DESC, d.id DESC LIMIT ?',
+      part.concat([cap]))).forEach((r) => {
+      const day = String(r.day || '');
+      items.push({
+        kind: 'daily', actorId: Number(r.actor) || 0, gameSlug: String(r.slug || ''),
+        gameTitle: String(r.title || r.slug || ''),
+        text: '完成了每日挑战' + (Number(r.makeup) ? '（补做）' : ''), threadId: 0,
+        // created_at 是毫秒；只有老库为 0 时才退回当天中午，别把 1970 顶到最前面
+        at: feedMs(r.created_at) || feedMs(day + 'T12:00:00')
+      });
+    });
+  }
+
+  play.forEach((it) => items.push(it));
+  items.sort((a, b) => (b.at - a.at) || ((FEED_RANK[a.kind] || 0) - (FEED_RANK[b.kind] || 0)) || (b.actorId - a.actorId));
+
+  const page = items.slice(skip, skip + size);
+  const ids = [];
+  page.forEach((it) => { if (it.actorId && ids.indexOf(it.actorId) < 0) ids.push(it.actorId); });
+  const people = new Map();
+  if (ids.length) {
+    (await feedRows(db, 'SELECT id, username, display_name FROM users WHERE id IN (' + ids.map(() => '?').join(', ') + ')', ids))
+      .forEach((u) => people.set(Number(u.id), { username: String(u.username || ''), displayName: nameOf(u) }));
+  }
+  return {
+    total: total,
+    items: page.map((it) => {
+      const p = people.get(it.actorId) || { username: '', displayName: '' };
+      return {
+        kind: it.kind,
+        actorId: it.actorId,
+        username: p.username,
+        displayName: p.displayName || p.username,
+        gameSlug: it.gameSlug || '',
+        gameTitle: it.gameTitle || '',
+        text: it.text || '',
+        threadId: Number(it.threadId) || 0,
+        at: Number(it.at) || 0
+      };
+    })
+  };
+}
+

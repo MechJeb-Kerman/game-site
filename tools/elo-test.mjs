@@ -366,7 +366,7 @@ async function main() {
 
     await ta('结算门禁：非裁判棋类 / 没结束 / 没结果 / 空昵称 / 归一后同名 / 房间号非法 → 一律不写库', () => {
       const d = eloDb();
-      assert.equal(store.settleRatings(d, doneRoom({ id: 21, game: 'chess' }), T4).reason, 'not_judged');
+      assert.equal(store.settleRatings(d, doneRoom({ id: 21, game: 'junqi' }), T4).reason, 'not_judged'); // 军棋没注册裁判；chess / xiangqi 已在第四批接入，不能再当「非裁判」样本
       assert.equal(store.settleRatings(d, doneRoom({ id: 22, status: 'playing' }), T4).reason, 'not_done');
       assert.equal(store.settleRatings(d, doneRoom({ id: 23, result: '' }), T4).reason, 'no_result');
       assert.equal(store.settleRatings(d, doneRoom({ id: 24, result: 'nobody' }), T4).reason, 'no_result');

@@ -1,10 +1,10 @@
 {
-  "version": "p1-c0878b03c7a8",
-  "generatedAt": "2026-10-20T02:46:12.923Z",
+  "version": "p1-95c403f1a492",
+  "generatedAt": "2026-10-20T04:24:23.638Z",
   "generator": "tools/gen-precache.mjs",
   "note": "PWA 离线清单：sw.js 在 install 时按 urls 逐条预缓存（单条失败只计数，不整体失败）",
   "count": 33,
-  "bytes": 871140,
+  "bytes": 871735,
   "maxBytes": 98130,
   "urls": [
     {
@@ -185,8 +185,8 @@
     {
       "url": "/static/css/style.css",
       "kind": "style",
-      "revision": "8b8e5dbc4dc7",
-      "bytes": 49234,
+      "revision": "586e01e41d2e",
+      "bytes": 49829,
       "file": "public/css/style.css"
     },
     {

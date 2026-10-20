@@ -19,7 +19,7 @@
 | 播放器 | iframe `sandbox` 隔离 + 全屏 + 真·重开 + 新窗口打开 |
 | 手柄 | 20 款游戏全部支持游戏手柄（十字键 / 摇杆 / A / B / X / Y / Start）；除黑洞吞噬（它在页面里自己轮询手柄）外都用同一个零依赖 shim `public/js/gamepad.js`：键盘型合成真按键事件、指针型在虚拟光标处发一次完整点击、棋盘型（扫雷 / 推箱子 / 黑白棋）用 `dpad` 标记 + 自己的 `keys` 映射把方向键与 A / B 接上，见「手柄支持」 |
 | 20 款自研游戏 | 2048、贪吃蛇、记忆翻牌、打地鼠、井字棋（minimax AI）、俄罗斯方块、黑洞吞噬、扫雷、数独、推箱子、连连看、成语猜猜（中文 Wordle）、五子棋、中国象棋、国际象棋、四子棋、黑白棋（奥赛罗）、国际跳棋、宝石三消、纸牌接龙 |
-| 棋类联机 | 五子棋 / 中国象棋 / 国际象棋 / 四子棋 / 黑白棋 / 国际跳棋六款棋类都能**联机对战**：房间码 + 快速匹配，匿名可玩（`public/js/net-play.js` 小部件 + `/api/play/*` 七个接口（含只读观战），服务端做轮流与走法中继，并对四子棋 / 黑白棋 / 国际跳棋 / 五子棋四款**自己裁判**（`src/rules/`：非法走法 400 `illegal_move` 且不落库、胜负由引擎判、客户端声明的 `result` 不再采信；中国象棋 / 国际象棋仍是中继）；服务端与客户端两条线共用一份规则与数据层（`src/play.js`、`src/play-store.js` ↔ `worker/play-store.js`） |
+| 棋类联机 | 五子棋 / 中国象棋 / 国际象棋 / 四子棋 / 黑白棋 / 国际跳棋六款棋类都能**联机对战**：房间码 + 快速匹配，匿名可玩（`public/js/net-play.js` 小部件 + `/api/play/*` 七个接口（含只读观战），服务端做轮流与走法中继，并对**六款全部自己裁判**（`src/rules/`：非法走法 400 `illegal_move` 且不落库、胜负由引擎判、客户端声明的 `result` 不再采信；中国象棋的走法码是 `x1,y1-x2,y2`、国际象棋是 UCI 式 `e2e4` / 升变 `e7e8q`，各自逐字对齐客户端联机中继的编码）；服务端与客户端两条线共用一份规则与数据层（`src/play.js`、`src/play-store.js` ↔ `worker/play-store.js`） |
 | 棋类 AI | 六款棋类各自内置三档 AI（简单 / 普通 / 困难），纯前端实现、不联网；困难档都是带剪枝的浅搜索（国际象棋与中国象棋另含吃子排序与静止搜索） |
 | 账号 | 注册 / 登录 / 退出；`scrypt` 加盐哈希存口令，`HttpOnly` 会话 cookie，30 天有效 |
 | 账号增强 | 邮箱验证（`/verify-email`，24 小时有效）、找回密码（`/forgot` → `/reset`，token 30 分钟一次性）、改密码 / 改昵称 / 解绑第三方账号都在 `/account`；**邮件可走 Resend 或自建 HTTP 发信接口**（`MAIL_API_URL` + `MAIL_API_KEY`），没配就落「开发发件箱」，后台的「集成自检」面板会把当前邮件与登录配置摊开给你看 |
@@ -35,13 +35,14 @@
 | 论坛附件与标签精华 | 发主题与回复都能带附件（`enctype=multipart/form-data`、字段名 `files`、可多选、单文件 ≤ 4 MB），`src/multipart.js` 手写解析（零依赖，Workers 侧用自带 `request.formData()`），`src/attachments.js` 按**扩展名 + MIME + 魔数**三重校验并清洗文件名，存储是 fs / D1 双驱动适配层（Express 落 `data/attachments/`、Worker 落 D1）、按 `sha256` **内容寻址去重**；附件走 `pending → active → deleted` 生命周期，只有 `active`（已挂到帖子上）才在 `/ugc/a/:id` 给内容，`pending` 孤儿超 24 小时连行带内容清掉；主题可打标签（`thread_tags`，`/forum?tag=` 按标签筛）、站长可标**精华**（`featured`，只认 admin 与 mod，与置顶 / 锁定同一条审批路由） |
 | 导航页 | `/nav`：`fishport.cn` 下所有能打开的站点一页直达（清单只有一份，在 `src/sites.js`，加子域只改它）；把 `fishport.cn` / `www.fishport.cn` 作为**自定义域**加到同一个 Worker 后，这两个主机的根路径**直接就是导航页**（判定见 `PORTAL_HOSTS`，三个门户主机之外的子域走 `/nav`）；邮件（`send` / `rsend`）与 Minecraft（`mc`）这类只给程序用的解析记录按需求不导航 |
 | 每日挑战 | `/daily`：当天题目由「已上架游戏的 slug 排序后与日期一起哈希」选出，选题是纯函数（`src/daily.js`），Express 与 Workers 两条线**同日同题**，加游戏也不会把最近几天的题翻掉；登录后当天玩到那款游戏即打卡（`daily_results` 一天一人一条），页面给 28 天日历、连续天数、当月全勤与今日榜；**漏做的可以补做**（`/daily/makeup`，只放开最近两天），补做记在目标日那一行（`makeup=1`，`done_day` 记实际完成日），**不计连续天数、只计总完成数**——否则连续天数可以无限续，对按时打卡的人不公平；没登录能看题与榜，打卡要账号 |
-| 成就与等级 | 16 枚徽章（首次评论 / 评论数 / 收藏 / 评分 / 发主题 / 回帖 / 每日打卡 / 连续天数 / 邮箱验证 / 注册天数 / 投稿上架…）＋ XP 与等级（上限 99 级，等级带「新面孔 → 骨灰级玩家」头衔）；统计与解锁判定都在 `src/badges.js` 的纯函数里，两条线共用一份、页面不各算一套；**刻意不做联机胜负类徽章**——只有四款棋类有服务端裁判，其余棋类的胜负仍由客户端声明，跨游戏口径不齐，索性不做 |
+| 成就与等级 | 16 枚徽章（首次评论 / 评论数 / 收藏 / 评分 / 发主题 / 回帖 / 每日打卡 / 连续天数 / 邮箱验证 / 注册天数 / 投稿上架…）＋ XP 与等级（上限 99 级，等级带「新面孔 → 骨灰级玩家」头衔）；统计与解锁判定都在 `src/badges.js` 的纯函数里，两条线共用一份、页面不各算一套；**刻意不做联机胜负类徽章**——六款棋类虽都已有服务端裁判，但对手多为匿名昵称（账号与匿名是两套身份键），跨游戏口径不齐，索性不做 |
 | 个人主页 | `/u/:name`：用户名或昵称都能打开（大小写不敏感），一页看完等级 / XP 进度 / 头衔 / 已获与未获徽章（未获的显示进度）/ 每日挑战与连续天数 / 发帖评论数 / 注册时间；自己的主页会多一个「看我的徽章」入口 |
 | 关注与好友 | 个人主页上的「＋ 关注」是普通表单 POST（`/u/:name/follow`，没 JS 也能用），已关注时按钮变「取消关注」；粉丝 / 关注 / 好友（**互关即成好友**）三种列表各一页（`/u/:name/followers\|following\|friends`），个人主页顶部三格数字可点进去 |
 | 通知中心 | `/notifications`：别人回复你的主题、在帖子里 @你、关注你、评论你上架的游戏都会落一条通知（`reply` / `mention` / `follow` / `message` / `comment` / `system` 六类；同一人同一目标 10 分钟内去重，自己给自己不写），未读高亮、一键「全部标为已读」；`/api/notifications/unread` 给红点轮询 |
 | 私信 | `/messages` 会话列表 + `/messages/:name` 单会话（同一个页面两种模式），发信校验自我 / 封禁 / 超长，打开会话即把对方发来的消息标为已读；`/api/messages/unread` 给红点 |
-| 棋谱回放与观战 | 棋类对局结束时由服务端落一条棋谱（`play_replays` 存每步走法），`/replay/:id` 用同一款游戏的播放器按走法复盘，页面下还列出同款游戏的其它棋谱，`/api/replays/:id` 给原始走法；对局中可开只读观战：`/api/play/watch` 按 `{ key, since }` 增量返回公开走法（座位是 `-1`、响应里没有双方 token） |
-| 联机天梯 | `/ladder` 给四款**服务端裁判**棋类（四子棋 / 黑白棋 / 国际跳棋 / 五子棋）的 Elo 榜，`?game=<slug>` 切 tab（缺省第一款）、榜取前 50，赛季按 **UTC 自然季度**算（`YYYY-Q1`…`Q4`，不用另配赛季起点）；结算在 `src/elo.js`——纯函数、零 I/O，起始 1200、下限 100，K 值按已结算局数分档（<10 局 40 / <30 局 24 / 其余 16，与 FIDE 一样是「每人一份」，双方档位不同时一局不是零和）；`elo_history` 用 `room_id` 唯一索引兜住「同一局不许结算两次」，`/replays` 是棋谱列表（`?game=<slug>` 过滤、`?page=` 翻页，每页 20 条） |
+| 好友动态 | `/feed`：把你关注的人最近在玩什么（收藏 / 想玩与联机对局）、评论、发帖与每日打卡汇成一条时间线（`src/social.js` 的 `friendFeed`，四路 UNION ALL 后按人 + 游戏去重、`at DESC` 排序，最多看最近关注的 150 人；匿名对局不进流，避免把昵称当账号） |
+| 棋谱回放与观战 | 棋类对局结束时由服务端落一条棋谱（`play_replays` 存每步走法），`/replay/:id` 用同一款游戏的播放器按走法复盘，页面下还列出同款游戏的其它棋谱，`/api/replays/:id` 给原始走法；对局中可开只读观战：`/api/play/watch` 按 `{ key, since }` 增量返回公开走法（座位是 `-1`、响应里没有双方 token）；`/replays` 还能按棋类 / 玩家 / 结果 / 日期区间检索，登录后可选「只看我的」（昵称精确匹配——`play_replays` 没有用户列，昵称就是全站身份键），并把当前筛选结果导出成 JSON |
+| 联机天梯 | `/ladder` 给六款**服务端裁判**棋类（四子棋 / 黑白棋 / 国际跳棋 / 五子棋 / 中国象棋 / 国际象棋）的 Elo 榜，`?game=<slug>` 切 tab（缺省第一款）、榜取前 50，赛季按 **UTC 自然季度**算（`YYYY-Q1`…`Q4`，不用另配赛季起点）；结算在 `src/elo.js`——纯函数、零 I/O，起始 1200、下限 100，K 值按已结算局数分档（<10 局 40 / <30 局 24 / 其余 16，与 FIDE 一样是「每人一份」，双方档位不同时一局不是零和）；`elo_history` 用 `room_id` 唯一索引兜住「同一局不许结算两次」，`/replays` 是棋谱列表（`?game=<slug>` 过滤、`?page=` 翻页，每页 20 条，还能按玩家 / 结果 / 日期区间检索并导出 JSON） |
 | 分享卡 | `/play/:id/card.svg`、`/u/:name/card.svg`、`/daily/card.svg` 三条路由出 1200×630 的 SVG 卡片（`src/cards.js`，纯函数、零外链、两条线共用）：棋谱卡画出棋盘示意图与手数、个人主页卡是徽章墙（已获最多 8 枚 + 未获 4 枚）、每日挑战卡带 14 天打卡条带；页面里既当预览图也是 `og:image` |
 | OG 位图 | 分享卡的**位图**版：`/play/:id/og.png` · `/u/:name/og.png` · `/daily/og.png` 把上面那张 1200×630 SVG 栅格化成 PNG（微信 / X 只认位图，SVG 的 `og:image` 在那边不显示）；`src/og.js` 与 `src/search.js` 同一套路数——**可配置 + 可回退 + 绝不抛错**：Express 线用本机 Chrome / Edge 无头截图（`CHROME_PATH` / `EDGE_PATH` 可覆盖），Worker 线必须显式走 Browser Rendering 端点（`CLOUDFLARE_BROWSER_RENDERING_URL` / `BROWSER_RENDERING_TOKEN`），两条线找不到浏览器或没配端点都**原样回退 `/card.svg`**，失败计数进 `stats()`，路由永不 500；成功时 `image/png` + `Cache-Control: public, max-age=300` |
 | PWA | 可安装 + **真离线**：`public/manifest.webmanifest`（standalone、4 张图标、两个快捷方式进游戏库与每日挑战）与自写 `public/sw.js`。清单 `public/precache.json` 由 `pnpm gen:precache` 扫仓库生成（33 个条目 ≈ 848 KB：离线壳、20 款游戏页、4 个 `/static/js`、样式、4 张图标与 manifest），SW 在 install 时**逐条**缓存（单条失败不清空整批），导航对已预缓存页面 cache-first + 后台再验证——所以**断网能直接打开任意游戏页**，静态资源 stale-while-revalidate，`/api` `/auth` `/account` `/admin` `/u` `/login` `/register` `/logout` 与非 GET 一律直连网络；缓存桶按 `qw-shell-<版本>.<清单版本>` 命名，清单一变自动换桶。改过 `public/`、`games/*/index.html` 或图标后要重跑 `pnpm gen:precache`（`pnpm test:pwa` 里的 `--check` 会拦住忘了跑的情况），`pnpm gen:sw` 把 sw.js 同步进 Worker 侧的内联副本；图标由 `pnpm gen:icons` 生成；Express 与 Workers 两条线都提供 `/manifest.webmanifest`、`/sw.js` 与 `/precache.json`，注册只在 https 或 localhost 下进行 |
@@ -102,7 +103,7 @@ pnpm start                                               # 或 pnpm dev（--watc
 ```
 game-site/
 ├── server.js            Express 入口：安全头、静态目录、页面路由、API、登录守卫
-├── package.json         type: module，scripts: start / dev / reset / smoke / check:forum / test:account / test:features / test:gamepad / test:play / test:boards / test:worker / test:worker-play / test:worker-app / test:worker-features / test:mail / test:worker-mail / test:rules / test:cards / test:adapters / test:search / test:worker-search / test:pwa / build:pages / smoke:pages / zip:cf / serve:dist / serve:worker / gen:changelog / gen:seed / gen:icons / gen:precache / gen:sw / test:attachments / test:daily / test:elo / test:tags / test:oauth / test:og / test:outbox / test:ratelimit
+├── package.json         type: module，scripts: start / dev / reset / smoke / check:forum / test:account / test:features / test:gamepad / test:play / test:boards / test:worker / test:worker-play / test:worker-app / test:worker-features / test:mail / test:worker-mail / test:rules / test:cards / test:adapters / test:search / test:worker-search / test:pwa / build:pages / smoke:pages / zip:cf / serve:dist / serve:worker / gen:changelog / gen:seed / gen:icons / gen:precache / gen:sw / index:meili / test:attachments / test:daily / test:elo / test:tags / test:oauth / test:og / test:outbox / test:ratelimit / test:rules-xiangqi / test:rules-chess / test:meili / test:feed / test:replay
 ├── data/games.db        SQLite 数据库（首次启动自动生成）
 ├── src/
 │   ├── db.js            数据库连接、PRAGMA、建表与索引
@@ -132,7 +133,7 @@ game-site/
 │   ├── search.js        搜索适配层：内置 LIKE + 拼音后端与 Meilisearch 后端可切换（没配 Meili 就走内置，两条线共用）
 │   ├── rank-cache.js    榜单缓存适配层：可对接 Redis 之类的 KV（没配就直算，零强制依赖）
 │   ├── ratelimit.js     限流与封禁缓存适配层：滑动窗口 + TTL 封禁缓存，store 可注入（Redis / Cache API）
-│   ├── rules/           联机棋类的服务端裁判：四子棋 / 黑白棋 / 国际跳棋 / 五子棋（纯函数，座位 0/1、判和与终局都在这）
+│   ├── rules/           联机棋类的服务端裁判：四子棋 / 黑白棋 / 国际跳棋 / 五子棋 / 中国象棋 / 国际象棋六款（纯函数，座位 0/1、判和与终局都在这）
 │   ├── sites.js         fishport.cn 的站点清单：导航页唯一数据源 + 门户主机判定（三条线共用）
 │   └── cover.js         动态生成封面 SVG 与 OG 图 SVG
 ├── public/
@@ -172,7 +173,9 @@ game-site/
 │   ├── gen-sw.mjs       把 public/sw.js 同步进 worker/app.js 的内联副本（pnpm gen:sw）
 │   ├── pwa-test.mjs     PWA 验收（pnpm test:pwa，共 176 项）：自起 :3101 与 :3102 两条线，比对 manifest / sw / 图标 / 预缓存清单与 public/ 逐字节一致、清单里 33 个 URL 都真 200，再无头浏览器里断网（CDP offline）直开两款游戏页核对 window.GAME 与缓存命中
 │   ├── gamepad-test.mjs   手柄自测：注入假手柄跑 11 个用例（pnpm test:gamepad）
-│   ├── rules-test.mjs     服务端裁判回归 29 项：四款棋类的合法 / 非法走法、终局判定与重放（pnpm test:rules）
+│   ├── rules-test.mjs     服务端裁判契约回归 29 项：六款棋类的注册表 / 合法与非法走法 / 终局判定 / 同串重放（pnpm test:rules）
+│   ├── rules-xiangqi-test.mjs 中国象棋裁判 72 项：马腿 / 象眼 / 九宫 / 炮架 / 照面 / 应将 / 送将 / 将死与困毙 / 120 半步判和（pnpm test:rules-xiangqi）
+│   ├── rules-chess-test.mjs 国际象棋裁判 63 项：易位（含七种不成立）/ 吃过路兵 / 升变 / 送王 / 将军与将死逼和 / 50 回合与三次重复与子力不足（pnpm test:rules-chess）
 │   ├── cards-test.mjs     分享卡渲染 109 项：三种卡片的尺寸、转义、无外链（pnpm test:cards）
 │   ├── adapters-test.mjs  搜索与榜单适配层自测：假 Redis + 假时钟，整轮 1 秒内跑完（pnpm test:adapters）
 │   ├── search-fallback-test.mjs 搜索降级集成测试 38 项：起假 Meilisearch（正常 / 500 / 拒连 / 挂住），真跑主后端命中与超时熔断回落（pnpm test:search）
@@ -181,6 +184,7 @@ game-site/
 │   ├── daily-streak-test.mjs    每日挑战 256 项：打卡与连续天数 / 全勤日历 / 补做窗口 / 月度全勤，Express 与 Workers 各跑一遍（pnpm test:daily）
 │   ├── elo-test.mjs             天梯 Elo 五段：纯函数与 K 分档 / 真 play-store 结算与榜单 / Express 线端到端 / Workers 线端到端 / 两条线同题同解（pnpm test:elo）
 │   ├── forum-tags-test.mjs      主题标签与精华 / 置顶：两条线各跑同一套断言，建表走各自正式入口（pnpm test:tags）
+│   ├── replay-search-test.mjs  棋谱检索与导出 275 项（Express 139 + Workers 136）：过滤口径 / 日期闭区间 / 只看我的 / 分页与夹紧 / /replays 页面 / export.json 与响应头 / 导出限流（pnpm test:replay）
 │   ├── oauth-gateway-test.mjs   第三方登录：直连格式 / 微信扫码 / 网关模式往返 / 签名与重放拒绝 / profile 归一（pnpm test:oauth）
 │   ├── og-detect.mjs            本机浏览器路径探测：候选表唯一出处是 src/og.js 的 browserCandidates()，没找到 exit 1
 │   ├── og-raster-test.mjs       位图 OG 自测：假 spawn / 假 fetch / 假时钟的边界用例，最后一节真机渲染，找不到浏览器记 SKIP（pnpm test:og）
@@ -256,14 +260,15 @@ game-site/
 | POST | `/daily/makeup` | 补做：表单 `day`，只开放最近两天（含昨天、前天，不含今天；超窗或未来日期回 `?notice=too_late`）；补做记在目标日那一行、`makeup=1`，**不计连续天数、只计总完成数**（需登录） |
 | GET | `/u/:name` | 个人主页（用户名或昵称，大小写不敏感）：等级 / XP 进度 / 徽章 / 打卡与连续天数 / 统计 |
 | GET | `/replay/:id` | 棋谱回放：用该游戏的播放器按走法复盘，页面还列出同款游戏的其它棋谱 |
-| GET | `/ladder` | 联机天梯：四款服务端裁判棋（四子棋 / 黑白棋 / 国际跳棋 / 五子棋）的 Elo 榜，`?game=<slug>` 切 tab（缺省第一款），赛季按 UTC 自然季度算，榜取前 50 |
-| GET | `/replays` | 棋谱列表：只列裁判棋的对局，`?game=<slug>` 过滤、`?page=` 翻页（每页 20 条） |
+| GET | `/ladder` | 联机天梯：六款服务端裁判棋（四子棋 / 黑白棋 / 国际跳棋 / 五子棋 / 中国象棋 / 国际象棋）的 Elo 榜，`?game=<slug>` 切 tab（缺省第一款），赛季按 UTC 自然季度算，榜取前 50 |
+| GET | `/replays` | 棋谱列表：只列裁判棋的对局；`?game=<slug>`、`?player=<名字>`（房主或访客，不区分大小写）、`?result=host\|guest\|draw`、`?from=YYYY-MM-DD&to=YYYY-MM-DD`（含当天，按本地时区）、登录后 `?mine=1` 只看我的（按昵称精确匹配）过滤，`?page=` 翻页（每页 20 条）；筛选条件跟着翻页与导出走 |
 | POST | `/u/:name/follow` | 关注 / 取关（同一个表单来回切；关注自己 → `?notice=self_follow`，没有这个人 404）（需登录） |
 | GET | `/u/:name/followers` · `/following` · `/friends` | 粉丝 / 关注 / 好友（互关）列表（每页 24 条；没有这个人 404） |
 | GET | `/notifications` | 通知中心（分页；未读高亮）（需登录） |
 | POST | `/notifications/read` | 全部标为已读（表单 `next` 只放行站内路径）（需登录） |
 | GET | `/messages` · `/messages/:name` | 私信：会话列表 / 与某人的单会话（需登录） |
 | POST | `/messages/:name` | 发一条私信（需登录） |
+| GET | `/feed` | 好友动态流（需登录），`?page=` 翻页，每页 20 条 |
 | GET/POST | `/account` | 账号中心：改昵称 / 改密码 / 绑定解绑第三方登录（需登录） |
 | POST | `/account/email` · `/account/email/resend` | 绑定或换绑邮箱 · 重发验证信 |
 | POST | `/account/password` · `/account/unlink` | 改密码（要旧密码）· 解绑第三方账号 |
@@ -324,6 +329,8 @@ game-site/
 | GET | `/api/notices/:slug/comments` | 公告评论分页，形状与游戏评论完全一致（`?page=`，每页 10 条顶层） |
 | POST | `/api/notices/:slug/comments` | 发公告评论或回复（需登录，body 同游戏评论；限流按「用户 + 这条公告」单独算） |
 | POST | `/api/play/watch` | 只读观战：body `{ "key": "观战令牌", "since": 0 }`，按增量返回公开走法（座位是 `-1`、响应里没有双方 token）；令牌不对 403 `bad_token`、房间不存在或已过期 404 `not_found` |
+| GET | `/api/replays` | 棋谱检索（JSON，公开）：同一套查询参数（`game` / `player` / `result` / `from` / `to` / `mine` / `limit` / `offset`），回 `{ ok, total, count, items }`，`limit` 缺省 200、夹到 1..500，`cache-control: no-store` |
+| GET | `/replays/export.json` | 导出棋谱 JSON：与上面同参数，带 `Content-Disposition: attachment; filename=replays-YYYYMMDD.json`；两个导出接口共用 **60 次 / 60 秒 / IP** 的窗口限流（HTML 页面不占配额），超限 429 `busy` |
 | GET | `/api/replays/:id` | 棋谱原始数据 `{ ok, replay: { game, roomCode, hostName, guestName, result, winner, moveCount, moves: [{ seq, seat, move }], plays, createdAt } }`；id 非法 400 `bad_id`、不存在 404 `not_found`（对局结束时由服务端落库，客户端改不了） |
 
 ## 怎么加一个新游戏
@@ -679,7 +686,7 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 - Cloudflare 版产物 `pnpm smoke:pages` 同样 **19 个页面全部通过**（`--base=/ --out=dist-cf`），GitHub 版与 Cloudflare 版两份产物分别构建、分别冒烟；这一轮两份产物都带上了 PWA 三件套，head 里无条件输出的 manifest 与 apple-touch-icon 链接不再 404。
 - Workers 版 `pnpm test:worker` **26 项断言全部通过**：安全响应头与 `server.js:24-45` 逐字段一致、`/static/*` 7 天 / `/cover/*` 1 天 / `/games/*` 1 小时 / HTML 不缓存的缓存策略、`/games` 与 `/game/2048` 干净地址、`/favicon.ico` 302、非 GET 405、404 带 noindex、路径穿越不外泄、「静态路径不产生任何跳转」（防 `html_handling` 配错导致重定向死循环）、外加 10 个页面（含 `/notice`、`/changelog`）**105 条站内链接全部 200**（游戏、标签与导航变多时这个数字跟着涨）；另有一条断言把 `dist-cf/_headers` 里的 CSP 与代码常量逐字段比对（Pages 静态线的放行策略不会悄悄跟代码走偏）。
 - Workers + D1 完整版 `pnpm test:worker-app` **58 项账号断言全部通过**（复用 Express 版同一套 `tools/account-test.mjs`），`pnpm test:worker-play` **76 项联机断言全部通过**，`pnpm test:worker-features` **255 项全部通过**；并用 `pnpm smoke` 对 `http://127.0.0.1:4400` 跑了 **38 项全过**（含 20 款游戏真操作、导航页、后台、收藏、投稿、论坛首页与主题页），无 console 报错、无资源 404；出厂态复核（全新 `data/worker.db`）：首页 16 张「☆ 未评」、`<b>0</b> 次游玩`、详情页「还没有人评分」且无 `aggregateRating`。
-- 服务端裁判与社交三件套：`pnpm test:rules` **29 项**全过（黑白棋 64 个局面 / 299 个合法走法逐一对照参考实现），`pnpm test:play`（Express）与 `pnpm test:worker-play`（Workers + D1）各 **76 项**全过——含三条这轮新增的回归断言：客户端乱报的 `result` 不被采信、非法走法 400 `illegal_move` 且不落库、不支持的棋类（中国象棋）仍按旧中继行为走；`pnpm test:cards` **109 项**（三种分享卡的尺寸 / 转义 / 零外链：用户名里的空格与 `&` 会被 URI 编码、`hostName` 里的 `<img onerror>` 被转义），`pnpm test:adapters` **146 项**（假 Redis + 假时钟，验证 TTL / 容量上限 / 单飞 / 熔断退避）。
+- 服务端裁判与社交三件套：`pnpm test:rules` **29 项**全过（黑白棋 64 个局面 / 299 个合法走法逐一对照参考实现），`pnpm test:play`（Express）与 `pnpm test:worker-play`（Workers + D1）各 **76 项**全过——含三条这轮新增的回归断言：客户端乱报的 `result` 不被采信、非法走法 400 `illegal_move` 且不落库、不支持的棋类（军棋 `junqi`——六款联机棋都已注册裁判，样本换成没注册的棋）仍按旧中继行为走；`pnpm test:cards` **109 项**（三种分享卡的尺寸 / 转义 / 零外链：用户名里的空格与 `&` 会被 URI 编码、`hostName` 里的 `<img onerror>` 被转义），`pnpm test:adapters` **146 项**（假 Redis + 假时钟，验证 TTL / 容量上限 / 单飞 / 熔断退避）。
   Express 线的关注 / 通知 / 私信另外用 curl 端到端走过：注册两个账号 → A 关注 B（302 `?notice=followed`，B 的 `/api/notifications/unread` 变 1）→ A 给 B 发私信（B 的 `/api/messages/unread` 变 1）→ B `POST /notifications/read` 后未读归 0、打开会话后私信未读归 0；关注自己 → `?notice=self_follow`，关注不存在的人与给不存在的人发私信都是 404。
 - 两套 Workers 产物都在**真实 workerd** 上复验过（`wrangler dev`，wrangler 4.151.0）：静态版逐路径实测无跳转、安全头与缓存头正确；Workers + D1 版逐页面 200、`/favorites` 与 `/admin` 未登录正确 302 到登录，`account-test.mjs` 在真 workerd + 真 D1 语义下 **58 项断言全过**。
   这一步捞出并修掉了两个只有真运行时才暴露的问题：`html_handling` 配成 `auto-trailing-slash` 会让站点陷入 `ERR_TOO_MANY_REDIRECTS`；真实 D1 的 `exec()` 按换行切语句，导致多行建表 SQL 直接 500。细节见两份 Cloudflare 部署文档。
@@ -688,7 +695,8 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
   手柄自测也会留下 `docs/screens/gamepad-2048.png`、`gamepad-blackhole.png`、`gamepad-tictactoe.png`、`gamepad-memory.png`、`gamepad-whack.png`、`gamepad-detail-iframe.png`（能直接看到虚拟光标和底部的「🎮 手柄已连接」提示）。
 - 手柄支持在无头 Chrome 里跑过 `pnpm test:gamepad`：注入一台假手柄（挂在 `window.top.__pad` 上），**11 个用例全过**（2048 / 贪吃蛇 / 俄罗斯方块 / 井字棋 / 记忆翻牌 / 打地鼠 / 黑洞吞噬 / 五子棋 / 中国象棋 / 国际象棋 / 详情页 iframe 自动聚焦并接收手柄输入）；棋类走的是摇杆把虚拟光标开到 `BOARD.sampleClicks()` 给出的格点上按 A（合法着法由页面自己算），静态版导出后游戏页与 `gamepad.js` 都带 `--base` 前缀，冒烟同样通过。
   - **第二批功能 + 投稿上传 + 彻底删除 + 公告与更新说明（评论分页/楼中楼/举报、排行榜、拼音与首字母搜索、账号增强、后台增强、投稿上传单文件 HTML、游戏彻底删除、公告发布/编辑/撤回与公告评论）`pnpm test:features` 共 255 项断言全部通过**（其中论坛一节 70 项、每日挑战与个人主页 22 项），同一套用例换成 D1 数据层再跑 `pnpm test:worker-features` 同样 **255 项全过**（见 `tools/feature-test.mjs`，两套共用一个文件）；其中 1 项专门盯着 `frame-src`（详情页 CSP 必须放行 `http(s)`，否则投稿的外站游戏打不开）；另有 12 项是隐私政策 / 用户协议与注册同意：两页都 200 且写了 Cookie 名、第三方登录与邮件，页脚与 `sitemap.xml` 都收录，注册页带必填的 `name="agree"` 与两份文档的链接，不勾同意 400 且不会偷偷建号，勾了就能注册并直接登录；另有 18 项是投稿上传：文件框 + multipart 表单、上传后进待审、待审对游客 404 而站长能取、响应是 `text/html` + sandbox CSP（不含 `allow-same-origin`）、后台预览与详情页 iframe 都是严格沙箱、超 512 KB / 扩展名不对 / 非文本一律 400、只填地址的老投稿仍可用、站长上架后游客能取到并能直接玩、退回待审后又 404；最后 15 项是「彻底删除」：造一条带文件的投稿并写上评分 / 收藏 / 评论 / 游玩记录，上架中删不掉（400），下架后确认页把 6 项数据量逐一对上，POST 删除 302 回后台、详情页与 `/ugc/` 随即 404、操作日志里留下 `game.delete`；还有 30 项是「公告与更新说明」：后台发一条置顶公告、列表与首页横幅都能看到、详情页游客看到登录引导、两个账号（分开发评论与回复，避开 10 秒限流）把分页与楼中楼跑一遍、举报成功且重复举报只算一次、改公告后前台看到新段落与「最后修改」、撤回后详情 404 而重新发布后评论与回复都还在、操作日志留下 `post.create` / `post.update` / `post.retract`，以及 `/changelog` 与 `sitemap.xml` 的收录。
-- **第二轮剩下的功能自测全部 0 失败**：`pnpm test:attachments` **234 项**（校验规则、fs 与 D1 两驱动的去重 / 认领 / 软删 / 孤儿回收、multipart 原始字节、`/ugc/a/:id` 应答）、`pnpm test:daily` **256 项**（打卡连续天数、全勤日历、补做窗口、当月全勤，两条线各跑一遍）、`pnpm test:ratelimit` **66 项**（滑动窗口 / LRU 淘汰 / 存储出错退化为纯内存 / forum-guard 频控）、`pnpm test:search`（`tools/search-fallback-test.mjs`）**38 项**（主后端超时 / 报错回退与熔断）、`pnpm test:worker-search` **73 项**；同一轮里账号 / 联机 / 功能三套复跑仍是 `pnpm test:worker-app` **58 项**、`pnpm test:worker-play` **76 项**、`pnpm test:features` 与 `pnpm test:worker-features` 各 **255 项**，全部 0 失败。
+- **第二轮剩下的功能自测全部 0 失败**：`pnpm test:attachments` **234 项**（校验规则、fs 与 D1 两驱动的去重 / 认领 / 软删 / 孤儿回收、multipart 原始字节、`/ugc/a/:id` 应答）、`pnpm test:daily` **256 项**（打卡连续天数、全勤日历、补做窗口、当月全勤，两条线各跑一遍）、`pnpm test:ratelimit` **66 项**（滑动窗口 / LRU 淘汰 / 存储出错退化为纯内存 / forum-guard 频控）、`pnpm test:search`（`tools/search-fallback-test.mjs`）**38 项**（主后端超时 / 报错回退与熔断）、`pnpm test:worker-search` **73 项**、`pnpm test:feed` **101 项**（Express 53 + Workers 48：四路来源 UNION、按人 + 游戏去重、匿名对局不进流、同刻并列稳定、未登录 302）、`pnpm test:rules-xiangqi` **72 项**与 `pnpm test:rules-chess` **63 项**（两款新裁判的全部规则细节，见上面 tools 树）、`pnpm test:meili` **67 项**（灌索引脚本的参数优先级 / 字段口径 / 幂等覆盖）；同一轮里账号 / 联机 / 功能三套复跑仍是 `pnpm test:worker-app` **58 项**、`pnpm test:worker-play` **76 项**、`pnpm test:features` 与 `pnpm test:worker-features` 各 **255 项**，全部 0 失败。
+- **棋谱检索与导出（第九批）**：`pnpm test:replay` **275 项** 0 失败（Express 139 + Workers 136）——数据层旧签名 / 无参行为与改前逐项一致、`game` / `player` / `result` / 日期闭区间 / `mine` 各口径条数与 `total`、分页不重叠与参数夹紧、`/replays` 页面表单与空态（未登录不出「只看我的」）、`/api/replays` 与 `/replays/export.json` 的形状 / 两个响应头 / 当天日期文件名、以及 60 次 / 60 秒 / IP 的导出限流（HTML 页面不占配额）在两线上各跑一遍；改动后 `pnpm test:boards` **61 项**、`pnpm test:play` 与 `pnpm test:worker-play` 各 **76 项** 仍是 0 失败，`pnpm test:pwa` 的断网用例在重跑 `gen:precache` 之后照旧全过。
 - 下面几套自测只列覆盖面（项数脚本自己会打印，这里不抄）：`pnpm test:elo`（纯函数 K 分档 → 真 play-store 结算与榜单 → Express 端到端 → Workers 端到端 → 两线同题同解）、`pnpm test:tags`（主题标签与精华 / 置顶，两条线跑同一套断言）、`pnpm test:oauth`（直连 Provider 的请求格式、微信扫码、自建网关往返、签名与重放被拒、profile 归一）、`pnpm test:og`（假 spawn / 假 fetch / 假时钟的边界用例，末节才真机渲染，找不到浏览器记 SKIP）、`pnpm test:outbox`（入队、dueList、指数退避、试满上限落 `failed`、markSent 与退信、stats，两条线各跑一遍）。
 - **邮件与第三方登录端到端 `pnpm test:mail` 共 42 项断言全部通过**（脚本自己起一个假邮件服务端与一个假 OAuth Provider，随机端口、不连外网）：绑定邮箱 → 收到验证信（`Authorization: Bearer` 的令牌、收件人、`MAIL_FROM` 发件人逐项核对）→ 点链接变成已验证；`/forgot` → 重置信 → `/reset` 改密 → 新密码能登、旧密码登不上、账号不存在时也是同一套说辞；GitHub 走完授权 → 回调 → 建号 → 换个浏览器再登还是同一个账号（不重复建号）→ 解绑；Google 同样走通，且资料里的邮箱被存下来并当成已验证；`state` 对不上 400、没开启的 provider 404；后台「集成自检」认出邮件走的是自建 HTTP 服务、GitHub / Google 的 client_id 与 secret 都是 ✅、回调地址与站点一致。同一套场景换成 D1 数据层再跑 `pnpm test:worker-mail` 同样 **42 项全过**。
 - `pnpm smoke`（Express）**38 项全部通过**（老 28 项 + 新增 10 款游戏各一条真交互用例），含新增的黑洞吞噬（方向键真的把它开动了）、导航页（9 张卡片、分组齐全、都是带 `noopener` 的新窗口外链；线上截图 `docs/screens/nav.png`）与排行榜页（7 个榜单 tab、名次与「新上榜」标记）、搜索联想（首字母 / 全拼 / 中文三条路径）、更新说明页、公告列表与详情、首页公告横幅（点关闭后真的消失且写了 `localStorage`）与 `frame-src` 探针（测试进程自己起一个别的 origin 的小页面塞进 iframe，靠它 `postMessage` 回来证明没被 CSP 拦住——把 CSP 锁回 `'self'` 时这一项确实会红）；`pnpm smoke`（Workers + D1）用同一套用例、同样 38 项全过（`BASE=http://127.0.0.1:4400`）。
@@ -708,16 +716,16 @@ node tools/browser-smoke.mjs           # 另开终端，BASE=http://127.0.0.1:44
 ## 后续可做
 
 - 排行榜现在是「SQLite 实时算 + 30 秒进程内缓存」（`src/rank-cache.js`：TTL + 容量上限 + 单飞 + 显式失效）：量再大就换 Redis 的 `ZINCRBY` / `ZREVRANGE`，适配器接缝（`redisLikeAdapter`）已经留好，`/rank` 这一层不用改、只换数据源——接真 Redis 得引入一个客户端依赖，仓库目前是零依赖，所以只做到「进程内缓存 + 可注入的远程适配器」。
-- 搜索已经能换 Meilisearch：`src/search.js` 是「主后端 + 兜底 + 熔断」适配层，设了 `MEILI_HOST` 就走 Meili、超时或报错自动退回 LIKE + 拼音（结果带 `source: 'fallback'`，页面照常 200）。真要用起来还得自己把游戏灌进 Meili 索引（本仓库不含灌索引脚本），兜底的 LIKE + 拼音表仍覆盖 `U+4E00..U+9FFF`。
+- 搜索已经能换 Meilisearch：`src/search.js` 是「主后端 + 兜底 + 熔断」适配层，设了 `MEILI_HOST` 就走 Meili、超时或报错自动退回 LIKE + 拼音（结果带 `source: 'fallback'`，页面照常 200）。真要用起来先把游戏灌进 Meili 索引：`tools/meili-index.mjs` 就是那一步（`node tools/meili-index.mjs --settings` 先配可搜 / 可筛字段，`--dry-run` 预览，`--batch=N` 分批，字段口径 title > subtitle > tags > category > pinyin > description，slug 作 primaryKey 所以重复跑是幂等覆盖，`pnpm test:meili` 67 项覆盖参数与降级），兜底的 LIKE + 拼音表仍覆盖 `U+4E00..U+9FFF`。
 - 微信登录需要企业主体 + 微信开放平台认证（约 300 元/年）与审核，个人主体申请不到；`wechat` 这一跳的代码已经写好（`src/oauth.js` 的 `PROVIDERS` 含 `github` / `google` / `wechat`），有资质时填 `WECHAT_APP_ID` / `WECHAT_APP_SECRET` 就能用，没资质可以继续用前两条，或把这一跳交给有资质的自建网关。再加 Provider 只需往 `META` 里填一组地址（端点还能用 `OAUTH_<PROVIDER>_AUTHORIZE_URL` / `_TOKEN_URL` / `_USER_URL` 单独覆盖）。
 - 邮件支持 Resend 或自建 HTTP 发信接口（`MAIL_API_URL` + `MAIL_API_KEY`），发件箱也已经做了（外发先落库、失败按指数退避重试、试满 6 次落 `failed`、退信记 `bounced`，见 `migrations/0009_mail_outbox.sql`）；剩下的是真实发信域的 SPF / DKIM / DMARC 与送达率监控，以及退信后的地址清理。
 - 自建 OAuth 网关已经做了：设了 `OAUTH_GATEWAY_URL` 之后站点只跟网关说话，第三方密钥留在网关侧，跳转用 HMAC-SHA256 + 时间戳防重放，接口约定与最小网关示例见 [docs/OAUTH.md](docs/OAUTH.md)；授权 / 令牌 / 用户资料端点仍可用 `OAUTH_<PROVIDER>_*_URL` 单独覆盖。余量在网关那一侧——`docs/OAUTH.md` 给的是最小实现，密钥托管、限流与监控得自己补。
 - 论坛的频控与封禁缓存换成了 `src/ratelimit.js`：`createLimiter` 是滑动窗口（默认进程内 Map + LRU，可注入 `store` 换成 Redis / Cache API，Worker 侧默认就用 `caches.default`），`createBanCache` 管封禁 / 黑名单的 TTL 缓存与失效广播；要换 Cloudflare 的 Rate Limiting 或 Redis 计数器只需换一个 store，调用点不动。
 - 论坛的 @提醒与站内通知已经做了（`@用户名` 落 `mention` 通知，回复主题 / 回帖 / 被关注 / 游戏被评论各有类型与 10 分钟去重）；主题标签与精华、附件上传这一轮也做了（单文件 ≤ 4 MB，扩展名 + MIME + 魔数校验，sha256 内容寻址去重，fs / D1 两套驱动——D1 单值上限约 1 MB，所以那边另有 256 KB 的天花板）；还缺的是附件走对象存储与图片的人工审核，以及黑名单正则缓存——它现在由 `createBanCache` 带着 TTL 与 `invalidate` 广播（没注入 store 时仍退回每个实例各缓存一份）。
-- 联机棋类的服务端裁判已经落地（四子棋 / 黑白棋 / 国际跳棋 / 五子棋走 `src/rules/`：非法走法拒绝、胜负由引擎判、客户端声明的 `result` 不采信），Elo / 天梯 / 赛季也跟着做了，但**只算这四款**（`/ladder` 的四个 tab 就是它们，赛季按 UTC 自然季度分）；中国象棋 / 国际象棋仍是中继，进不了天梯——要补得先写这两款的服务端规则，或上 Durable Objects 做权威房间（观战也就能顺带从轮询换成 WebSocket / SSE）。
-- 棋谱列表页 `/replays`（按游戏过滤 + 翻页，每页 20 条）与分享图（SVG 与 PNG 两条都出）已经做了；还没有按玩家 / 按日期 / 按结果检索，也没有棋谱导出（JSON / SGF）与「只看我自己的对局」。
+- 联机棋类的服务端裁判已经**六款全覆盖**（四子棋 / 黑白棋 / 国际跳棋 / 五子棋 / 中国象棋 / 国际象棋走 `src/rules/`：非法走法拒绝、胜负由引擎判、客户端声明的 `result` 不采信；中国象棋的走法码 `x1,y1-x2,y2`、国际象棋用 UCI 式 `e2e4`，各自逐字对齐客户端中继的编码），Elo / 天梯 / 赛季也跟着做了（`/ladder` 六个 tab，赛季按 UTC 自然季度分）；余量在权威房间本身——现在仍是客户端算规则、服务端复核，走法靠轮询同步，要真权威得上 Durable Objects（顺带把观战从轮询换成 WebSocket / SSE）。
+- 棋谱列表页 `/replays`（按游戏过滤 + 翻页，每页 20 条）与分享图（SVG 与 PNG 两条都出）已经做了，这一轮补上了按玩家 / 结果 / 日期区间检索、`?mine=1`「只看我的」与 JSON 导出（`/api/replays` + `/replays/export.json`，60 次 / 分钟 / IP 限流、单次 ≤ 500 条）；还差的是 SGF 等棋谱专用格式（要按棋种各自做坐标与手数映射）、导出任务化（大库分片 / 后台打包）与「只看我的」的账号级绑定（要等棋谱表补上用户列）。
 - 成就徽章 16 枚的分享卡已经能做（`src/cards.js` 出 1200×630 SVG，`/u/:name/card.svg` 等三条路由），只认位图的微信 / X 也有位图版了（`/play/:id/og.png` 等三条，`src/og.js` 把同一张 SVG 栅格化成 PNG，出不来就原样回退 SVG）；余量是位图仍然是服务端栅格化（本机无头 Chrome / Edge 截图，Workers 上得配 Browser Rendering 端点），没有预生成 / 缓存预热，也没在真机微信里抓过预览。
 - 每日挑战是一天一道固定题，补做与当月全勤这一轮做了（补做只放开最近两天、不计连续天数只计总完成数，全勤只算已经过去的日子）；还没有的是**给全勤 / 长连续的实质奖励**（现在只进徽章判定与页面展示）。
-- 个人主页、关注与好友、私信都已经有了；还差好友动态流（「关注的人最近在玩什么」）与消息推送。
+- 个人主页、关注与好友、私信都已经有了，好友动态流（`/feed`，「关注的人最近在玩什么」）这一轮也做了——四路来源（在玩 / 评论 / 发帖 / 打卡）合并后按人 + 游戏去重；还差的是主动消息推送（邮件 / Web Push 提醒「有人回你了」）。
 - PWA 已经从「只缓存壳」升级成真离线：33 条预缓存清单含 20 款游戏页，断网能直接打开任意游戏页（`pnpm test:pwa` 用 CDP 断网实测）；还差的只有推送（Web Push）与后台同步。
 - 图片 / 视频素材（首页与详情页的配图、玩法演示视频）；分享卡已经能出 SVG 与 PNG 两种，但还没在真实微信 / X 里抓一次预览（本机没外网出口），也没给爬虫做预生成。

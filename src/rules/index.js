@@ -4,8 +4,8 @@
  * 现状：服务端只中继走法、胜负由客户端自己声明；本模块把客户端那份规则原样搬到服务端，
  * 让服务端能自己裁判走法与判胜负（src/play-store.js 的 sendMove 现在只认客户端给的 result）。
  *
- * 覆盖 4 款：connect4 / reversi / draughts / gomoku（与 games/<slug>/ 目录、play_rooms.game 同名）。
- * 扩展点：要加国际象棋 / 中国象棋，新建 src/rules/chess.js，照现有模块的样子导出
+ * 覆盖 6 款：connect4 / reversi / draughts / gomoku / xiangqi / chess（与 games/<slug>/ 目录、play_rooms.game 同名）。
+ * 扩展点：再加一款（如军棋），新建 src/rules/<slug>.js，照现有模块的样子导出
  *   META = { slug, seats, moveFormat, note } 与 create()（实例需实现
  *   turn / over / winner / draw 与 apply(seat, move) → null|错误码 / legalMoves() / moves() / view()），
  *   再把它的 slug 加进 SLUGS、把模块加进 REGS 即可，index.js 其余部分不用动。
@@ -19,16 +19,20 @@ import * as connect4 from './connect4.js';
 import * as reversi from './reversi.js';
 import * as draughts from './draughts.js';
 import * as gomoku from './gomoku.js';
+import * as xiangqi from './xiangqi.js';
+import * as chess from './chess.js';
 
 /** 已接入规则引擎的棋类 slug（顺序即展示顺序） */
-export const SLUGS = ['connect4', 'reversi', 'draughts', 'gomoku'];
+export const SLUGS = ['connect4', 'reversi', 'draughts', 'gomoku', 'xiangqi', 'chess'];
 
 /** slug → 规则模块（扩展点就在这一张表） */
 const REGS = {
   connect4: connect4,
   reversi: reversi,
   draughts: draughts,
-  gomoku: gomoku
+  gomoku: gomoku,
+  xiangqi: xiangqi,
+  chess: chess
 };
 
 /** slug → 元信息 { slug, seats, moveFormat, note } */

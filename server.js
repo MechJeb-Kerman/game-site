@@ -661,13 +661,32 @@ app.get('/ladder', (req, res) => {
   }));
 });
 
-/** 棋谱列表：只列裁判棋的对局（?game=<slug> 过滤，?page= 翻页） */
+/** 棋谱检索：game（六款之一）/ player（昵称，房主或访客）/ result（host|guest|draw）/ from,to（日期或毫秒）/ mine=1 */
+function replayFiltersFor(req) {
+  const f = play.replayFilters(req.query);
+  // 页面沿用今天的老口径：game 只认天梯里的六款，其余一律当没填（错误拼写不会翻出一张空表）
+  const game = LADDER_GAMES.indexOf(f.game) >= 0 ? f.game : '';
+  // 「只看我的」没有账号列可 JOIN（play_replays 只存建房时的昵称），所以按昵称精确匹配当前用户的名字
+  const names = req.user ? [req.user.name, req.user.username].filter(Boolean) : [];
+  const mine = f.mine && names.length > 0;
+  return { filters: Object.assign({}, f, { game: game, mine: mine }), mine: mine ? names : [] };
+}
+
+/** 棋谱列表：只列裁判棋的对局（?game=<slug> 过滤，?page= 翻页，另支持上面那组检索参数） */
 app.get('/replays', (req, res) => {
   const PAGE = 20;
-  const asked = String(req.query.game || '');
-  const game = LADDER_GAMES.indexOf(asked) >= 0 ? asked : '';
+  const q = replayFiltersFor(req);
   const asked2 = Math.max(1, Number(req.query.page) || 1);
-  const list = play.replayList({ game: game, limit: PAGE, offset: (asked2 - 1) * PAGE });
+  const list = play.replayList({
+    game: q.filters.game,
+    player: q.filters.player,
+    result: q.filters.result,
+    from: q.filters.from,
+    to: q.filters.to,
+    mine: q.mine,
+    limit: PAGE,
+    offset: (asked2 - 1) * PAGE
+  });
   const total = Number(list.total || 0);
   const pages = Math.max(1, Math.ceil(total / PAGE));
   res.send(ui.replaysPage({
@@ -675,10 +694,11 @@ app.get('/replays', (req, res) => {
     user: req.user,
     items: list.items || [],
     total: total,
-    game: game,
+    game: q.filters.game,
     games: ladderTabs(),
     page: Math.min(asked2, pages),
-    pages: pages
+    pages: pages,
+    filters: q.filters
   }));
 });
 
@@ -1151,6 +1171,57 @@ app.get('/api/replays/:id', (req, res) => {
   res.json({ ok: true, replay });
 });
 
+/**
+ * 棋谱导出：/api/replays（JSON）与 /replays/export.json（带附件头）共用同一实现。
+ * 棋谱是公开数据，未登录也能导出；但一次最多 500 条（默认 200），并按 IP 限流，
+ * 免得被当成「整库导出器」来刷。翻页读 HTML 不受影响，只有这两个 JSON 端点计数。
+ */
+const replayExportHits = new Map();
+/** 窗口限流：同一把 key 在 winMs 内最多 max 次（超过 5000 条就清空，别让 Map 无限长） */
+function replayWindow(key, max, winMs) {
+  const now = Date.now();
+  if (replayExportHits.size > 5000) replayExportHits.clear();
+  const hit = replayExportHits.get(key);
+  if (!hit || now - hit.at >= winMs) {
+    replayExportHits.set(key, { at: now, n: 1 });
+    return true;
+  }
+  if (hit.n >= max) return false;
+  hit.n += 1;
+  return true;
+}
+/** 附件名里的当天日期（服务器本地时区，与 dayKey() 同口径）：replays-YYYYMMDD.json */
+function replayStamp() {
+  return dayKey().replace(/-/g, '');
+}
+/** 导出接口本体：筛选参数与 /replays 页面完全一致；limit 默认 200，夹在 1..500 */
+function replayJson(req, res, attachment) {
+  if (!replayWindow('replay-export:' + req.ip, 60, 60000)) {
+    return res.status(429).json({ ok: false, error: 'busy', hint: '导出太频繁了，歇一分钟再来' });
+  }
+  const q = replayFiltersFor(req);
+  const rawLim = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const asked = String(rawLim == null ? '' : rawLim).trim() === '' ? NaN : Number(rawLim);
+  const limit = Math.min(Math.max(Number.isFinite(asked) ? Math.floor(asked) : 200, 1), play.REPLAY_MAX_LIMIT);
+  const list = play.replayList({
+    game: q.filters.game,
+    player: q.filters.player,
+    result: q.filters.result,
+    from: q.filters.from,
+    to: q.filters.to,
+    mine: q.mine,
+    limit: limit,
+    offset: 0,
+    maxLimit: play.REPLAY_MAX_LIMIT
+  });
+  const items = (list && list.items) || [];
+  res.setHeader('Cache-Control', 'no-store');
+  if (attachment) res.setHeader('Content-Disposition', 'attachment; filename=replays-' + replayStamp() + '.json');
+  res.json({ ok: true, total: Number((list && list.total) || 0), count: items.length, items: items });
+}
+app.get('/api/replays', (req, res) => replayJson(req, res, false));
+app.get('/replays/export.json', (req, res) => replayJson(req, res, true));
+
 // ---------- 账号 ----------
 
 app.get('/login', (req, res) => {
@@ -1409,6 +1480,8 @@ app.get('/favorites', requireLogin, (req, res) => {
 
 const NOTICE_PAGE = 20;
 const PEOPLE_PAGE = 24;
+/** 好友动态每页条数（与 src/views.js 的 feedPage 保持一致） */
+const FEED_PAGE = 20;
 const FOLLOW_TEXT = { followed: '已关注', unfollowed: '已取消关注', self_follow: '不能关注自己', no_user: '没有这个用户' };
 
 /** 页码：非法或负数一律回第 1 页 */
@@ -1422,6 +1495,16 @@ app.get('/notifications', requireLogin, (req, res) => {
   res.send(ui.notificationsPage({
     origin: originOf(req), user: req.user, list, page,
     notice: String(req.query.notice || '') === 'read' ? '全部标为已读' : ''
+  }));
+});
+
+/** 好友动态流：关注的人最近在玩什么（第十批）；notice 只认关注动作那几个白名单值，不透传原串 */
+app.get('/feed', requireLogin, (req, res) => {
+  const page = pageOf(req.query.page);
+  const list = social.friendFeed(req.user.id, { limit: FEED_PAGE, offset: (page - 1) * FEED_PAGE });
+  res.send(ui.feedPage({
+    origin: originOf(req), user: req.user, list, page,
+    notice: FOLLOW_TEXT[String(req.query.notice || '')] || ''
   }));
 });
 
