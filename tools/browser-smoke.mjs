@@ -147,7 +147,7 @@ function press(keys) {
   return out;
 }
 
-/* 新 10 款游戏（minesweeper…solitaire，2026-10-20 上线）走同一份契约：window.GAME = { slug, state(), restart() }。
+/* 新 13 款游戏（minesweeper…jump，2026-10-20 上线）走同一份契约：window.GAME = { slug, state(), restart() }。
    所以它们共用一套用例模板，只验「页面真能用、且与各游戏规则无关」的那一层：
      ① 导航响应 200；② 资源没有 4xx/5xx、没有跨域请求；③ GAME.slug / GAME.state / GAME.restart 齐备；
      ④ state() 返回非空对象；⑤ 有可见的「开始 / 重开 / 再来」按钮就点一下（找不到就跳过）；
@@ -157,7 +157,8 @@ function press(keys) {
 const NEW_GAMES = [
   ['minesweeper', 1240, 860], ['sudoku', 740, 900], ['sokoban', 880, 820],
   ['linkup', 1000, 880], ['idiom', 920, 900], ['connect4', 700, 820],
-  ['reversi', 740, 860], ['draughts', 820, 820], ['match3', 920, 860], ['solitaire', 1060, 880]
+  ['reversi', 740, 860], ['draughts', 820, 820], ['match3', 920, 860], ['solitaire', 1060, 880],
+  ['breakout', 900, 760], ['plane', 660, 900], ['jump', 660, 900]
 ];
 // dev server 给 HTML 回 Cache-Control: public, max-age=3600，加一次性查询串免得吃到一小时内的旧页面
 const CB = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

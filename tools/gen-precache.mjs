@@ -3,7 +3,7 @@
  * 生成 public/precache.json —— PWA「真离线」清单的单一事实来源。
  *
  * 做什么：
- *   1. 扫描仓库里离线必需的资源：20 款游戏页 /games/<slug>/index.html、/static/js/*、
+ *   1. 扫描仓库里离线必需的资源：23 款游戏页 /games/<slug>/index.html、/static/js/*、
  *      /static/css/*、/icons/*.png、/favicon.ico、/favicon.svg、/manifest.webmanifest、离线壳 /；
  *   2. 逐条算内容哈希（revision），再把「URL + revision」串起来算整份清单的 version
  *      —— 任何一条内容变了 version 就变；Service Worker 靠它换缓存名、activate 时清旧桶；
@@ -89,7 +89,7 @@ function collectEntries() {
   /* 离线壳 = 首页 HTML（Express 与 Workers 两线都由服务端渲染，磁盘上没有对应文件） */
   out.push(dynamicEntry('/', 'shell', 'server-rendered-home'));
 
-  /* 20 款游戏页：games/<slug>/index.html → /games/<slug>/index.html */
+  /* 23 款游戏页：games/<slug>/index.html → /games/<slug>/index.html */
   const slugs = fs
     .readdirSync(GAMES_DIR, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -250,7 +250,7 @@ function main() {
   const entries = collectEntries();
   const fresh = buildManifest(entries, new Date().toISOString());
   if (fresh.count < 20) {
-    console.error('✗ 只扫到 ' + fresh.count + ' 条资源，20 款游戏页没扫全，检查 ' + rel(GAMES_DIR) + ' 目录');
+    console.error('✗ 只扫到 ' + fresh.count + ' 条资源，23 款游戏页没扫全，检查 ' + rel(GAMES_DIR) + ' 目录');
     return 2;
   }
 

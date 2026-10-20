@@ -1,5 +1,5 @@
 /**
- * 20 款游戏的封面图数据表 —— public/covers/*.svg 这套静态封面的唯一事实来源。
+ * 23 款游戏的封面图数据表 —— public/covers/*.svg 这套静态封面的唯一事实来源。
  *
  * 谁在用：tools/gen-covers.mjs 按它生图（slug / alt / palette 不另存第二份），
  * Express 线（server.js）与 Cloudflare Workers 线（worker/app.js）都 import 同一份 —— 零依赖、
@@ -13,7 +13,7 @@
  *   src      站内绝对路径（前导 /），跟着 public/covers/<slug>.svg 走；
  *   alt      一句话中文描述，给读屏与图片加载失败兜底，不写进 SVG；
  *   palette  [主色, 次色, 点缀色]，**主色 = palette[0]**（manifest 的 primary 就是它）。
- *            20 款主色两两 CIE76 ΔE ≥ 20（tools/cover-test.mjs 里断言，工具在那边），
+ *            23 款主色两两 CIE76 ΔE ≥ 20（tools/cover-test.mjs 里断言，工具在那边），
  *            所以别照抄 src/seed.js 的 accent —— 那边有重复值（两处 #8b5cf6、两处 #f59e0b、
  *            两处 #ef4444），直接抄会出「两张封面看着一个色」的问题。
  *
@@ -30,15 +30,18 @@ function cover(slug, alt, palette) {
 export const COVERS = Object.freeze({
   '2048': cover('2048', '2048：合并数字方块', ['#f59e0b', '#ef4444', '#fde68a']),
   blackhole: cover('blackhole', '黑洞吞噬：被引力卷住的星体', ['#6d28d9', '#22d3ee', '#c4b5fd']),
+  breakout: cover('breakout', '打砖块：挡板、弹球与成排砖块', ['#a21caf', '#facc15', '#f0abfc']),
   chess: cover('chess', '国际象棋：棋盘与棋子', ['#818cf8', '#e2e8f0', '#c7d2fe']),
   connect4: cover('connect4', '四子棋：重力落子连成四', ['#facc15', '#ef4444', '#fde68a']),
   draughts: cover('draughts', '国际跳棋：棋盘与王棋', ['#4d7c0f', '#ecfccb', '#bef264']),
   gomoku: cover('gomoku', '五子棋：棋盘上的黑白连珠', ['#0ea5e9', '#e2e8f0', '#7dd3fc']),
   idiom: cover('idiom', '成语猜猜：四字猜词的反馈方格', ['#be123c', '#f59e0b', '#fda4af']),
+  jump: cover('jump', '跳一跳：蓄力起跳的小方块与平台', ['#84cc16', '#0ea5e9', '#d9f99d']),
   linkup: cover('linkup', '连连看：两次转弯的连线消除', ['#ec4899', '#a78bfa', '#fbcfe8']),
   match3: cover('match3', '宝石三消：成排发光的宝石', ['#d946ef', '#22d3ee', '#f5d0fe']),
   memory: cover('memory', '记忆翻牌：配对翻开的卡牌', ['#c4b5fd', '#34d399', '#ede9fe']),
   minesweeper: cover('minesweeper', '扫雷：数字与地雷方格', ['#94a3b8', '#0ea5e9', '#e2e8f0']),
+  plane: cover('plane', '飞机大战：穿梭弹幕的战机', ['#0369a1', '#f97316', '#7dd3fc']),
   reversi: cover('reversi', '黑白棋：棋盘上翻转的双色棋子', ['#134e4a', '#f8fafc', '#5eead4']),
   snake: cover('snake', '贪吃蛇：蜿蜒的蛇身与果实', ['#22c55e', '#facc15', '#bbf7d0']),
   sokoban: cover('sokoban', '推箱子：木箱与目标点', ['#b45309', '#0d9488', '#fcd34d']),

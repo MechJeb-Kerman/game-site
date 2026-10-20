@@ -1,10 +1,10 @@
 {
-  "version": "p1-cc9bf9cfc401",
-  "generatedAt": "2026-10-20T06:40:24.137Z",
+  "version": "p1-d73e9caacbdf",
+  "generatedAt": "2026-10-20T09:20:25.875Z",
   "generator": "tools/gen-precache.mjs",
   "note": "PWA 离线清单：sw.js 在 install 时按 urls 逐条预缓存（单条失败只计数，不整体失败）",
-  "count": 35,
-  "bytes": 904583,
+  "count": 38,
+  "bytes": 973683,
   "maxBytes": 98130,
   "urls": [
     {
@@ -27,6 +27,13 @@
       "revision": "3ed31b1a6bc7",
       "bytes": 98130,
       "file": "games/blackhole/index.html"
+    },
+    {
+      "url": "/games/breakout/index.html",
+      "kind": "game",
+      "revision": "1626814075fc",
+      "bytes": 19669,
+      "file": "games/breakout/index.html"
     },
     {
       "url": "/games/chess/index.html",
@@ -64,6 +71,13 @@
       "file": "games/idiom/index.html"
     },
     {
+      "url": "/games/jump/index.html",
+      "kind": "game",
+      "revision": "5b06427c65c4",
+      "bytes": 22021,
+      "file": "games/jump/index.html"
+    },
+    {
       "url": "/games/linkup/index.html",
       "kind": "game",
       "revision": "2e015bc099f5",
@@ -90,6 +104,13 @@
       "revision": "0dd589c7ca86",
       "bytes": 28675,
       "file": "games/minesweeper/index.html"
+    },
+    {
+      "url": "/games/plane/index.html",
+      "kind": "game",
+      "revision": "59fdc20a49d1",
+      "bytes": 27410,
+      "file": "games/plane/index.html"
     },
     {
       "url": "/games/reversi/index.html",

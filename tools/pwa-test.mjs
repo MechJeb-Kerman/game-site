@@ -15,7 +15,7 @@
  * 端口：CDP 9380（CDP_PORT 可覆盖，任务约定独占）· Express 线 3101（PWA_PORT）· CF 线 3102（PWA_WORKER_PORT）
  * 浏览器：无头 Edge，独立 user-data-dir（mkdtemp），退出时删掉。
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -40,6 +40,8 @@ const SW_FILE = path.join(ROOT, 'public', 'sw.js');
 const ICONS_DIR = path.join(ROOT, 'public', 'icons');
 const PRECACHE_FILE = path.join(ROOT, 'public', 'precache.json');
 const GEN_PRECACHE = path.join(HERE, 'gen-precache.mjs');
+const BUILD_PAGES = path.join(HERE, 'build-pages.mjs');
+const DIST_CF = path.join(ROOT, 'dist-cf');
 /* 常驻在跑的两条线（3000 老进程 / 4400 Worker 静态产物）：只做对照与信息打印，硬断言用自带端口 */
 const LIVE_ORIGIN = 'http://127.0.0.1:3000';
 const LIVE_WORIGIN = 'http://127.0.0.1:4400';
@@ -196,9 +198,12 @@ async function httpPhase(origin, label, disk, opts) {
   check(label + ' /sw.js Service-Worker-Allowed = /', swRes.headers.get('service-worker-allowed') === '/', String(swRes.headers.get('service-worker-allowed')));
   check(label + ' /sw.js Cache-Control = no-cache（不发新版就被缓存卡死）', swRes.headers.get('cache-control') === 'no-cache', swRes.headers.get('cache-control') || '(空)');
   const swText = await swRes.text();
-  check(label + ' /sw.js 与 public/sw.js 逐字节一致', swText === disk.swText,
+  /* 行尾/结尾空行归一化后比对：Windows 上 autocrlf 会把 worker/app.js 变 CRLF，
+     内联副本是按 LF 写进去的，直接逐字节比会假报不一致（tools/gen-sw.mjs 的 --check 同理）。 */
+  const normSw = (t) => String(t).replace(/\r\n/g, '\n').replace(/\s+$/, '');
+  check(label + ' /sw.js 与 public/sw.js 逐字节一致（行尾归一化后）', normSw(swText) === normSw(disk.swText),
     swText.length + 'B vs 磁盘 ' + disk.swText.length + 'B'
-    + (swText === disk.swText || !(opts && opts.worker) ? '' : '（worker/app.js 里内联的 PWA_SW 还是旧副本：跑 node tools/gen-sw.mjs 同步）'));
+    + (normSw(swText) === normSw(disk.swText) || !(opts && opts.worker) ? '' : '（worker/app.js 里内联的 PWA_SW 还是旧副本：跑 node tools/gen-sw.mjs 同步）'));
   let parseErr = '';
   try { new Function(swText); } catch (e) { parseErr = e.message; }
   check(label + ' /sw.js 语法可解析（inline 进 worker 的转义没坏）', parseErr === '', parseErr || 'new Function 通过');
@@ -547,7 +552,7 @@ async function expressBrowserPhase(browser, sink, disk) {
   const pathOfUrl = (u) => { try { return new URL(u).pathname; } catch (e) { return u; } };
   const pcUrls = precacheUrls(disk);
   const pcMissing = pcUrls.filter((u) => !(audit && (audit.assetUrls || []).concat(audit.shellKeys || []).some((a) => pathOfUrl(a) === u)));
-  check('清单里 ' + pcUrls.length + ' 条全在缓存里（含 20 款游戏页，离线才敢说能玩）', pcMissing.length === 0,
+  check('清单里 ' + pcUrls.length + ' 条全在缓存里（含 23 款游戏页，离线才敢说能玩）', pcMissing.length === 0,
     pcMissing.length ? '缺 ' + pcMissing.length + ' 条：' + pcMissing.slice(0, 5).join(' ') : '一条不缺');
   check('离线壳已预热缓存且内容是站点首页（title 含站名）', !!(audit && audit.shellKeys.length >= 1 && String(audit.shellTitle).indexOf('趣玩小游戏') >= 0),
     (audit ? audit.shellKeys.length : 0) + ' 个键 · title=' + (audit ? audit.shellTitle : '') + ' · ' + (audit ? audit.shellBytes : 0) + 'B');
@@ -657,6 +662,33 @@ async function livePrecachePhase(origin, label, disk) {
 
 /* ==================== 主流程 ==================== */
 
+/**
+ * Worker 线跑的是 tools/serve-worker.mjs 的 Static Assets 假实现，它读 dist-cf（构建产物）。
+ * dist-cf 是 .gitignore 里的东西：新克隆 / 新增游戏后没跑 build:pages 就是旧产物，
+ * /games/<slug>/index.html 会 404、/precache.json 还是旧版本号 —— 那是产物过期，不是代码坏了。
+ * 这里先对齐一次（版本号或清单条数不符就重建），让探针自给自足。
+ */
+function distCfState(disk) {
+  try {
+    const p = JSON.parse(fs.readFileSync(path.join(DIST_CF, 'precache.json'), 'utf8'));
+    const games = fs.existsSync(path.join(DIST_CF, 'games')) ? fs.readdirSync(path.join(DIST_CF, 'games')).length : 0;
+    return { version: p.version, count: p.count, games: games };
+  } catch (e) { return null; }
+}
+function ensureDistCf(disk) {
+  const before = distCfState(disk);
+  const wantVersion = disk.precacheVersion;
+  const wantCount = disk.precache && Array.isArray(disk.precache.urls) ? disk.precache.urls.length : 0;
+  if (before && before.version === wantVersion && (!wantCount || before.count === wantCount)) {
+    return 'dist-cf 已是最新（' + before.version + ' · ' + before.count + ' 条 · ' + before.games + ' 个游戏目录）';
+  }
+  const r = spawnSync(process.execPath, [BUILD_PAGES, '--cf'], { cwd: ROOT, encoding: 'utf8' });
+  const after = distCfState(disk);
+  const head = before ? (before.version + ' · ' + before.count + ' 条 · ' + before.games + ' 个游戏目录') : '缺 dist-cf';
+  return 'dist-cf 过期（' + head + '）→ 跑 build:pages --cf（exit=' + (r.status === null ? '?' : r.status) + '）'
+    + (after ? ' → ' + after.version + ' · ' + after.count + ' 条 · ' + after.games + ' 个游戏目录' : ' → 仍然读不到');
+}
+
 async function main() {
   const t0 = Date.now();
   console.log('PWA 探针  ' + ROOT);
@@ -709,6 +741,7 @@ async function main() {
     await livePrecachePhase(LIVE_ORIGIN, '常驻 dev server(3000)', disk);
 
     if (!SKIP_WORKER) {
+      info(ensureDistCf(disk));
       const mod = await import('./serve-worker.mjs');
       worker = await mod.createWorkerServer({ port: WORKER_PORT });
       const warm = await worker.warmup();

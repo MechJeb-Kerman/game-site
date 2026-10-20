@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 封面自测：20 张静态 SVG（public/covers/）+ 清单一致性 + src/covers.js 的导出面 + 生成器 --check 的两种出口码。
+ * 封面自测：23 张静态 SVG（public/covers/）+ 清单一致性 + src/covers.js 的导出面 + 生成器 --check 的两种出口码。
  *
  * 跑法：
  *   node tools/cover-test.mjs            跑全部断言；失败数 0 → exit 0，否则 exit 1
@@ -9,13 +9,13 @@
  * 边界：
  *   · 只读真仓库的 public/covers/ 与 src/covers.js，不写盘；
  *   · 生成器 / --check 的全部写盘与漂移用例都在 os.tmpdir() 的临时根里跑（COVERS_ROOT 换根，见 gen-covers.mjs 头注释），
- *     临时根里自带 src/covers.js 副本与 20 个 games/<slug>/ 空目录；
+ *     临时根里自带 src/covers.js 副本与 23 个 games/<slug>/ 空目录；
  *   · XML 解析优先用 .NET XmlDocument（C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe，
  *     本机 pwsh 不在 PATH 上），拿不到 PowerShell 时退到内置的良构性检查器并在报告里注明用的哪一种；
  *   · 不新增任何依赖：只用 node 内置模块。
  *
- * 覆盖的验收点：20 个 slug 齐全（以 games/ 目录为准）· 逐个能被 XML 解析 · 无文字 / 字体 / 外链 / 位图 ·
- *   单文件 < 12 KB · 20 个主色两两可辨（CIE76 ΔE ≥ 20）· manifest 与磁盘一致（字节 + sha256 指纹）·
+ * 覆盖的验收点：23 个 slug 齐全（以 games/ 目录为准）· 逐个能被 XML 解析 · 无文字 / 字体 / 外链 / 位图 ·
+ *   单文件 < 12 KB · 23 个主色两两可辨（CIE76 ΔE ≥ 20）· manifest 与磁盘一致（字节 + sha256 指纹）·
  *   --check 一致 exit 0、缺文件 / 多余文件 / 内容漂移 exit 1 · 重跑幂等（字节不变）· coverFor 未知 slug 回 null。
  *
  * 出口码：0 全部通过；1 有失败断言。
@@ -35,6 +35,8 @@ const GAMES_DIR = path.join(ROOT, 'games');
 const MANIFEST = path.join(OUT_DIR, 'manifest.json');
 const MAX_BYTES = 12 * 1024;
 const MIN_DELTA_E = 20;
+// 游戏总数（games/ 下的目录数）。新增游戏时同步这里与 src/seed.js / src/covers.js。
+const GAME_COUNT = 23;
 const KEEP = process.argv.includes('--keep');
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
@@ -191,7 +193,7 @@ let manifestRaw = '';
 try { manifestRaw = fs.readFileSync(MANIFEST, 'utf8'); manifest = JSON.parse(manifestRaw); } catch (e) { manifest = null; }
 
 section('1) slug 齐不齐（以 games/ 目录为准）');
-ok('games/ 下正好 20 个目录', gameDirs.length === 20, gameDirs.length + ' 个');
+ok('games/ 下正好 ' + GAME_COUNT + ' 个目录', gameDirs.length === GAME_COUNT, gameDirs.length + ' 个');
 ok('COVERS 的 key 与 games/ 目录一一对应', gameDirs.length > 0 && slugs.join(' ') === gameDirs.join(' '),
   gameDirs.length === 0 ? '（games/ 不存在，跳过比对）' : 'covers.js ' + slugs.length + ' 个');
 const missingCovers = slugs.filter(function (s) { return !COVERS[s] || typeof COVERS[s] !== 'object'; });
@@ -213,8 +215,8 @@ section('2) 产物文件：在、够小、纯 ASCII、能被 XML 解析');
 const files = slugs.map(function (s) { return path.join(OUT_DIR, s + '.svg'); });
 const onDisk = fs.existsSync(OUT_DIR) ? fs.readdirSync(OUT_DIR).sort() : [];
 const missingFiles = files.filter(function (p) { return !fs.existsSync(p); });
-ok('20 个 <slug>.svg 都在盘上', missingFiles.length === 0, missingFiles.map(function (p) { return path.basename(p); }).join(' '));
-ok('目录里没有清单外的杂物', onDisk.length === 21 && onDisk.indexOf('manifest.json') !== -1,
+ok(GAME_COUNT + ' 个 <slug>.svg 都在盘上', missingFiles.length === 0, missingFiles.map(function (p) { return path.basename(p); }).join(' '));
+ok('目录里没有清单外的杂物', onDisk.length === GAME_COUNT + 1 && onDisk.indexOf('manifest.json') !== -1,
   onDisk.filter(function (f) { return f !== 'manifest.json' && slugs.indexOf(f.replace(/\.svg$/, '')) === -1; }).join(' ') || onDisk.length + ' 个文件');
 
 const sizes = {};
@@ -266,7 +268,7 @@ ok('都有 viewBox="0 0 1200 675" 与 1200×675 尺寸（缩放不失真）', mi
 
 if (missingFiles.length === 0) {
   const xr = xmlProblems(files);
-  ok('20 个文件都能被 XML 解析（' + xr.parser + '）', xr.problems.length === 0, xr.problems.slice(0, 3).join('；'));
+  ok(GAME_COUNT + ' 个文件都能被 XML 解析（' + xr.parser + '）', xr.problems.length === 0, xr.problems.slice(0, 3).join('；'));
 } else {
   skipCase('XML 解析', '有文件缺失，先补文件');
 }
@@ -280,9 +282,9 @@ for (let i = 0; i < slugs.length; i++) {
   }
 }
 const primaries = slugs.map(function (s) { return COVERS[s].palette[0].toLowerCase(); });
-ok('20 个主色互不相同（十六进制层面）', new Set(primaries).size === primaries.length,
+ok(GAME_COUNT + ' 个主色互不相同（十六进制层面）', new Set(primaries).size === primaries.length,
   new Set(primaries).size + '/' + primaries.length);
-ok('20 个主色两两可辨（CIE76 ΔE ≥ ' + MIN_DELTA_E + '）', tightest.d >= MIN_DELTA_E,
+ok(GAME_COUNT + ' 个主色两两可辨（CIE76 ΔE ≥ ' + MIN_DELTA_E + '）', tightest.d >= MIN_DELTA_E,
   '最接近的一对 ' + tightest.a + ' ↔ ' + tightest.b + ' ΔE=' + tightest.d.toFixed(1));
 
 section('4) manifest 与磁盘 / covers.js 一致');
@@ -312,7 +314,7 @@ if (manifest) {
 }
 
 section('5) coverFor()：未知 slug 回 null、不抛');
-ok('20 个已知 slug 都能取到对象', slugs.every(function (s) {
+ok(GAME_COUNT + ' 个已知 slug 都能取到对象', slugs.every(function (s) {
   const g = coverFor(s);
   return g && g.src === '/covers/' + s + '.svg' && Array.isArray(g.palette);
 }));

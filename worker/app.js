@@ -2797,13 +2797,13 @@ const PWA_MANIFEST = {
 /* 与 public/sw.js 逐字节一致（模板字符串里只有反斜杠需要转义） */
 const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略 + 真离线
  *
- * 目标：宁可少缓存，也绝不把站点变砖；同时保证「断网也能打开并玩 20 款游戏」。
+ * 目标：宁可少缓存，也绝不把站点变砖；同时保证「断网也能打开并玩 23 款游戏」。
  *  - 任何内部异常都退回浏览器默认行为（不 respondWith），SW 出问题也不影响正常访问。
  *  - 鉴权 / 有副作用的路径（/api/ /auth/ /account /admin /u/ /login …）与非 GET 请求一律直连网络，
  *    不缓存、不回落 —— /api/ 永远 network-only，绝不拿旧数据骗用户。
  *  - install：拉 /precache.json（拉不到退 /static/precache.json，再退下方生成块里的内置清单），
  *    按 urls 逐条预缓存；单条失败只计数、不中断（避开 cache.addAll 的全有或全无语义）。
- *  - 导航：已预缓存的页面（20 款游戏页 + 首页）走 stale-while-revalidate（先给缓存、后台更新），
+ *  - 导航：已预缓存的页面（23 款游戏页 + 首页）走 stale-while-revalidate（先给缓存、后台更新），
  *    其余页面保持 network-first；网络失败时依次回落「该页面自己的缓存 → 离线壳 → 内置兜底页」。
  *  - 静态资源（/static/ /games/ /icons/ /cover/ /covers/ /manifest.webmanifest）：stale-while-revalidate。
  *
@@ -2816,21 +2816,24 @@ const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略 + 真离�
  */
 
 /* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
-/* 35 条 · 883.4 KB · 最大单文件 95.8 KB */
-const PRECACHE_VERSION = 'p1-cc9bf9cfc401';
+/* 38 条 · 950.9 KB · 最大单文件 95.8 KB */
+const PRECACHE_VERSION = 'p1-d73e9caacbdf';
 const PRECACHE_FALLBACK = [
   '/',
   '/games/2048/index.html',
   '/games/blackhole/index.html',
+  '/games/breakout/index.html',
   '/games/chess/index.html',
   '/games/connect4/index.html',
   '/games/draughts/index.html',
   '/games/gomoku/index.html',
   '/games/idiom/index.html',
+  '/games/jump/index.html',
   '/games/linkup/index.html',
   '/games/match3/index.html',
   '/games/memory/index.html',
   '/games/minesweeper/index.html',
+  '/games/plane/index.html',
   '/games/reversi/index.html',
   '/games/snake/index.html',
   '/games/sokoban/index.html',
@@ -3278,7 +3281,6 @@ self.addEventListener('notificationclick', function (event) {
     })
   );
 });
-
 `;
 
 /* ================= PWA：图标 ================= */

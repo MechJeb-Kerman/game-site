@@ -447,5 +447,68 @@ export const GAMES = [
     "accent": "#16a34a",
     "accent2": "#0ea5e9",
     "license": "自研"
+  },
+  {
+    "slug": "breakout",
+    "title": "打砖块",
+    "subtitle": "弹球拆砖，别让球掉下去",
+    "description": "经典打砖块：左右移动挡板把球弹回去，砸碎整屏砖块进入下一关。接球位置决定反弹角度，最上面两行的砖要砸两下才碎，三条命用完即结束。支持方向键、A/D、鼠标与触屏拖动。",
+    "category": "action",
+    "game_url": "/games/breakout/index.html",
+    "width": 800,
+    "height": 600,
+    "orientation": "landscape",
+    "tags": [
+      "经典",
+      "反应",
+      "街机",
+      "单机"
+    ],
+    "emoji": "🧱",
+    "accent": "#a21caf",
+    "accent2": "#facc15",
+    "license": "自研"
+  },
+  {
+    "slug": "plane",
+    "title": "飞机大战",
+    "subtitle": "弹幕里穿梭，击落来袭机群",
+    "description": "竖版飞行射击：战机跟随手指或鼠标移动、自动开火，敌机按波次从上方压下来，中型与大型敌机会还击、打扇形弹幕。捡双发、护盾与炸弹道具能撑得更久，三条命打完即结束。",
+    "category": "action",
+    "game_url": "/games/plane/index.html",
+    "width": 480,
+    "height": 720,
+    "orientation": "portrait",
+    "tags": [
+      "射击",
+      "弹幕",
+      "街机",
+      "单机"
+    ],
+    "emoji": "✈️",
+    "accent": "#0369a1",
+    "accent2": "#f97316",
+    "license": "自研"
+  },
+  {
+    "slug": "jump",
+    "title": "跳一跳",
+    "subtitle": "按住蓄力，跳到下一块平台上",
+    "description": "按住蓄力、松开起跳，力度决定跳多远。落在平台中心算完美，连续完美累积连击加分；没踩中平台就坠落。平台宽度与间距随机，越往后越考验手感。",
+    "category": "casual",
+    "game_url": "/games/jump/index.html",
+    "width": 480,
+    "height": 720,
+    "orientation": "portrait",
+    "tags": [
+      "休闲",
+      "手感",
+      "挑战",
+      "单机"
+    ],
+    "emoji": "🦘",
+    "accent": "#84cc16",
+    "accent2": "#0ea5e9",
+    "license": "自研"
   }
 ];

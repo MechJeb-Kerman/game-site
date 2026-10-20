@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 静态封面生图：20 款游戏 → public/covers/<slug>.svg + public/covers/manifest.json
+ * 静态封面生图：23 款游戏 → public/covers/<slug>.svg + public/covers/manifest.json
  *
  * 跑法：
  *   node tools/gen-covers.mjs            生成 / 增量更新（内容没变就不动盘，字节与 mtime 都不变）
@@ -191,15 +191,18 @@ function rngOf(seed) {
 const SPEC = {
   '2048':       { angle: 135, glow: [0.72, 0.28], texture: 'dots' },
   blackhole:    { angle: 200, glow: [0.50, 0.62], texture: 'rays' },
+  breakout:     { angle: 320, glow: [0.62, 0.30], texture: 'grid' },
   chess:        { angle: 90,  glow: [0.70, 0.35], texture: 'grid' },
   connect4:     { angle: 160, glow: [0.50, 0.30], texture: 'dots' },
   draughts:     { angle: 45,  glow: [0.62, 0.62], texture: 'grid' },
   gomoku:       { angle: 120, glow: [0.66, 0.34], texture: 'dots' },
   idiom:        { angle: 210, glow: [0.50, 0.35], texture: 'none' },
+  jump:         { angle: 130, glow: [0.58, 0.34], texture: 'dots' },
   linkup:       { angle: 315, glow: [0.68, 0.32], texture: 'dots' },
   match3:       { angle: 250, glow: [0.50, 0.55], texture: 'rays' },
   memory:       { angle: 30,  glow: [0.62, 0.36], texture: 'dots' },
   minesweeper:  { angle: 180, glow: [0.70, 0.60], texture: 'grid' },
+  plane:        { angle: 260, glow: [0.50, 0.70], texture: 'rays' },
   reversi:      { angle: 0,   glow: [0.60, 0.30], texture: 'grid' },
   snake:        { angle: 150, glow: [0.75, 0.60], texture: 'grid' },
   sokoban:      { angle: 60,  glow: [0.50, 0.40], texture: 'grid' },
@@ -294,7 +297,7 @@ function starsOf(slug) {
 
 /* ============================== 20 个母题 ============================== */
 /* 每个母题都只用几何图元拼：没有文字、没有字体、没有外链。用色一律取自 c.p / c.s / c.a
-   （主色 / 副色 / 点缀色），所以 20 张互不相同的观感来自「配色 + 构图」两件事。
+   （主色 / 副色 / 点缀色），所以 23 张互不相同的观感来自「配色 + 构图」两件事。
    所有坐标都是写死的常数（不经随机数），保证同一次输入 → 字节完全一致。 */
 
 const MOTIFS = {
@@ -381,6 +384,51 @@ const MOTIFS = {
   },
 
   /* 国际象棋：棋盘 + 马 + 一步将杀 */
+  /* 打砖块：砖墙 + 挡板 + 弹球轨迹 */
+  breakout: function (c) {
+    const cols = 9, rows = 5, bw = 112, bh = 42, gap = 8;
+    const x0 = CX - (bw * cols + gap * (cols - 1)) / 2, y0 = 64;
+    const out = [];
+    out.push(glowAt(x0 + bw * 6.4, y0 + bh * 1.2, 300));
+    /* 砖墙：前两行是「两下才碎」的深色砖，后三行按行换色；末行缺两块（已经打掉了） */
+    const rowColor = function (r) {
+      if (r < 2) return mix(c.p, c.dark, 0.35);
+      if (r === 2) return c.p;
+      if (r === 3) return mix(c.p, c.s, 0.45);
+      return c.s;
+    };
+    const holes = { 4: [3, 7] };
+    for (let r = 0; r < rows; r++) {
+      const hole = holes[r] || [];
+      for (let q = 0; q < cols; q++) {
+        if (hole.indexOf(q) !== -1) continue;
+        const bx = x0 + q * (bw + gap), by = y0 + r * (bh + gap);
+        const col = rowColor(r);
+        out.push(rrect(bx, by, bw, bh, 9, col, { 'fill-opacity': r < 2 ? '0.92' : '0.86' }));
+        out.push(rect(bx + 10, by + 7, bw - 20, 8, '#ffffff', { 'fill-opacity': '0.26' }));
+        if (r < 2) out.push(circle(bx + bw - 20, by + bh - 15, 5, '#ffffff', { 'fill-opacity': '0.34' }));
+      }
+    }
+    /* 挡板 */
+    const px = CX - 110, py = 566;
+    out.push(rrect(px - 6, py - 6, 232, 44, 22, mix(c.dark, c.a, 0.22), { 'fill-opacity': '0.5' }));
+    out.push(rrect(px, py, 220, 32, 16, c.a));
+    out.push(rect(px + 16, py + 8, 188, 9, '#ffffff', { 'fill-opacity': '0.42' }));
+    out.push(circle(px + 220, py + 16, 12, c.a, { 'fill-opacity': '0.55' }));
+    /* 弹球 + 三段拖尾 + 折返虚线 */
+    const bx2 = x0 + bw * 6.2, by2 = 404;
+    out.push(circle(bx2, by2, 46, c.a, { 'fill-opacity': '0.12' }));
+    out.push(circle(bx2, by2, 22, c.pll, { 'fill-opacity': '0.18' }));
+    out.push(circle(bx2, by2, 15, '#ffffff', { 'fill-opacity': '0.95' }));
+    out.push(circle(bx2 - 26, by2 + 22, 9, '#ffffff', { 'fill-opacity': '0.34' }));
+    out.push(circle(bx2 - 46, by2 + 42, 6, '#ffffff', { 'fill-opacity': '0.2' }));
+    out.push(line(bx2 - 12, by2 + 20, px + 150, py - 12, { stroke: c.pll, 'stroke-width': 4, 'stroke-dasharray': '12 14', 'stroke-opacity': '0.5' }));
+    /* 击中碎砖 */
+    out.push(sparkle(x0 + bw * 8.2, y0 + bh * 4.4, 30, c.a, 0.9));
+    out.push(sparkle(x0 + bw * 7.6, y0 + bh * 3.4, 17, '#ffffff', 0.7));
+    return out.join('');
+  },
+
   chess: function (c) {
     const size = 520, cell = size / 8, bx = CX - size / 2, by = CY - size / 2 + 8;
     const out = [];
@@ -562,6 +610,43 @@ const MOTIFS = {
   },
 
   /* 连连看：把同款图案用折线连起来 */
+  /* 跳一跳：方块蓄力、虚线抛物线、下一块平台的中心点 */
+  jump: function (c) {
+    const out = [];
+    const plat = function (x, y, w) {
+      const o = [];
+      o.push(rrect(x, y, w, 26, 8, mix(c.p, c.dark, 0.25), { 'fill-opacity': '0.9' }));
+      o.push(rect(x + 6, y + 5, w - 12, 7, '#ffffff', { 'fill-opacity': '0.28' }));
+      o.push(rrect(x + 10, y + 26, w - 20, 54, 6, mix(c.dark, c.p, 0.28), { 'fill-opacity': '0.55' }));
+      return o.join('');
+    };
+    out.push(glowAt(CX - 60, CY + 10, 340));
+    /* 三级台阶由左下走到右上，越往后越窄 */
+    out.push(plat(CX - 430, CY + 150, 200));
+    out.push(plat(CX - 140, CY + 40, 168));
+    out.push(plat(CX + 130, CY - 70, 140));
+    out.push(plat(CX + 352, CY - 180, 118));
+    /* 下一块平台的中心点（完美落点） */
+    out.push(circle(CX + 411, CY - 167, 16, 'none', { stroke: c.a, 'stroke-width': 3, 'stroke-opacity': '0.75', 'stroke-dasharray': '7 6' }));
+    out.push(circle(CX + 411, CY - 167, 5, c.a, { 'fill-opacity': '0.9' }));
+    /* 蓄力中的方块：底座压扁一点，头顶是力度条 */
+    const bx = CX - 46, by = CY + 16;
+    out.push(rrect(bx - 4, by + 62, 108, 14, 7, c.dark, { 'fill-opacity': '0.45' }));
+    out.push(rrect(bx, by, 100, 64, 14, c.p));
+    out.push(rect(bx + 12, by + 10, 76, 12, '#ffffff', { 'fill-opacity': '0.4' }));
+    out.push(rrect(bx + 18, by + 30, 64, 20, 6, mix(c.p, c.dark, 0.4), { 'fill-opacity': '0.6' }));
+    out.push(rrect(bx + 6, by - 42, 88, 16, 8, mix(c.dark, c.p, 0.3), { 'fill-opacity': '0.85' }));
+    out.push(rrect(bx + 10, by - 38, 62, 8, 4, c.a));
+    out.push(circle(bx + 88, by - 34, 9, c.a, { 'fill-opacity': '0.8' }));
+    /* 抛物线：从方块顶点到下一块平台中心 */
+    out.push(pathEl('M' + (bx + 50) + ' ' + (by - 8) + 'Q' + (CX + 150) + ' ' + (CY - 250) + ' ' + (CX + 411) + ' ' + (CY - 167),
+      { fill: 'none', stroke: c.pll, 'stroke-width': 4, 'stroke-dasharray': '10 13', 'stroke-opacity': '0.55', 'stroke-linecap': 'round' }));
+    out.push(sparkle(CX + 411, CY - 240, 24, c.a, 0.85));
+    out.push(sparkle(CX + 330, CY - 300, 15, '#ffffff', 0.65));
+    out.push(sparkle(CX + 250, CY - 120, 13, '#ffffff', 0.5));
+    return out.join('');
+  },
+
   linkup: function (c) {
     const tile = 88, gap = 12, unit = tile + gap, cols = 6, rows = 4;
     const ox = CX - (cols * unit - gap) / 2, oy = CY - (rows * unit - gap) / 2;
@@ -731,6 +816,52 @@ const MOTIFS = {
   },
 
   /* 黑白棋：翻面那一刻 */
+  /* 飞机大战：自机、敌机、双向弹幕 */
+  plane: function (c) {
+    const out = [];
+    out.push(glowAt(CX, CY + 120, 380));
+    /* 自机：机身 + 双翼 + 尾焰 */
+    const sx = CX, sy = CY + 128;
+    out.push(ellipse(sx, sy + 96, 40, 14, c.a, { 'fill-opacity': '0.18' }));
+    out.push(poly([[sx, sy + 104], [sx - 16, sy + 148], [sx + 16, sy + 148]], { fill: c.a, 'fill-opacity': '0.55' }));
+    out.push(poly([[sx, sy - 96], [sx - 34, sy + 18], [sx - 34, sy + 66], [sx + 34, sy + 66], [sx + 34, sy + 18]], { fill: c.pl, 'fill-opacity': '0.95' }));
+    out.push(poly([[sx - 34, sy + 6], [sx - 128, sy + 76], [sx - 122, sy + 96], [sx - 34, sy + 66]], { fill: c.a, 'fill-opacity': '0.9' }));
+    out.push(poly([[sx + 34, sy + 6], [sx + 128, sy + 76], [sx + 122, sy + 96], [sx + 34, sy + 66]], { fill: c.a, 'fill-opacity': '0.9' }));
+    out.push(poly([[sx, sy - 96], [sx - 13, sy - 34], [sx + 13, sy - 34]], { fill: '#ffffff', 'fill-opacity': '0.85' }));
+    out.push(circle(sx, sy + 6, 17, c.dark, { 'fill-opacity': '0.5' }));
+    out.push(circle(sx, sy + 6, 8, '#ffffff', { 'fill-opacity': '0.7' }));
+    /* 自机子弹：四道短光柱 */
+    const shots = [[-118, 40], [-52, 210], [52, 210], [118, 40]];
+    for (let i = 0; i < shots.length; i++) {
+      const x = sx + shots[i][0] * 0.72, y = sy - 118 - shots[i][1] * 0.5;
+      out.push(rrect(x - 5, y - 44, 10, 54, 5, '#ffffff', { 'fill-opacity': '0.9' }));
+      out.push(rrect(x - 3, y + 14, 6, 26, 3, c.a, { 'fill-opacity': '0.55' }));
+    }
+    /* 敌机三架：大机居中，两架小机分列 */
+    const foe = function (x, y, k, color) {
+      const o = [];
+      o.push(poly([[x, y + 54 * k], [x - 40 * k, y - 18 * k], [x - 16 * k, y - 44 * k], [x + 16 * k, y - 44 * k], [x + 40 * k, y - 18 * k]], { fill: color, 'fill-opacity': '0.92' }));
+      o.push(rect(x - 52 * k, y - 10 * k, 104 * k, 12 * k, '#ffffff', { 'fill-opacity': '0.24' }));
+      o.push(circle(x, y - 8 * k, 9 * k, c.dark, { 'fill-opacity': '0.5' }));
+      return o.join('');
+    };
+    out.push(foe(CX - 236, CY - 232, 0.78, c.s));
+    out.push(foe(CX + 236, CY - 232, 0.78, c.s));
+    out.push(foe(CX, CY - 150, 1.28, c.pd));
+    /* 敌机弹幕：向下的小圆点 + 扇形线 */
+    out.push(line(CX, CY - 100, CX - 44, CY - 26, { stroke: c.s, 'stroke-width': 4, 'stroke-dasharray': '9 11', 'stroke-opacity': '0.6' }));
+    out.push(line(CX, CY - 100, CX + 44, CY - 26, { stroke: c.s, 'stroke-width': 4, 'stroke-dasharray': '9 11', 'stroke-opacity': '0.6' }));
+    out.push(circle(CX - 44, CY - 26, 7, c.s, { 'fill-opacity': '0.9' }));
+    out.push(circle(CX + 44, CY - 26, 7, c.s, { 'fill-opacity': '0.9' }));
+    out.push(circle(CX - 96, CY - 132, 6, c.s, { 'fill-opacity': '0.55' }));
+    out.push(circle(CX + 96, CY - 132, 6, c.s, { 'fill-opacity': '0.55' }));
+    /* 右上角爆炸 */
+    out.push(circle(CX + 330, CY - 40, 54, c.a, { 'fill-opacity': '0.18' }));
+    out.push(sparkle(CX + 330, CY - 40, 34, c.a, 0.9));
+    out.push(sparkle(CX + 372, CY - 86, 18, '#ffffff', 0.7));
+    return out.join('');
+  },
+
   reversi: function (c) {
     const size = 496, cell = size / 8, bx = CX - size / 2, by = CY - size / 2 + 8;
     const out = [];

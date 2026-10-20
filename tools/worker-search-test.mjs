@@ -147,7 +147,7 @@ async function main() {
   db = new LocalD1(DB_FILE);
   const mod = await import(APP_URL);
 
-  // 预热：ensureReady 建表 + 种子数据（20 款）
+  // 预热：ensureReady 建表 + 种子数据（23 款）
   const plainEnv = makeEnv(db);
   const warm = await withLogs(() => call(mod, '/', plainEnv));
   ok('预热首页 200（ensureReady 建表 + 种子）', warm.value.status === 200, 'status=' + warm.value.status);

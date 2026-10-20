@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>跳一跳 - 趣玩小游戏</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+html,body{height:100%;margin:0;overflow:hidden}
+body{
+  background:radial-gradient(circle at 50% 0%,#221a4d,#080a18 70%);
+  color:#ece9ff;
+  font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;
+}
+.wrap{width:100%;max-width:560px;height:100%;display:flex;flex-direction:column;gap:10px;padding:10px}
+.hud{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;flex:0 0 auto}
+.stat{
+  background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.35);
+  padding:5px 10px;border-radius:10px;font-size:12px;color:#b9b3d9;
+  white-space:nowrap;line-height:1.5;
+}
+.stat b{color:#fff;margin-left:3px;font-size:15px}
+.btn{
+  min-height:44px;min-width:44px;padding:0 18px;border:0;border-radius:12px;
+  cursor:pointer;font-family:inherit;font-size:15px;font-weight:600;color:#12101f;
+  background:linear-gradient(180deg,#ffd166,#f2a33c);
+  box-shadow:0 6px 16px rgba(242,163,60,.35);
+  touch-action:manipulation;-webkit-user-select:none;user-select:none;
+  transition:transform .12s,filter .12s;
+}
+.btn:active{transform:translateY(1px) scale(.98);filter:brightness(.95)}
+.btn.ghost{
+  margin-left:auto;color:#e7e3ff;background:rgba(139,92,246,.22);
+  border:1px solid rgba(139,92,246,.5);box-shadow:none;font-size:13px;padding:0 14px;
+}
+.stage{
+  position:relative;flex:0 0 auto;margin:auto 0;width:min(100%,calc((100vh - 74px) * 2 / 3));
+  aspect-ratio:2 / 3;border-radius:16px;overflow:hidden;
+  background:linear-gradient(180deg,#141033,#0a0a18);
+  box-shadow:0 0 40px rgba(99,102,241,.18) inset,0 10px 30px rgba(0,0,0,.5);
+  touch-action:none;-webkit-user-select:none;user-select:none;cursor:pointer;
+}
+@supports (height:100dvh){.stage{width:min(100%,calc((100dvh - 74px) * 2 / 3))}}
+canvas{display:block;width:100%;height:100%}
+.overlay{
+  position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;padding:16px;text-align:center;background:rgba(8,8,20,.74);
+}
+.overlay.on{display:flex}
+.overlay h2{margin:0;font-size:22px;letter-spacing:2px}
+.overlay p{margin:0;font-size:14px;color:#b9b3d9;line-height:1.7}
+.overlay .big{font-size:34px;font-weight:700;color:#ffd166;line-height:1.2}
+.overlay .btn{margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div class="stat">分数<b id="hScore">0</b></div>
+    <div class="stat">最高分<b id="hBest">0</b></div>
+    <div class="stat">连击<b id="hCombo">0</b></div>
+    <button class="btn ghost" id="btnRestart" type="button">重开</button>
+  </div>
+  <div class="stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div class="overlay" id="ov">
+      <h2>游戏结束</h2>
+      <p class="big" id="ovScore">0</p>
+      <p id="ovBest">最高分 0</p>
+      <p id="ovTip">按住蓄力，松开起跳</p>
+      <button class="btn" id="btnAgain" type="button">再来一局</button>
+    </div>
+  </div>
+</div>
+
+<script>window.GAMEPAD = { mode: 'pointer' };</script>
+<script src="/static/js/gamepad.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- 常量（逻辑坐标系 480x720） ---------- */
+  var W = 480, H = 720;
+  var GROUND = 520;            /* 平台顶面 y */
+  var SIZE = 30;               /* 小方块边长 */
+  var G = 2400;                /* 重力 */
+  var VY0 = -880;              /* 起跳竖直初速 */
+  var AIR_T = -2 * VY0 / G;    /* 空中时间 ≈0.733s */
+  var MIN_JUMP = 70;           /* 0% 力度水平位移 */
+  var MAX_JUMP = 380;          /* 100% 力度水平位移 */
+  var PERFECT = 12;            /* 完美判定：中心 ±12px */
+  var CHARGE_MS = 1000;        /* 蓄满力所需时间 */
+  var DT_MAX = 0.05;           /* dt 上限：切后台回来不瞬移 */
+  var MIN_POWER = 6;           /* 轻点也不至于 0 力度 */
+  var FONT = '"PingFang SC","Microsoft YaHei",system-ui,sans-serif';
+
+  /* ---------- DOM ---------- */
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var elScore = document.getElementById('hScore');
+  var elBest = document.getElementById('hBest');
+  var elCombo = document.getElementById('hCombo');
+  var ov = document.getElementById('ov');
+  var ovScore = document.getElementById('ovScore');
+  var ovBest = document.getElementById('ovBest');
+  var ovTip = document.getElementById('ovTip');
+  var btnRestart = document.getElementById('btnRestart');
+  var btnAgain = document.getElementById('btnAgain');
+
+  var view = { dpr: 1, scale: 1, ox: 0, oy: 0 };
+
+  /* ---------- localStorage（读写都包 try/catch） ---------- */
+  function store(k, v) {
+    try {
+      if (v === undefined) return localStorage.getItem(k);
+      localStorage.setItem(k, v);
+      return v;
+    } catch (e) { return null; }
+  }
+  var best = 0;
+  try {
+    var b0 = parseInt(store('jump.best'), 10);
+    if (isFinite(b0) && b0 > 0) best = b0;
+  } catch (e) { best = 0; }
+
+  /* ---------- 局面 ---------- */
+  var platforms = [];
+  var curIdx = 0;
+  var player = { x: 120, y: GROUND, vx: 0, vy: 0, rot: 0, rotV: 0, t: 0, from: 120 };
+  var score = 0, combo = 0, maxCombo = 0;
+  var over = false, charging = false, power = 0, chargeStart = 0;
+  var phase = 'ready';         /* ready | charging | flying | falling */
+  var camX = -30, camTarget = -30;
+  var floats = [];
+  var hintLife = 1;
+  var pointer = { x: 0, y: 0, on: false };
+  var hudCache = { s: -1, b: -1, c: -1 };
+  var raf = 0, last = 0;
+
+  var stars = [];
+  (function () {
+    var span = W + 60;
+    for (var i = 0; i < 70; i++) {
+      stars.push({
+        x: Math.random() * span,
+        y: Math.random() * 470,
+        r: 0.6 + Math.random() * 1.4,
+        a: 0.22 + Math.random() * 0.6
+      });
+    }
+  })();
+
+  function nowMs() {
+    return (window.performance && performance.now) ? performance.now() : Date.now();
+  }
+
+  /* ---------- 关卡生成 ---------- */
+  function ensurePlatforms() {
+    var lastP = platforms[platforms.length - 1];
+    if (!lastP) return;
+    while (lastP.x < camX + W + 700) {
+      var w = Math.round(60 + Math.random() * 70);          /* 60~130 */
+      var gap = Math.round(80 + Math.random() * 140);       /* 80~220 */
+      var nx = lastP.x + lastP.w / 2 + gap + w / 2;
+      var p = { x: nx, w: w, pressT: 9 };
+      platforms.push(p);
+      lastP = p;
+    }
+    while (platforms.length > 5 && platforms[0].x < camX - 320) {
+      platforms.shift();
+      curIdx = Math.max(0, curIdx - 1);
+    }
+  }
+
+  function platformAt(x) {
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (x >= p.x - p.w / 2 - 6 && x <= p.x + p.w / 2 + 6) return p;
+    }
+    return null;
+  }
+
+  function pressVal(p) {
+    if (!p || p.pressT >= 9) return 0;
+    return Math.exp(-p.pressT * 9) * Math.cos(p.pressT * 26);
+  }
+
+  function addFloat(text, x, y, color) {
+    floats.push({ text: text, x: x, y: y, color: color, life: 1 });
+  }
+
+  function updateHUD() {
+    if (hudCache.s !== score) { hudCache.s = score; elScore.textContent = score; }
+    if (hudCache.b !== best) { hudCache.b = best; elBest.textContent = best; }
+    if (hudCache.c !== combo) { hudCache.c = combo; elCombo.textContent = combo; }
+  }
+
+  /* ---------- 操作 ---------- */
+  function beginCharge() {
+    if (over || phase !== 'ready') return;
+    charging = true;
+    phase = 'charging';
+    power = 0;
+    chargeStart = nowMs();
+  }
+
+  function releaseCharge() {
+    if (!charging) return;
+    charging = false;
+    var p = Math.min(100, (nowMs() - chargeStart) / CHARGE_MS * 100);
+    if (p < MIN_POWER) p = MIN_POWER;
+    power = p;
+    var dist = MIN_JUMP + (MAX_JUMP - MIN_JUMP) * (p / 100);
+    player.vx = dist / AIR_T;   /* 抛物线用解析解推进，落点正好等于 dist */
+    player.vy = VY0;
+    player.rotV = (Math.PI * 2) / AIR_T;   /* 空中正好翻滚一圈 */
+    player.t = 0;
+    player.from = player.x;
+    phase = 'flying';
+    hintLife = 0;
+  }
+
+  function cancelCharge() {
+    if (!charging) return;
+    charging = false;
+    power = 0;
+    phase = 'ready';
+  }
+
+  /* ---------- 落地 / 结束 ---------- */
+  function landOn(p) {
+    var idx = platforms.indexOf(p);
+    player.y = GROUND;
+    player.vx = 0;
+    player.vy = 0;
+    player.rot = 0;
+    player.rotV = 0;
+    phase = 'ready';
+    if (p) p.pressT = 0;
+    var perfect = Math.abs(player.x - p.x) <= PERFECT;
+    if (idx > curIdx) {
+      curIdx = idx;
+      if (perfect) { score += 2; combo += 1; }
+      else { score += 1; combo = 0; }
+      if (combo > maxCombo) maxCombo = combo;
+      addFloat(perfect ? '完美 +2' : '+1', player.x, GROUND - 66, perfect ? '#ffd166' : '#8ef0c0');
+      if (combo >= 5) addFloat('🔥 连击 ' + combo, player.x, GROUND - 104, '#ff8a5c');
+      if (score > best) {
+        best = score;
+        try { store('jump.best', String(best)); } catch (e) {}
+      }
+    } else {
+      addFloat('再来一次', player.x, GROUND - 66, '#b9b3d9');
+    }
+    ensurePlatforms();
+    updateHUD();
+  }
+
+  function gameOver() {
+    over = true;
+    charging = false;
+    power = 0;
+    phase = 'falling';
+    ovScore.textContent = score;
+    ovBest.textContent = '最高分 ' + best;
+    ovTip.textContent = combo >= 3 ? ('差一点！连续完美 ' + combo + ' 次') : '再稳一点，节奏就来了';
+    ov.classList.add('on');
+  }
+
+  /* ---------- 每帧更新 ---------- */
+  function update(dt) {
+    if (charging) {
+      power = Math.min(100, (nowMs() - chargeStart) / CHARGE_MS * 100);
+    }
+    if (phase === 'flying') {
+      /* 解析抛物线：y = GROUND + VY0·t + ½G·t²，落点与帧率无关，连跳不会越跳越偏 */
+      player.t += dt;
+      var ft = player.t < AIR_T ? player.t : AIR_T;
+      player.x = player.from + player.vx * ft;
+      player.y = GROUND + VY0 * ft + 0.5 * G * ft * ft;
+      player.rot = player.rotV * ft;
+      if (player.t >= AIR_T) {
+        player.y = GROUND;
+        var p = platformAt(player.x);
+        if (p) landOn(p);
+        else gameOver();
+      }
+    } else if (phase === 'falling') {
+      if (player.y < H + 240) {
+        player.vy += G * dt;
+        player.y += player.vy * dt;
+        player.rot += player.rotV * dt;
+      }
+    } else {
+      player.rot += (0 - player.rot) * Math.min(1, dt * 12);
+    }
+
+    for (var i = 0; i < platforms.length; i++) {
+      if (platforms[i].pressT < 9) platforms[i].pressT += dt;
+    }
+
+    camTarget = player.x - 150;
+    if (camTarget < -30) camTarget = -30;
+    camX += (camTarget - camX) * Math.min(1, dt * 6);
+
+    for (var j = floats.length - 1; j >= 0; j--) {
+      floats[j].life -= dt;
+      floats[j].y -= dt * 46;
+      if (floats[j].life <= 0) floats.splice(j, 1);
+    }
+
+    if (phase === 'ready' && hintLife > 0) hintLife -= dt * 0.35;
+
+    ensurePlatforms();
+    updateHUD();
+  }
+
+  /* ---------- 绘制 ---------- */
+  function rr(x, y, w, h, r) {
+    if (w < 0) { x += w; w = -w; }
+    if (h < 0) { y += h; h = -h; }
+    var rad = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+
+  function hill(par, amp, base, color, freq) {
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND + 12);
+    for (var x = 0; x <= W; x += 6) {
+      var wx = x + camX * par;
+      var y = base - Math.sin(wx * freq) * amp - Math.sin(wx * freq * 2.7 + 1.7) * amp * 0.45;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, GROUND + 12);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function drawSky() {
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#181145');
+    g.addColorStop(0.55, '#0e0f26');
+    g.addColorStop(1, '#080a18');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    var span = W + 60;
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      var sx = ((s.x - camX * 0.25) % span + span) % span - 30;
+      ctx.globalAlpha = s.a;
+      ctx.fillStyle = '#dfe6ff';
+      ctx.beginPath();
+      ctx.arc(sx, s.y, s.r, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    hill(0.16, 52, 466, 'rgba(99,102,241,.16)', 0.0062);
+    hill(0.3, 34, 502, 'rgba(139,92,246,.20)', 0.0105);
+
+    var vg = ctx.createLinearGradient(0, GROUND, 0, H);
+    vg.addColorStop(0, 'rgba(9,9,22,.9)');
+    vg.addColorStop(1, '#05060d');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, GROUND + 10, W, H - GROUND - 10);
+  }
+
+  function drawPlatforms() {
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      var x = p.x - camX;
+      if (x < -200 || x > W + 200) continue;
+      var top = GROUND + pressVal(p) * 5;
+      var w = p.w, h = 20;
+
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.45)';
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 6;
+      rr(x - w / 2, top, w, h, 8);
+      var pg = ctx.createLinearGradient(0, top, 0, top + h);
+      pg.addColorStop(0, '#9a8bff');
+      pg.addColorStop(1, '#4a3f96');
+      ctx.fillStyle = pg;
+      ctx.fill();
+      ctx.restore();
+
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      rr(x - w / 2 + 5, top + 1.5, w - 10, 2, 1);
+      ctx.fill();
+
+      if (i === curIdx + 1) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = 'rgba(255,209,102,.85)';
+        rr(x - PERFECT, top - 3, PERFECT * 2, 3, 1.5);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,209,102,.6)';
+        rr(x - 1, top - 9, 2, 6, 1);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+
+  function drawBlock() {
+    var off = 0;
+    if (phase === 'ready' || phase === 'charging') {
+      var sp = platformAt(player.x);
+      if (sp) off = pressVal(sp) * 5;
+    }
+    var bx = player.x - camX;
+    var by = player.y + off;
+
+    if (phase !== 'falling') {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(bx, GROUND + 3, SIZE * 0.62, 5, 0, 0, 6.2832);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    var sq = 1;
+    var st = 1;
+    if (phase === 'charging') {
+      sq = 1 - 0.34 * (power / 100);
+      st = 1 + 0.28 * (power / 100);
+    }
+
+    ctx.save();
+    ctx.translate(bx, by - SIZE / 2);
+    ctx.rotate(player.rot);
+    ctx.scale(st, sq);
+    rr(-SIZE / 2, -SIZE / 2, SIZE, SIZE, 9);
+    var bg = ctx.createLinearGradient(0, -SIZE / 2, 0, SIZE / 2);
+    bg.addColorStop(0, '#ffd98a');
+    bg.addColorStop(1, '#f2703f');
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.55)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#2a1830';
+    ctx.beginPath();
+    ctx.arc(-6, -3, 2.6, 0, 6.2832);
+    ctx.arc(6, -3, 2.6, 0, 6.2832);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawFloats() {
+    ctx.save();
+    ctx.textAlign = 'center';
+    for (var i = 0; i < floats.length; i++) {
+      var f = floats[i];
+      ctx.globalAlpha = Math.max(0, Math.min(1, f.life * 1.6));
+      ctx.font = 'bold 19px ' + FONT;
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, f.x - camX, f.y);
+    }
+    ctx.restore();
+  }
+
+  function drawCombo() {
+    if (combo < 5) return;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = 0.92;
+    ctx.font = 'bold 21px ' + FONT;
+    ctx.fillStyle = '#ffb347';
+    ctx.fillText('完美连击 x' + combo + ' 🔥', W / 2, 86);
+    ctx.restore();
+  }
+
+  function drawPowerBar() {
+    if (!charging && power <= 0) return;
+    var bw = 240, bh = 12, bx = (W - bw) / 2, by = H - 56;
+    ctx.save();
+    rr(bx, by, bw, bh, 6);
+    ctx.fillStyle = 'rgba(255,255,255,.10)';
+    ctx.fill();
+    var pct = power / 100;
+    if (bw * pct > 2) {
+      var pg = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+      pg.addColorStop(0, '#63e6be');
+      pg.addColorStop(0.55, '#ffd166');
+      pg.addColorStop(1, '#ff6b6b');
+      rr(bx, by, bw * pct, bh, 6);
+      ctx.fillStyle = pg;
+      ctx.fill();
+    }
+    ctx.textAlign = 'center';
+    ctx.font = '13px ' + FONT;
+    ctx.fillStyle = 'rgba(236,233,255,.85)';
+    ctx.fillText('力度 ' + Math.round(power) + '%', W / 2, by - 10);
+    ctx.restore();
+  }
+
+  function drawHint() {
+    if (phase !== 'ready' || hintLife <= 0) return;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = Math.min(1, hintLife);
+    ctx.font = '15px ' + FONT;
+    ctx.fillStyle = 'rgba(236,233,255,.8)';
+    ctx.fillText('按住蓄力，松开起跳', W / 2, H - 96);
+    ctx.font = '12px ' + FONT;
+    ctx.fillStyle = 'rgba(185,179,217,.7)';
+    ctx.fillText('空格键也可以', W / 2, H - 74);
+    ctx.restore();
+  }
+
+  function drawPointer() {
+    if (!pointer.on) return;
+    if (pointer.x < 0 || pointer.x > W || pointer.y < 0 || pointer.y > H) return;
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, 11, 0, 6.2832);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#080a18';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    var s = view.dpr * view.scale;
+    ctx.setTransform(s, 0, 0, s, view.dpr * view.ox, view.dpr * view.oy);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.clip();
+
+    drawSky();
+    drawPlatforms();
+    drawBlock();
+    drawFloats();
+    drawCombo();
+    drawPowerBar();
+    drawHint();
+    drawPointer();
+
+    ctx.restore();
+  }
+
+  /* ---------- 尺寸 / 高分屏 ---------- */
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var cw = cv.clientWidth || 1, ch = cv.clientHeight || 1;
+    cv.width = Math.round(cw * dpr);
+    cv.height = Math.round(ch * dpr);
+    var sc = Math.min(cw / W, ch / H);
+    view.dpr = dpr;
+    view.scale = sc > 0 ? sc : 1;
+    view.ox = (cw - W * view.scale) / 2;
+    view.oy = (ch - H * view.scale) / 2;
+    draw();
+  }
+
+  function toLogical(e) {
+    var r = cv.getBoundingClientRect();
+    if (!view.scale) return { x: 0, y: 0 };
+    return {
+      x: (e.clientX - r.left - view.ox) / view.scale,
+      y: (e.clientY - r.top - view.oy) / view.scale
+    };
+  }
+
+  /* ---------- 主循环 ---------- */
+  function loop(ts) {
+    raf = requestAnimationFrame(loop);
+    var dt = last ? (ts - last) / 1000 : 0;
+    last = ts;
+    if (dt > DT_MAX) dt = DT_MAX;
+    if (dt < 0) dt = 0;
+    update(dt);
+    draw();
+  }
+
+  function restart() {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    last = 0;
+
+    platforms = [];
+    curIdx = 0;
+    platforms.push({ x: 120, w: 110, pressT: 9 });
+    player.x = 120;
+    player.y = GROUND;
+    player.vx = 0;
+    player.vy = 0;
+    player.rot = 0;
+    player.rotV = 0;
+    player.t = 0;
+    player.from = 120;
+
+    score = 0;
+    combo = 0;
+    maxCombo = 0;
+    over = false;
+    charging = false;
+    power = 0;
+    chargeStart = 0;
+    phase = 'ready';
+    camX = -30;
+    camTarget = -30;
+    floats = [];
+    hintLife = 1;
+    pointer.on = false;
+
+    ensurePlatforms();
+    ov.classList.remove('on');
+    updateHUD();
+
+    raf = requestAnimationFrame(loop);
+  }
+
+  /* ---------- 输入 ---------- */
+  cv.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    pointer.on = true;
+    var p = toLogical(e);
+    pointer.x = p.x;
+    pointer.y = p.y;
+    beginCharge();
+  });
+
+  cv.addEventListener('pointermove', function (e) {
+    var p = toLogical(e);
+    pointer.x = p.x;
+    pointer.y = p.y;
+    pointer.on = true;
+  });
+
+  cv.addEventListener('pointerleave', function () {
+    if (!charging) pointer.on = false;
+  });
+
+  document.getElementById('stage').addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+  });
+
+  window.addEventListener('pointerup', function () {
+    pointer.on = false;
+    releaseCharge();
+  });
+
+  window.addEventListener('pointercancel', function () {
+    pointer.on = false;
+    cancelCharge();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      if (!e.repeat) beginCharge();
+    } else if (e.key === 'r' || e.key === 'R') {
+      restart();
+    }
+  });
+
+  document.addEventListener('keyup', function (e) {
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      releaseCharge();
+    }
+  });
+
+  window.addEventListener('blur', cancelCharge);
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) cancelCharge();
+    else last = 0;
+  });
+
+  btnRestart.addEventListener('click', function (e) {
+    e.preventDefault();
+    restart();
+  });
+
+  btnAgain.addEventListener('click', function (e) {
+    e.preventDefault();
+    restart();
+  });
+
+  /* ---------- 对外契约 ---------- */
+  window.GAME = {
+    slug: 'jump',
+    state: function () {
+      return {
+        slug: 'jump',
+        over: !!over,
+        score: score,
+        best: best,
+        charging: !!charging,
+        power: Math.round(power),
+        combo: combo,
+        maxCombo: maxCombo,
+        platforms: platforms.length,
+        running: !over,
+        phase: phase,
+        index: curIdx,
+        camX: Math.round(camX),
+        block: { x: Math.round(player.x), y: Math.round(player.y) }
+      };
+    },
+    restart: function () {
+      restart();
+      return true;
+    }
+  };
+
+  /* ---------- 启动 ---------- */
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', resize);
+  if (window.ResizeObserver) {
+    try {
+      new ResizeObserver(function () { resize(); }).observe(cv);
+    } catch (e) {}
+  }
+
+  restart();
+  resize();
+})();
+</script>
+</body>
+</html>

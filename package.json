@@ -68,7 +68,8 @@
     "test:attachment-store": "node tools/attachment-store-test.mjs",
     "test:offline-queue": "node tools/offline-queue-test.mjs",
     "test:offline-wire": "node tools/offline-wire-test.mjs",
-    "test:export-records": "node tools/export-record-test.mjs"
+    "test:export-records": "node tools/export-record-test.mjs",
+    "check:game": "node tools/game-contract-check.mjs"
   },
   "engines": {
     "node": ">=22.5"

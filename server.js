@@ -323,7 +323,7 @@ app.use((req, res, next) => {
 app.use('/static', express.static(PUBLIC_DIR, { maxAge: '7d', etag: true }));
 // PWA 图标：public/ 根目录没有整体挂静态，单独把 icons 目录挂出来（manifest 里声明的 4 张图）
 app.use('/icons', express.static(join(PUBLIC_DIR, 'icons'), { maxAge: '30d', etag: true }));
-// 20 款游戏的静态封面（public/covers/<slug>.svg，由 tools/gen-covers.mjs 生成、src/covers.js 是唯一事实来源）：
+// 23 款游戏的静态封面（public/covers/<slug>.svg，由 tools/gen-covers.mjs 生成、src/covers.js 是唯一事实来源）：
 // 和 icons 同理，public/ 根没有整体挂静态，所以单独挂一层；查不到就回落动态 /cover/:slug.svg。
 app.use('/covers', express.static(join(PUBLIC_DIR, 'covers'), { maxAge: '7d', etag: true }));
 // 生产环境建议把游戏放到独立域名（如 games.example.com）做沙箱隔离

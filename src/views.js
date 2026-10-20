@@ -7,7 +7,7 @@ import { makeupCheck } from './daily.js';
 import { rewardsOf, rewardSummary } from './rewards.js';
 // 导航页的数据源：fishport.cn 下能打开的站点清单（三条线共用一份）
 import { groupedSites, siteUrl } from './sites.js';
-// 20 款游戏的静态封面（public/covers/*.svg）：命中就用真封面，没命中回落动态 /cover/:slug.svg
+// 23 款游戏的静态封面（public/covers/*.svg）：命中就用真封面，没命中回落动态 /cover/:slug.svg
 import { coverFor } from './covers.js';
 
 export const SITE = {
