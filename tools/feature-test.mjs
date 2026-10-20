@@ -11,6 +11,7 @@
  * 邮件走开发发件箱（没配 RESEND_API_KEY / MAIL_API_URL 时不会真发信）。
  */
 import http from 'node:http';
+import fs from 'node:fs';
 import { PORTAL_HOSTS, SITES } from '../src/sites.js';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:3000';
@@ -601,6 +602,43 @@ async function main() {
     aRes.status === 200 && String(aRes.headers.get('content-type')).indexOf('image/png') === 0 &&
     aBuf.length === TINY_PNG.length && aBuf.every((b, i) => b === TINY_PNG[i]),
     aRes.status + ' ' + aBuf.length + 'B vs ' + TINY_PNG.length + 'B');
+  console.log('--- 论坛：带附件的 multipart 回复与编辑（同一条 bug 的另两个调用点） ---');
+  /* /forum/t/:id/reply 与 /forum/post/:id/edit 也是先 formOf(req) 再 forumPrefilter(req, form, ...)。
+   * 旧代码里 forumPrefilter 自己读 req.body：带附件的表单走 express.raw，req.body 是原始 Buffer，
+   * form_token 永远是 undefined → consumeNonce('') → err=stale（server.js 里那一行判定）。 */
+  const REPLY_PNG = new Uint8Array(fs.readFileSync(new URL('../public/icons/icon-192.png', import.meta.url)));
+  r = await req(fPath, { j: jarAd });
+  const arTok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  const rfd = new FormData();
+  rfd.append('body', '带附件的回复 ' + STAMP);
+  rfd.append('parent_id', '0');
+  rfd.append('form_token', arTok);
+  rfd.append('website', '');
+  rfd.append('files', new Blob([REPLY_PNG], { type: 'image/png' }), 'icon-192.png');
+  r = await req(fPath + '/reply', { method: 'POST', j: jarAd, fd: rfd, redirect: 'manual' });
+  const rPid2 = Number(((r.location.match(/#p(\d+)/) || [])[1]) || 0);
+  ok('multipart 回复不是 stale（回复路径也要拿解析后的字段判令牌）',
+    r.status === 302 && r.location.indexOf('err=') < 0 && !!rPid2, r.status + ' ' + r.location);
+  r = await req(fPath);
+  const attUrls = [...new Set(r.text.match(/\/ugc\/a\/\d+/g) || [])];
+  const rAttUrl = attUrls.filter((u) => u !== aUrl)[0] || '';
+  ok('回复楼层挂上了自己的附件（主题页出现第二个附件链接）', !!rAttUrl, attUrls.join(' '));
+  const rAttRes = await fetch(BASE + (rAttUrl || '/ugc/a/0'));
+  const rAttBuf = new Uint8Array(await rAttRes.arrayBuffer());
+  ok('回复附件取回是 icon-192.png 的原字节（200 + image/png）',
+    rAttRes.status === 200 && String(rAttRes.headers.get('content-type')).indexOf('image/png') === 0 &&
+    rAttBuf.length === REPLY_PNG.length && rAttBuf.every((b, i) => b === REPLY_PNG[i]),
+    rAttRes.status + ' ' + rAttBuf.length + 'B vs ' + REPLY_PNG.length + 'B');
+  r = await req('/forum/post/' + rPid2 + '/edit', { j: jarAd });
+  const aeTok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  const efd = new FormData();
+  efd.append('body', '带附件的回复（编辑过）' + STAMP);
+  efd.append('form_token', aeTok);
+  efd.append('website', '');
+  efd.append('files', new Blob([TINY_PNG], { type: 'image/png' }), 'dot2.png');
+  r = await req('/forum/post/' + rPid2 + '/edit', { method: 'POST', j: jarAd, fd: efd, redirect: 'manual' });
+  ok('multipart 编辑不是 stale（第三个调用点同样不能读 Buffer）',
+    r.status === 302 && r.location.indexOf('err=') < 0 && /#p\d+$/.test(r.location), r.status + ' ' + r.location);
 
   console.log('--- 论坛：邮箱门槛、黑名单、蜜罐、一次性令牌与限流 ---');
   const f1Name = 'fu' + STAMP + 'a';
@@ -720,11 +758,22 @@ async function main() {
   r = await req('/forum/admin/threads/' + nId + '/flags', { method: 'POST', j: jarAd, form: { pinned: '1', locked: '1' }, redirect: 'manual' });
   ok('后台置顶 + 锁定这个主题', r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
   r = await req('/forum');
-  ok('置顶主题排到列表最前', r.status === 200 && r.text.indexOf(nTitle) >= 0 && r.text.indexOf(nTitle) < r.text.indexOf(fTitle), '');
+  /* 首页每页 20 行、置顶优先；老写法要求「新人主题」和「验收主题」都出现在第一页里。
+   * 每跑一次这个脚本就多留一个置顶的测试主题（跑到现在库里已经攒了 19 个），首页只剩 1 个非置顶名额，
+   * 另一个主题一掉出第一页 indexOf 就是 -1，断言假失败。改成直接要求置顶主题就是首页第一条。 */
+  const firstThreadId = ((r.text.match(/\/forum\/t\/(\d+)/) || [])[1] || '');
+  ok('置顶主题排到列表最前（首页第一条就是它）',
+    r.status === 200 && firstThreadId === String(nId) && r.text.includes(nTitle),
+    r.status + ' first=' + firstThreadId + ' want=' + nId);
   r = await req(nPath);
   ok('锁定后页面显示「已被站长锁定，不能再回复」', r.status === 200 && r.text.includes('不能再回复'), r.status);
   r = await req(nPath, { j: jarF2 });
   ok('锁定后登录用户也拿不到回复表单', r.status === 200 && !r.text.includes('name="form_token"'), r.status);
+  /* 用完复原：跑一次就留一个「置顶 + 锁定」的测试主题，跑几十次以后论坛首页第一页会被测试主题占满
+   * （历史上就有一次因此假失败）。把它按回普通主题，脚本就能无限次重跑。 */
+  r = await req('/forum/admin/threads/' + nId + '/flags', { method: 'POST', j: jarAd, form: { pinned: '0', locked: '0' }, redirect: 'manual' });
+  ok('用完把置顶与锁定复原（不往首页堆测试主题，脚本可重复跑）',
+    r.status === 302 && r.location.indexOf('ok=done') > 0, r.status + ' ' + r.location);
 
   r = await req(fPath, { j: jarF2 });
   const f2TokN = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
