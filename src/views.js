@@ -2,6 +2,7 @@
 import { isUploadedUrl, UPLOAD_LABEL } from './upload.js';
 // 更新说明页的数据源：由 tools/gen-changelog.mjs 从 git 提交历史生成
 import { CHANGELOG, CHANGELOG_GENERATED, CHANGELOG_TOTAL } from './changelog-data.js';
+import { makeupCheck } from './daily.js';
 // 导航页的数据源：fishport.cn 下能打开的站点清单（三条线共用一份）
 import { groupedSites, siteUrl } from './sites.js';
 
@@ -1417,6 +1418,32 @@ function ftext(body) {
   return esc(body).replace(/\r?\n/g, '<br>');
 }
 
+/** 附件大小：B / KB / MB（KB 起保留一位小数） */
+function fmtSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+/** 附件列表（第二轮）：没有附件时返回空串，保证旧调用的输出逐字节不变 */
+function fattachList(list) {
+  const arr = Array.isArray(list) ? list : [];
+  if (!arr.length) return '';
+  return '<ul class="fattach-list">' + arr.map((a) =>
+    '<li>📎 <a href="/ugc/a/' + encodeURIComponent(String(a && a.id != null ? a.id : '')) + '">' +
+    esc((a && a.filename) || '附件') + '</a> <small class="dim">(' + fmtSize(a && a.bytes) + ')</small></li>').join('') +
+    '</ul>';
+}
+
+/** 主题标签 chips：href 由调用方给（列表页用相对链接，详情页指向板块首页） */
+function ftagChips(tags, href) {
+  const arr = Array.isArray(tags) ? tags.filter(Boolean) : [];
+  if (!arr.length) return '';
+  return '<span class="ftags">' + arr.map((tag) =>
+    '<a class="tagchip" href="' + href(String(tag)) + '">#' + esc(tag) + '</a>').join('') + '</span>';
+}
+
 function fpill(status, map) {
   return '<span class="pill f' + Number(status) + '">' + esc(map[Number(status)] || '未知') + '</span>';
 }
@@ -1456,16 +1483,18 @@ function gateBox(gate, base, next) {
 function threadItem(t, base) {
   return '<li class="thr' + (Number(t.pinned) ? ' pinned' : '') + '">' +
     '<a class="thr-link" href="' + base + '/t/' + Number(t.id) + '">' +
-      '<span class="thr-title">' + (Number(t.pinned) ? '📌 ' : '') + (Number(t.locked) ? '🔒 ' : '') + esc(t.title) + '</span>' +
+      '<span class="thr-title">' + (Number(t.pinned) ? '📌 ' : '') + (Number(t.locked) ? '🔒 ' : '') + (t.featured ? '⭐ ' : '') + esc(t.title) + '</span>' +
       '<span class="thr-meta">' + esc(t.forum_name || '') + ' · ' + esc(t.name || t.username || '—') + ' · ' + ftime(t.last_reply_at || t.created_at) +
       ' · ' + fmtNum(t.reply_count) + ' 回复 · ' + fmtNum(t.view_count) + ' 浏览</span>' +
     '</a>' +
     (Number(t.status) !== 1 ? fpill(t.status, FT_STATUS) : '') +
+    ftagChips(t.tags, (tag) => '?tag=' + encodeURIComponent(tag)) +
     '</li>';
 }
 
 /** 论坛首页：板块导航 + 最新主题 + 搜索 */
-export function forumHomePage({ origin, user = null, forums = [], threads = [], stats = {}, q = '', page = 1, pages = 1, total = 0, base = '/forum', notice = '' }) {
+export function forumHomePage({ origin, user = null, forums = [], threads = [], stats = {}, q = '', page = 1, pages = 1, total = 0, base = '/forum', notice = '', tag = '' }) {
+  const tagBar = tag ? '\n    <div class="ftagbar">标签：<b>#' + esc(tag) + '</b> <a href="' + base + '/">清除</a></div>' : '';
   const cards = forums.length
     ? '<ul class="fboards">' + forums.map((f) =>
       '<li><a href="' + base + '/f/' + encodeURIComponent(f.slug) + '">' +
@@ -1481,7 +1510,7 @@ export function forumHomePage({ origin, user = null, forums = [], threads = [], 
     : '<p class="cmt-empty">' + (q ? '没有搜到相关主题' : '还没有主题，来发第一帖吧') + '</p>';
   const content = `<div class="wrap forum">
   <div class="forum-head">
-    <h1>💬 论坛</h1>
+    <h1>💬 论坛</h1>${tagBar}
     <p class="forum-sub">${esc(SITE.name)}的玩家讨论区：攻略、求助、站务都在这儿。发帖用游戏站账号；新账号的前 3 帖会先进待审队列，站长放行后大家才看得到。</p>
     <div class="forum-stats">
       <span><b>${fmtNum(stats.threads)}</b> 主题</span>
@@ -1509,7 +1538,8 @@ export function forumHomePage({ origin, user = null, forums = [], threads = [], 
 }
 
 /** 单个板块的主题列表 */
-export function forumBoardPage({ origin, user = null, forum, threads = [], q = '', page = 1, pages = 1, total = 0, base = '/forum' }) {
+export function forumBoardPage({ origin, user = null, forum, threads = [], q = '', page = 1, pages = 1, total = 0, base = '/forum', tag = '' }) {
+  const tagBar = tag ? '\n    <div class="ftagbar">标签：<b>#' + esc(tag) + '</b> <a href="' + base + '/f/' + encodeURIComponent(forum.slug) + '">清除</a></div>' : '';
   const list = threads.length
     ? '<ul class="thr-list">' + threads.map((t) => threadItem(t, base)).join('') + '</ul>' +
       forumPager(base, '/f/' + encodeURIComponent(forum.slug), page, pages, q ? 'q=' + encodeURIComponent(q) : '')
@@ -1517,7 +1547,7 @@ export function forumBoardPage({ origin, user = null, forum, threads = [], q = '
   const content = `<div class="wrap forum">
   <nav class="crumb"><a href="${base}/">论坛</a> › <span>${esc(forum.name)}</span></nav>
   <div class="forum-head">
-    <h1>${esc(forum.icon || '💬')} ${esc(forum.name)}</h1>
+    <h1>${esc(forum.icon || '💬')} ${esc(forum.name)}</h1>${tagBar}
     <p class="forum-sub">${esc(forum.description || '')}</p>
     <div class="forum-actions">
       <a class="btn ok" href="${base}/new?forum=${encodeURIComponent(forum.slug)}">✏️ 在本板块发帖</a>
@@ -1554,6 +1584,7 @@ function forumPostItem(p, { user, base }) {
     '<div class="fp-main">' +
       (p.parent_name ? '<div class="fp-quote">回复 @' + esc(p.parent_name) + '</div>' : '') +
       '<div class="fp-body">' + ftext(p.body) + '</div>' +
+      (Array.isArray(p.attachments) && p.attachments.length ? '<div class="fattach">' + fattachList(p.attachments) + '</div>' : '') +
       '<div class="fp-act">' + (pending ? fpill(p.status, FP_STATUS) : '') +
       (!pending ? '<a class="btn btn-sm" href="' + base + '/t/' + Number(p.thread_id || 0) + '?reply=' + Number(p.id) + '#reply">回复</a>' : '') +
       (mine || isAdmin ? '<a class="btn btn-sm" href="' + base + '/post/' + Number(p.id) + '/edit">编辑</a>' : '') +
@@ -1563,9 +1594,15 @@ function forumPostItem(p, { user, base }) {
 
 /** 主题详情：楼层列表 + 回复框；站长在页内就能通过 / 下架 / 置顶 / 锁定 */
 export function forumThreadPage({ origin, user = null, thread, forum = null, posts = [], page = 1, pages = 1, total = 0, base = '/forum', gate = null, error = '', notice = '', form = null, replyTo = null }) {
-  const isAdmin = !!user && user.role === 'admin';
+  const isMod = !!user && (user.role === 'admin' || user.role === 'mod');
   const locked = Number(thread.locked) === 1;
-  const adminBar = isAdmin
+  const threadTags = Array.isArray(thread.tags) ? thread.tags.filter(Boolean) : [];
+  const threadAtts = Array.isArray(thread.attachments) ? thread.attachments : [];
+  const tagsLine = threadTags.length
+    ? '\n    <div class="ftags">' + threadTags.map((tag) => '<a class="tagchip" href="' + base + '/?tag=' + encodeURIComponent(tag) + '">#' + esc(tag) + '</a>').join('') + '</div>'
+    : '';
+  const attachLine = threadAtts.length ? '\n    ' + fattachList(threadAtts) : '';
+  const adminBar = isMod
     ? '<div class="forum-adminbar">' +
       fpill(thread.status, FT_STATUS) +
       '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/status">' +
@@ -1577,26 +1614,30 @@ export function forumThreadPage({ origin, user = null, thread, forum = null, pos
       '<button class="btn btn-sm" type="submit">' + (Number(thread.pinned) ? '取消置顶' : '📌 置顶') + '</button></form>' +
       '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/flags">' +
       '<input type="hidden" name="locked" value="' + (locked ? '0' : '1') + '">' +
-      '<button class="btn btn-sm" type="submit">' + (locked ? '🔓 解锁' : '🔒 锁定') + '</button></form></div>'
+      '<button class="btn btn-sm" type="submit">' + (locked ? '🔓 解锁' : '🔒 锁定') + '</button></form>' +
+      '<form class="inline" method="post" action="/forum/admin/threads/' + Number(thread.id) + '/flags">' +
+      '<input type="hidden" name="featured" value="' + (thread.featured ? '0' : '1') + '">' +
+      '<button class="btn btn-sm" type="submit">' + (thread.featured ? '取消精华' : '⭐ 设为精华') + '</button></form></div>'
     : '';
-  const replyBox = locked && !isAdmin
+  const replyBox = locked && !isMod
     ? '<p class="forum-gate">🔒 这个主题已被站长锁定，不能再回复</p>'
     : !user
       ? gateBox({ error: 'login' }, base, '/t/' + Number(thread.id))
       : (gate && !gate.ok)
         ? gateBox(gate, base, '/t/' + Number(thread.id))
-        : '<form class="fpost-form" id="reply" method="post" action="' + base + '/t/' + Number(thread.id) + '/reply">' +
+        : '<form class="fpost-form" id="reply" method="post" enctype="multipart/form-data" action="' + base + '/t/' + Number(thread.id) + '/reply">' +
           antispamFields(form || {}) +
           '<input type="hidden" name="parent_id" value="' + (replyTo ? Number(replyTo.id) : 0) + '">' +
           (replyTo ? '<p class="dim">正在回复' + (Number(replyTo.floor) ? ' #' + Number(replyTo.floor) + ' 楼' : '') + ' @' + esc(replyTo.name || '') +
             '（<a href="' + base + '/t/' + Number(thread.id) + '#reply">取消</a>）</p>' : '') +
           '<label>回复<textarea name="body" rows="5" maxlength="3000" required placeholder="友善发言；广告、刷屏、人身攻击会被下架，严重者封禁"></textarea></label>' +
+          '<label>附件<input type="file" name="files" multiple accept="image/*,.txt,.md,.json,.zip"></label>' +
           '<button class="btn ok" type="submit">发表回复</button></form>';
   const content = `<div class="wrap forum">
   <nav class="crumb"><a href="${base}/">论坛</a> › <a href="${base}/f/${encodeURIComponent(forum ? forum.slug : '')}">${esc(forum ? forum.name : '板块')}</a> › <span>${esc(thread.title)}</span></nav>
   <article class="fthread">
-    <h1>${Number(thread.pinned) ? '📌 ' : ''}${locked ? '🔒 ' : ''}${esc(thread.title)}</h1>
-    <p class="fthread-meta">${esc(thread.name || thread.username || '—')} · ${ftime(thread.created_at)} · ${fmtNum(thread.view_count)} 浏览 · ${fmtNum(thread.reply_count)} 回复</p>
+    <h1>${Number(thread.pinned) ? '📌 ' : ''}${locked ? '🔒 ' : ''}${thread.featured ? '⭐ ' : ''}${esc(thread.title)}</h1>
+    <p class="fthread-meta">${esc(thread.name || thread.username || '—')} · ${ftime(thread.created_at)} · ${fmtNum(thread.view_count)} 浏览 · ${fmtNum(thread.reply_count)} 回复</p>${tagsLine}${attachLine}
     ${adminBar}
     ${notice ? '<p class="forum-notice">' + esc(notice) + '</p>' : ''}
     ${error ? '<p class="auth-err">' + esc(error) + '</p>' : ''}
@@ -1617,11 +1658,14 @@ export function forumNewPage({ origin, user = null, forums = [], forumSlug = '',
     ? gateBox({ error: 'login' }, base, '/new')
     : (gate && !gate.ok)
       ? gateBox(gate, base, '/new')
-      : `<form class="fpost-form" method="post" action="${base}/new">
+      : `<form class="fpost-form" method="post" enctype="multipart/form-data" action="${base}/new">
     ${antispamFields(form || {})}
     <label>板块<select name="forum">${opts}</select></label>
     <label>标题<input name="title" value="${v('title')}" required maxlength="80" placeholder="一句话说清楚问题或话题"></label>
     <label>正文<textarea name="body" rows="10" maxlength="3000" required placeholder="把情况说清楚，方便别人帮你">${v('body')}</textarea></label>
+    <label>标签<input name="tags" maxlength="64" placeholder="最多 3 个，逗号分隔，例如 攻略,求助" value="${v('tags')}"></label>
+    <label>附件<input type="file" name="files" multiple accept="image/*,.txt,.md,.json,.zip"></label>
+    <p class="dim">单个文件最大 4 MB；Worker 线上限 256 KB。</p>
     ${error ? '<p class="auth-err">' + esc(error) + '</p>' : ''}
     <button class="btn ok" type="submit">发布主题</button>
     <p class="dim">新账号的前 3 帖会先进入待审队列，站长通过后公开。提交即表示同意<a href="/terms">用户协议</a>，请勿发布违法或广告内容。</p>
@@ -1636,9 +1680,13 @@ export function forumNewPage({ origin, user = null, forums = [], forumSlug = '',
 
 /** 编辑楼层：非站长的编辑会重新进入待审队列，改动留痕 */
 export function forumEditPage({ origin, user = null, post, thread = null, error = '', form = null, base = '/forum' }) {
-  const body = `<form class="fpost-form" method="post" action="${base}/post/${Number(post.id)}/edit">
+  // 标签是主题级字段：编辑楼层的输入框只为展示与回传，实际写入由路由决定
+  const rawTags = post.tags && (Array.isArray(post.tags) ? post.tags.length : true) ? post.tags : (thread ? thread.tags : '');
+  const tagValue = Array.isArray(rawTags) ? rawTags.filter(Boolean).join(',') : String(rawTags || '');
+  const body = `<form class="fpost-form" method="post" enctype="multipart/form-data" action="${base}/post/${Number(post.id)}/edit">
     ${antispamFields(form || {})}
     <label>正文<textarea name="body" rows="12" maxlength="3000" required>${esc(post.body || '')}</textarea></label>
+    <label>标签<input name="tags" maxlength="64" placeholder="最多 3 个，逗号分隔，例如 攻略,求助" value="${esc(tagValue)}"></label>
     ${error ? '<p class="auth-err">' + esc(error) + '</p>' : ''}
     <button class="btn ok" type="submit">保存修改</button>
     <p class="dim">只有自己能编辑自己的帖子，站长能看到全部历史版本。<b>普通用户编辑后这条会重新进入待审队列</b>，站长确认后才会再公开。</p>
@@ -1740,11 +1788,21 @@ function dateList(n = 28, end = '') {
  * 每日挑战页：每天按日期哈希从已上架游戏里轮换一题。
  * 完成判定由服务端做（当天那款游戏收到一次播放事件即算完成），页面只展示进度，不做客户端申报。
  */
-export function dailyPage({ origin, user = null, day = '', game = null, stats = null, board = null }) {
+/** ?notice= 文案：补做成功走绿色提示，过期 / 日期不对走橙色提示（与账号页同一套类名） */
+const DAILY_NOTICE_OK = { makeup: '✅ 补做成功，这一天已经记进你的打卡了。' };
+const DAILY_NOTICE_ERR = {
+  too_late: '补做只开放最近两天，这一天的题目已经过期了。',
+  bad_day: '补做的日期不对，请从下面日历里的「🔁 补做」按钮进来。',
+  slug_mismatch: '这一天的题目对不上，没法补做。'
+};
+
+export function dailyPage({ origin, user = null, day = '', game = null, stats = null, board = null, notice = '' }) {
   const s = stats || { total: 0, streak: 0, doneToday: false, done: [], slug: '' };
   const done = new Set((s.done || []).map((d) => String(d).slice(0, 10)));
   const loginHref = '/login?next=' + encodeURIComponent('/daily');
   const boardRows = (board && board.rows) || [];
+  const okMsg = DAILY_NOTICE_OK[notice] || '';
+  const errMsg = DAILY_NOTICE_ERR[notice] || '';
 
   const todayBox = game
     ? '<div class="panel">' +
@@ -1759,19 +1817,39 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
       '</div>'
     : '<p class="empty">今天的题目还没准备好，过会儿再来看看</p>';
 
+  const perfect = s.perfect || null;                       // {month,total,done,perfect}：当月全勤进度
+  const perfectTxt = perfect ? (perfect.perfect ? '🏅 全勤' : perfect.done + ' / ' + perfect.total) : '—';
+  const makeupUsed = Number(s.makeupUsed) || 0;
   const userBox = user
     ? '<div class="stats">' +
         '<div class="stat"><b>' + fmtNum(s.total) + '</b><span>累计打卡（天）</span></div>' +
         '<div class="stat"><b>' + fmtNum(s.streak) + '</b><span>连续打卡（天）</span></div>' +
         '<div class="stat"><b>' + (s.doneToday ? '已打' : '未打') + '</b><span>今日状态</span></div>' +
-      '</div>'
+        '<div class="stat"><b>' + esc(perfectTxt) + '</b><span>本月全勤</span></div>' +
+      '</div>' +
+      '<p class="dim" style="margin:10px 0 0">漏掉的题最近两天还能补做：补做算进累计天数，但不算连续。' +
+        (makeupUsed ? '你已经补做了 ' + fmtNum(makeupUsed) + ' 天。' : '你还没用过补做。') + '</p>'
     : '<p class="dim" style="margin:18px 0"><a href="' + loginHref + '">登录</a> 后才会记录你的打卡与连续天数。</p>';
 
-  const days = dateList(28, day);
-  const cal = '<div class="chips">' + days.map((d) =>
-      '<span class="chip" title="' + esc(d) + '"' + (done.has(d) ? '' : ' style="opacity:.45"') + '>' +
-        (done.has(d) ? '✅ ' : '· ') + esc(d.slice(5)) + '</span>'
-    ).join('') + '</div>';
+  // 日历：优先用服务端 stats.calendar.cells（带补做标记），拿不到就按最近 28 天 + done 列表自己拼
+  const cells = (s.calendar && Array.isArray(s.calendar.cells) && s.calendar.cells.length)
+    ? s.calendar.cells
+    : dateList(28, day).map((d) => ({ day: d, done: done.has(d), makeup: 0, today: d === day }));
+  const cal = '<div class="chips">' + cells.map((c) => {
+      const d = String((c && c.day) || '');
+      if (!d) return '';
+      const isDone = !!(c && c.done);
+      const made = !!(c && c.makeup);
+      const title = d + (c && c.today ? '（今天）' : '') + (isDone ? (made ? '（补做完成）' : '（已打卡）') : '（未打卡）');
+      const chip = '<span class="chip"' + (isDone ? '' : ' style="opacity:.45"') + ' title="' + esc(title) + '">' +
+        (isDone ? (made ? '🔁 ' : '✅ ') : '· ') + esc(d.slice(5)) + '</span>';
+      // 只有「漏掉的、还在补做窗口内的」那一格才出按钮（今天直接玩就算打卡，不走补做）
+      const canMakeup = user && !isDone && d !== day && makeupCheck(d) === null;
+      if (!canMakeup) return chip;
+      return chip + '<form class="chip-act" method="post" action="/daily/makeup">' +
+        '<input type="hidden" name="day" value="' + esc(d) + '">' +
+        '<button class="chip chip-btn" type="submit" title="补做 ' + esc(d) + ' 的题目">🔁 补做</button></form>';
+    }).join('') + '</div>';
 
   const boardBox = '<div class="table-wrap"><table class="tbl" style="min-width:320px"><thead><tr><th>#</th><th>玩家</th></tr></thead><tbody>' +
     (boardRows.length
@@ -1783,8 +1861,9 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
   <nav class="crumb"><a href="/">首页</a><span>›</span><b>每日挑战</b></nav>
   <div class="page-head">
     <h1>📅 每日挑战</h1>
-    <p class="page-sub">每天换一款游戏，玩一次就算打卡；连续打卡天数会记在你的个人主页上。</p>
+    <p class="page-sub">每天换一款游戏，玩一次就算打卡；漏掉的题最近两天还能补做，连续打卡天数会记在你的个人主页上。</p>
   </div>
+  ${okMsg ? '<p class="auth-ok">' + esc(okMsg) + '</p>' : ''}${errMsg ? '<p class="auth-err">' + esc(errMsg) + '</p>' : ''}
   ${todayBox}
   ${userBox}
   <div class="panel">
@@ -1800,7 +1879,7 @@ export function dailyPage({ origin, user = null, day = '', game = null, stats = 
     origin, user, path: '/daily',
     ogImage: origin + '/daily/card.svg',
     title: '每日挑战',
-    description: '每天一款游戏，玩一次即打卡。累计与连续打卡天数、今日打卡榜都在这里。',
+    description: '每天一款游戏，玩一次即打卡；最近两天漏掉的题还能补做。累计与连续打卡天数、当月全勤、今日打卡榜都在这里。',
     content
   });
 }
@@ -1957,10 +2036,26 @@ ${shareScript()}`;
 /* ---------- 个人主页 ---------- */
 
 /** 个人主页：只展示公开信息（昵称、等级、徽章、公开计数），邮箱之类一概不出现在这里 */
-export function profilePage({ origin, user = null, profile, isSelf = false, counts = null, following = false, notice = '' }) {
+export function profilePage({ origin, user = null, profile, isSelf = false, counts = null, following = false, notice = '', ratings = [] }) {
   const p = profile || {};
   const c = counts || { followers: 0, following: 0, friends: 0 };
   const uname = encodeURIComponent(p.username || '');
+  // 联机天梯（第二轮）：ratings 为空时整段不渲染，旧调用的输出逐字节不变
+  const ratingsPanel = Array.isArray(ratings) && ratings.length
+    ? '<div class="panel">' +
+      '<div class="sec-head"><h2>🏆 联机天梯</h2><a class="more" href="/ladder">看总榜 ›</a></div>' +
+      '<div class="table-wrap"><table class="tbl" style="min-width:520px"><thead><tr><th>棋类</th><th>分数</th><th>局数</th><th>胜-负-和</th><th>最高分</th><th>排名</th></tr></thead><tbody>' +
+      ratings.map((r) => '<tr>' +
+        '<td>' + esc(r.title || r.game || '') + '</td>' +
+        '<td><b>' + (Number(r.rating) || 0) + '</b></td>' +
+        '<td>' + fmtNum(r.games) + '</td>' +
+        '<td>' + fmtNum(r.wins) + '-' + fmtNum(r.losses) + '-' + fmtNum(r.draws) + '</td>' +
+        '<td>' + (Number(r.peak) || 0) + '</td>' +
+        '<td>#' + (Number(r.rank) || 0) + '</td>' +
+        '</tr>').join('') +
+      '</tbody></table></div>' +
+      '</div>'
+    : '';
   // 关注是表单 POST（无 JS 也能用）；已关注时按钮变成「取消关注」，样式走 ghost 区分
   const actions = isSelf
     ? '<a class="btn" href="/account">账号设置</a>'
@@ -2022,7 +2117,7 @@ export function profilePage({ origin, user = null, profile, isSelf = false, coun
     <div class="chips">${owned.map(badgeChip).join('') || '<span class="dim">还没有解锁任何徽章</span>'}</div>
     ${locked.length ? '<h3 class="sub" style="margin-top:18px">未解锁</h3><div class="chips">' + locked.map(badgeChip).join('') + '</div>' : ''}
   </div>
-
+${ratingsPanel}
   ${isSelf ? '' : '<p class="dim">只展示公开数据：评论、收藏、评分、论坛发帖与每日打卡。邮箱、登录记录等隐私信息不会出现在这里。</p>'}
   <p class="dim">想有自己的主页？<a href="/register">注册</a> 或 <a href="/login">登录</a> 后就有了，顺手去 <a href="/daily">每日挑战</a> 打卡。</p>
 </div>
@@ -2220,5 +2315,100 @@ export function peoplePage({ origin, user, owner, kind = 'followers', list = nul
     origin, user, path: '/u/' + uname + '/' + k, title: KINDS[k] + ' · ' + oname, noindex: true,
     description: oname + ' 的' + KINDS[k] + '列表', content
   });
+}
+
+/* ---------- 联机天梯 / 棋谱回放（第二轮：服务端裁判棋类） ---------- */
+
+/** 联机天梯：只统计服务端裁判的四款棋类，按当前赛季（UTC 自然季度）计分 */
+export function ladderPage({ origin, user = null, game = '', games = [], board = null, season = '', notice = '' }) {
+  const slug = String(game || '');
+  const tabs = '<div class="chips ladder-tabs">' + (games || []).map((g) => {
+    const on = String(g.slug) === slug;
+    return '<a class="chip' + (on ? ' on' : '') + '" href="/ladder?game=' + encodeURIComponent(g.slug) + '"' +
+      (on ? ' aria-current="page"' : '') + '>' + esc(g.icon || '🎮') + ' ' + esc(g.title || g.slug) + '</a>';
+  }).join('') + '</div>';
+  const items = board && Array.isArray(board.items) ? board.items : [];
+  const box = items.length
+    ? '<div class="table-wrap"><table class="tbl" style="min-width:520px"><thead><tr>' +
+      '<th>排名</th><th>玩家</th><th>分数</th><th>局数</th><th>胜-负-和</th><th>最高分</th></tr></thead><tbody>' +
+      items.map((r) => '<tr>' +
+        '<td>#' + (Number(r.rank) || 0) + '</td>' +
+        '<td><a href="/u/' + encodeURIComponent(r.username) + '">' + esc(r.username || '玩家') + '</a></td>' +
+        '<td><b>' + (Number(r.rating) || 0) + '</b></td>' +
+        '<td>' + fmtNum(r.games) + '</td>' +
+        '<td>' + fmtNum(r.wins) + '-' + fmtNum(r.losses) + '-' + fmtNum(r.draws) + '</td>' +
+        '<td>' + (Number(r.peak) || 0) + '</td>' +
+        '</tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="empty">这个棋类还没有人下过，去联机开一局试试</p>';
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>联机天梯</b></nav>
+  <div class="page-head">
+    <h1>🏆 联机天梯</h1>
+    <p class="page-sub">只统计服务端裁判的四款棋类；默认按当前赛季（UTC 自然季度）计分，起始 1200 分</p>
+  </div>
+  ${notice ? '<p class="auth-ok">' + esc(notice) + '</p>' : ''}
+  <p class="dim">赛季 <span class="pill">${esc(season)}</span></p>
+  ${tabs}
+  <div class="panel">
+    <div class="sec-head"><h2>🏆 天梯榜</h2><span class="more">共 ${fmtNum(items.length)} 位玩家</span></div>
+    ${box}
+  </div>
+  <p class="dim">分数只由服务端裁判的对局结算；未结束、和棋、认输都按规则计入。赛季切换后从 1200 重新起算。</p>
+</div>`;
+  return layout({ origin, user, title: '联机天梯', description: '四款棋类的 Elo 天梯榜，按赛季计分。', path: '/ladder', ogImage: '', content });
+}
+
+/** 棋谱回放列表：联机对局存档，可按游戏筛选并分页 */
+export function replaysPage({ origin, user = null, items = [], total = 0, game = '', games = [], page = 1, pages = 1 }) {
+  const slug = String(game || '');
+  const tabs = '<div class="chips ladder-tabs">' +
+    '<a class="chip' + (slug ? '' : ' on') + '" href="/replays"' + (slug ? '' : ' aria-current="page"') + '>全部</a>' +
+    (games || []).map((g) => {
+      const on = String(g.slug) === slug;
+      return '<a class="chip' + (on ? ' on' : '') + '" href="/replays?game=' + encodeURIComponent(g.slug) + '"' +
+        (on ? ' aria-current="page"' : '') + '>' + esc(g.icon || '🎮') + ' ' + esc(g.title || g.slug) + '</a>';
+    }).join('') + '</div>';
+  const rows = (Array.isArray(items) ? items : []).map((it) => {
+    const id = encodeURIComponent(String(it.id == null ? '' : it.id));
+    const gslug = encodeURIComponent(String(it.game || slug || ''));
+    const res = String(it.result || '');
+    const winner = Number(it.winner) || 0;
+    const text = res === 'host' ? '房主胜' : res === 'guest' ? '访客胜' : res === 'draw' ? '和棋'
+      : winner === 1 ? '房主胜' : winner === 2 ? '访客胜' : '进行中/未结束';
+    return '<li class="note-item">' +
+      '<span class="note-ico" aria-hidden="true">🎬</span>' +
+      '<div class="note-main">' +
+        '<p class="note-head"><b>' + esc(it.hostName || '房主') + ' vs ' + esc(it.guestName || '挑战者') + '</b><span class="pill">' + text + '</span></p>' +
+        '<p class="note-body">共 ' + (Number(it.moveCount) || 0) + ' 手 · 播放 ' + fmtNum(it.plays) + ' 次 · ' + ftime(it.createdAt) + '</p>' +
+      '</div>' +
+      '<a class="btn btn-sm" href="/replay/' + id + '">看回放</a>' +
+      '<a class="btn btn-sm" href="/game/' + gslug + '">下同款</a>' +
+      '</li>';
+  }).join('');
+  const pn = Number(page) || 1;
+  const pt = Number(pages) || 1;
+  const href = (n) => '/replays?' + (slug ? 'game=' + encodeURIComponent(slug) + '&' : '') + 'page=' + n;
+  const pager = pt > 1
+    ? '<nav class="pager" aria-label="分页">' +
+      (pn > 1 ? '<a class="pg" href="' + href(pn - 1) + '" rel="prev">‹ 上一页</a>' : '<span class="pg off">‹ 上一页</span>') +
+      '<span class="pg-info">第 ' + pn + ' / ' + pt + ' 页</span>' +
+      (pn < pt ? '<a class="pg" href="' + href(pn + 1) + '" rel="next">下一页 ›</a>' : '<span class="pg off">下一页 ›</span>') +
+      '</nav>'
+    : '';
+  const content = `<div class="wrap page">
+  <nav class="crumb"><a href="/">首页</a><span>›</span><b>棋谱回放</b></nav>
+  <div class="page-head">
+    <h1>🎬 棋谱回放</h1>
+    <p class="page-sub">联机棋类的历史对局与回放：点「看回放」进播放器，能逐步复盘每一手。</p>
+  </div>
+  ${tabs}
+  <div class="panel">
+    <div class="sec-head"><h2>棋谱</h2><span class="more">共 ${fmtNum(total)} 条</span></div>
+    ${rows ? '<ul class="note-list">' + rows + '</ul>' : '<p class="empty">还没有棋谱。联机把一局下完（或认输）就会自动存档，这里能看回放。</p>'}
+    ${pager}
+  </div>
+</div>`;
+  return layout({ origin, user, title: '棋谱回放', description: '联机棋类的历史对局与回放。', path: '/replays', content });
 }
 

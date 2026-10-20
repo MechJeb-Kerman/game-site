@@ -4,6 +4,17 @@
  * 注意这里不能用 Buffer：Workers 运行时没有 Buffer，统一用 TextEncoder。
  */
 
+// 附件的校验与存储适配层在 ./attachments.js。它顶层没有任何 node: 静态导入，
+// 所以 Worker 这条线（worker/data.js → src/upload.js → src/attachments.js）引用它不会被带死。
+import {
+  validateAttachment as checkAttachment,
+  ATTACH_KINDS,
+  ATTACH_EXT_LIST,
+  ATTACH_MIME_LIST,
+  ATTACH_MAX,
+  ATTACH_MAX_LABEL
+} from './attachments.js';
+
 /** 单个 .html 文件的大小上限（字节）。D1 单个值上限约 1MB，留出余量；存 TEXT 不存 BLOB */
 export const UPLOAD_MAX = 512 * 1024;
 
@@ -36,4 +47,50 @@ export function validateHtmlUpload(filename, html) {
   if (text.indexOf('\u0000') >= 0) return { error: '这个文件不是文本，请上传单文件 HTML5 游戏' };
   if (!HTML_HINT.test(text)) return { error: '文件里没有找到 HTML 标签，请确认是自包含的单文件游戏' };
   return { ok: true, size: size };
+}
+
+/* ================= 上传类型总表：游戏投稿 + 论坛附件 ================= */
+
+/**
+ * 两类上传的限制放在一处：表单文案、Express 服务端校验、Worker 都从这里取，避免三处各写一份。
+ *   game       —— 单文件 HTML5 游戏，512 KB，正文是文本，走 validateHtmlUpload（看扩展名 + 有没有 HTML 标签）
+ *   attachment —— 论坛附件，四档上限（图片 2 MB / 文本 256 KB / 压缩包 4 MB，绝对上限 4 MB），
+ *                 走 validateAttachment（扩展名 + 声明类型 + 魔数三重校验）
+ * 每条都带 validate，调用方不用记哪个扩展名归谁。
+ */
+export const UPLOAD_KINDS = {
+  game: {
+    key: 'game',
+    label: '单文件 HTML 游戏',
+    exts: ['.html', '.htm'],
+    max: UPLOAD_MAX,
+    maxLabel: UPLOAD_LABEL,
+    mime: ['text/html', 'application/xhtml+xml', 'text/plain'],
+    body: 'text',
+    validate: validateHtmlUpload
+  },
+  attachment: {
+    key: 'attachment',
+    label: '论坛附件',
+    exts: ATTACH_EXT_LIST,
+    max: ATTACH_MAX,
+    maxLabel: ATTACH_MAX_LABEL,
+    mime: ATTACH_MIME_LIST,
+    body: 'bytes',
+    groups: ATTACH_KINDS,
+    validate: validateAttachment
+  }
+};
+
+/**
+ * 论坛附件校验的薄封装：语义、返回形状全部来自 src/attachments.js（那边是唯一实现），
+ * 这里只是把入口挂在 upload.js 上，让「上传」这件事只有一个 import 来源。
+ *
+ * @param {string} filename 原始文件名（会被清洗）
+ * @param {string} [mime] 浏览器声明的类型
+ * @param {Uint8Array|ArrayBuffer|string|number} bytes 内容，或只给字节数（跳过魔数检查）
+ * @returns {{ok:true,size:number,kind:string,ext:string,mime:string,name:string}|{error:string}}
+ */
+export function validateAttachment(filename, mime, bytes) {
+  return checkAttachment(filename, mime, bytes);
 }

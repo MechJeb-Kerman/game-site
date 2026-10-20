@@ -10,7 +10,7 @@
     "dev": "node --watch server.js",
     "reset": "node src/seed.js --force",
     "smoke": "node tools/browser-smoke.mjs",
-"check:forum": "node tools/check-forum-host.mjs",
+    "check:forum": "node tools/check-forum-host.mjs",
     "test:account": "node tools/account-test.mjs",
     "test:features": "node tools/feature-test.mjs",
     "test:gamepad": "node tools/gamepad-test.mjs",
@@ -37,7 +37,15 @@
     "test:cards": "node tools/cards-test.mjs",
     "test:adapters": "node tools/adapters-test.mjs",
     "test:search": "node tools/search-fallback-test.mjs",
-    "test:worker-search": "node tools/worker-search-test.mjs"
+    "test:worker-search": "node tools/worker-search-test.mjs",
+    "test:attachments": "node tools/attachments-test.mjs",
+    "test:daily": "node tools/daily-streak-test.mjs",
+    "test:elo": "node tools/elo-test.mjs",
+    "test:tags": "node tools/forum-tags-test.mjs",
+    "test:oauth": "node tools/oauth-gateway-test.mjs",
+    "test:og": "node tools/og-raster-test.mjs",
+    "test:outbox": "node tools/outbox-test.mjs",
+    "test:ratelimit": "node tools/ratelimit-test.mjs"
   },
   "engines": {
     "node": ">=22.5"

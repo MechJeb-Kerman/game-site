@@ -1,6 +1,6 @@
 import express from 'express';
 import { join } from 'node:path';
-import { PUBLIC_DIR, GAMES_DIR } from './src/db.js';
+import { PUBLIC_DIR, GAMES_DIR, db as sqlite } from './src/db.js';
 import { seed } from './src/seed.js';
 import * as data from './src/data.js';
 import * as ui from './src/views.js';
@@ -9,17 +9,23 @@ import { coverSvg, ogSvg } from './src/cover.js';
 import * as mail from './src/mail.js';
 import * as oauth from './src/oauth.js';
 import { randomBytes } from 'node:crypto';
-import { formFromMultipart } from './src/multipart.js';
+import { formFromMultipart, parseMultipart } from './src/multipart.js';
 import * as forum from './src/data-forum.js';
 import * as fguard from './src/forum-guard.js';
 // 导航页的主机判定：fishport.cn / www.fishport.cn / nav.fishport.cn
 import { PORTAL_HOSTS } from './src/sites.js';
 import * as play from './src/play-store.js';
 import * as social from './src/social.js';
-import { dayKey } from './src/daily.js';
+import { dayKey, makeupCheck } from './src/daily.js';
 import { replayCardSvg, profileCardSvg, dailyCardSvg } from './src/cards.js';
 import { makeSearchBackend, meiliBackend, sqlBackend } from './src/search.js';
 import { createCache, redisLikeAdapter } from './src/rank-cache.js';
+import * as outbox from './src/outbox.js';
+import * as attachments from './src/attachments.js';
+import { createBanCache } from './src/ratelimit.js';
+import * as elo from './src/elo.js';
+import * as og from './src/og.js';
+import * as rules from './src/rules/index.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -38,6 +44,150 @@ app.set('trust proxy', true);
 app.use(express.json({ limit: '64kb' }));
 // 登录 / 注册 / 投稿 / 后台都走原生表单提交，禁用 JS 也能用
 app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+
+/* ---------- 第二轮接线的单例（进程内建一次，测试可注入） ---------- */
+
+/** 封禁名单的内存缓存（TTL 60 秒）：封禁 / 解封时 invalidate 一下，别等它自己过期 */
+const banCache = createBanCache({ ttlMs: 60000 });
+app.locals.banCache = banCache;
+
+/**
+ * 论坛附件存储：Express 线用磁盘（data/attachments/），元数据进同一个 sqlite 库。
+ * 建不起来（比如目录不可写）时留 null，路由层直接 404，不让整个站点起不来。
+ */
+const attachStore = attachments.createStore({ driver: 'fs' });
+if (attachStore && attachStore.error) {
+  console.error('[attach] 存储没建起来：' + attachStore.error + ' ' + String(attachStore.hint || ''));
+}
+app.locals.attachStore = attachStore;
+
+/**
+ * og:image 位图栅格化：用本机 Chrome / Edge 无头截一张 1200x630 PNG。
+ * 没装浏览器时 png() 返回 { ok:false, error:'no_browser' }，路由回退发同一张 SVG 卡片。
+ */
+const rasterizer = og.createRasterizer({ driver: process.env.OG_DRIVER || 'chrome' });
+app.locals.rasterizer = rasterizer;
+
+/* ---------- 第二轮接线的共用小工具（附件 / og 位图 / 天梯） ---------- */
+
+/** 表单体：普通提交读 urlencoded 解析好的 req.body；带文件的提交走 express.raw，这里自己 parse */
+function parsedOf(req) {
+  if (Buffer.isBuffer(req.body)) return parseMultipart(req.body, req.headers['content-type']);
+  return { fields: req.body || {}, files: {}, list: [] };
+}
+function formOf(req) {
+  return parsedOf(req).fields;
+}
+
+/**
+ * 保存这一次提交里的附件（论坛正文里的 📎）。失败只记一行日志，绝不打断发帖——
+ * 帖子已经写进库了，为了一个附件把用户弹回错误页反而不合适。
+ */
+async function saveUploads(req, place) {
+  const p = parsedOf(req);
+  const files = p.list || [];
+  if (!files.length || !attachStore || attachStore.error) return [];
+  const place2 = place || {};
+  const saved = [];
+  for (const f of files) {
+    if (!f.name) continue;
+    try {
+      const r = await attachStore.save({
+        ownerId: place2.ownerId,
+        threadId: place2.threadId || 0,
+        postId: place2.postId || 0,
+        filename: f.name,
+        mime: f.type,
+        bytes: f.bytes
+      });
+      if (r && r.ok) saved.push(r);
+      else if (r && r.error) console.warn('[attach] 附件没收下：' + r.error + (r.hint ? '（' + r.hint + '）' : ''));
+    } catch (e) {
+      console.warn('[attach] 附件写入异常：' + (e && e.message ? e.message : e));
+    }
+  }
+  return saved;
+}
+
+/**
+ * 主题页附件：主题级（post_id=0，发帖时附件先落、楼层随后）单独一层，楼层按 post_id 分组。
+ * 与 Worker 线 worker/app.js 的 withAttachments 同口径（附件不入 data-forum 的帖子行，读侧自己补）。
+ */
+async function withAttachments(threadId, posts) {
+  const r = attachStore && !attachStore.error ? await attachStore.listByThread(threadId) : null;
+  const items = r && Array.isArray(r.items) ? r.items : [];
+  const top = [];
+  const byPost = new Map();
+  for (const a of items) {
+    const pid = Number(a.post_id || 0);
+    if (!pid) { top.push(a); continue; }
+    if (!byPost.has(pid)) byPost.set(pid, []);
+    byPost.get(pid).push(a);
+  }
+  return {
+    thread: top,
+    posts: (posts || []).map((p) => Object.assign({}, p, { attachments: byPost.get(Number(p.id)) || [] }))
+  };
+}
+
+/**
+ * og 位图：渲染成功发 PNG，失败（没装浏览器 / 渲染超时）回退发同一张 SVG 卡片，绝不 404。
+ * 位图是给微信 / X 这类只认位图的平台用的；页面里的 og:image 仍是 SVG（见 README）。
+ */
+async function sendOgOrCard(res, kind, key, svg) {
+  let r = null;
+  try {
+    r = await rasterizer.png({ kind: kind, key: key, svg: svg });
+  } catch (e) {
+    r = { ok: false, error: 'render_failed', message: e && e.message ? e.message : String(e) };
+  }
+  if (r && r.ok) {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.send(Buffer.from(r.bytes));
+  }
+  if (r && r.error && r.error !== 'no_browser' && r.error !== 'not_configured') {
+    console.warn('[og] 位图没渲染出来（' + r.error + '）：' + String(r.message || ''));
+  }
+  return sendCard(res, svg);
+}
+
+/** 联机天梯：四款服务端裁判棋（src/rules 支持的那四款），Elo 由 play-store 结算 */
+const LADDER_GAMES = rules.SLUGS;
+
+/** 天梯页的切换条：[{slug,title,icon}] */
+function ladderTabs() {
+  return LADDER_GAMES.map(function (slug) {
+    const g = data.getGame(slug) || {};
+    return { slug: slug, title: g.title || slug, icon: g.emoji || '♟' };
+  });
+}
+
+/**
+ * 主页的联机天梯面板：只列这个人真下过（games > 0）的那几款。
+ * 榜取前 200，没进榜就当没上榜；分数与胜负都以 ratingBoard 的行为准。
+ */
+function ratingsOf(userId) {
+  const season = elo.seasonOf(Date.now());
+  const out = [];
+  for (const slug of LADDER_GAMES) {
+    const board = play.ratingBoard(sqlite, slug, season, 200);
+    const rows = (board && board.items) || [];
+    const idx = rows.findIndex(function (x) { return Number(x.userId) === Number(userId); });
+    if (idx < 0) continue;
+    const row = rows[idx];
+    if (!row || !Number(row.games)) continue;
+    const g = data.getGame(slug) || {};
+    out.push({
+      game: slug, title: g.title || slug, icon: g.emoji || '♟',
+      rating: Number(row.rating), games: Number(row.games),
+      wins: Number(row.wins), losses: Number(row.losses), draws: Number(row.draws),
+      peak: Number(row.peak), rank: Number(row.rank || idx + 1), total: Number(board.total || 0)
+    });
+  }
+  return out;
+}
+
 
 /**
  * 安全响应头（游戏为本站自研，故允许 inline/eval）。
@@ -493,6 +643,45 @@ app.get('/notice/:slug', (req, res) => {
 
 /* ---------- 每日挑战 / 个人主页 / 棋谱回放 ---------- */
 
+/* ---------- 联机天梯 / 棋谱列表 ---------- */
+
+/** 天梯：四款服务端裁判棋的 Elo 榜（?game=<slug> 切换，缺省第一款） */
+app.get('/ladder', (req, res) => {
+  const asked = String(req.query.game || '');
+  const game = LADDER_GAMES.indexOf(asked) >= 0 ? asked : (LADDER_GAMES[0] || '');
+  const season = elo.seasonOf(Date.now());
+  res.send(ui.ladderPage({
+    origin: originOf(req),
+    user: req.user,
+    game: game,
+    games: ladderTabs(),
+    board: game ? play.ratingBoard(sqlite, game, season, 50) : null,
+    season: season,
+    notice: String(req.query.notice || '')
+  }));
+});
+
+/** 棋谱列表：只列裁判棋的对局（?game=<slug> 过滤，?page= 翻页） */
+app.get('/replays', (req, res) => {
+  const PAGE = 20;
+  const asked = String(req.query.game || '');
+  const game = LADDER_GAMES.indexOf(asked) >= 0 ? asked : '';
+  const asked2 = Math.max(1, Number(req.query.page) || 1);
+  const list = play.replayList({ game: game, limit: PAGE, offset: (asked2 - 1) * PAGE });
+  const total = Number(list.total || 0);
+  const pages = Math.max(1, Math.ceil(total / PAGE));
+  res.send(ui.replaysPage({
+    origin: originOf(req),
+    user: req.user,
+    items: list.items || [],
+    total: total,
+    game: game,
+    games: ladderTabs(),
+    page: Math.min(asked2, pages),
+    pages: pages
+  }));
+});
+
 /**
  * 每日挑战：题目由日期哈希从已上架游戏里轮换（src/daily.js），两条线算同一个结果。
  * 「完成」不发客户端成绩——当天那款游戏收到一次播放上报就算打卡（见 POST /api/games/:slug/play）。
@@ -507,12 +696,26 @@ app.get('/daily', (req, res) => {
       user: req.user,
       day,
       game: data.getGame(slug),
-      stats: stats
-        ? { total: stats.total, streak: stats.streak, doneToday: stats.doneToday, done: stats.done }
-        : null,
-      board: social.dailyBoard(day, 12)
+      // dailyStats 已经是「视图要什么给什么」的形状（含 calendar / perfect / makeupUsed），整份透传即可
+      stats: stats || null,
+      board: social.dailyBoard(day, 12),
+      notice: String(req.query.notice || '')
     })
   );
+});
+
+/**
+ * 补做：只开放最近两天（src/daily.js 的 makeupCheck），补做记在**目标日**那一行、落 makeup=1。
+ * 题目 slug 由目标日重算（dailySlug(day)），所以客户端只能补「那天本来就该做的那道题」。
+ */
+app.post('/daily/makeup', loginPageGuard('/daily'), (req, res) => {
+  const b = req.body || {};
+  const day = String(b.day || '');
+  const chk = makeupCheck(day);
+  if (chk) return res.redirect(withQuery('/daily', 'notice=' + encodeURIComponent(chk)));
+  const r = social.markDaily(req.user.id, social.dailySlug(day), Date.now(), { day });
+  const key = r && r.error ? r.error : 'makeup';
+  res.redirect(withQuery('/daily', 'notice=' + encodeURIComponent(key)));
 });
 
 /** 分享卡统一出口：SVG 必须带 charset，5 分钟公共缓存（内容随数据变，别让 CDN 存太久） */
@@ -545,6 +748,7 @@ app.get('/u/:name', (req, res) => {
       isSelf: !!(req.user && Number(req.user.id) === Number(profile.id)),
       counts: social.followCounts(profile.id),
       following: req.user ? social.isFollowing(req.user.id, profile.id) : false,
+      ratings: ratingsOf(profile.id),
       notice: FOLLOW_TEXT[String(req.query.notice || '')] || ''
     })
   );
@@ -586,6 +790,35 @@ app.get('/play/:id/card.svg', (req, res) => {
   sendCard(res, replayCardSvg({ replay, game: data.getGame(replay.game), origin: originOf(req) }));
 });
 
+/* ---------- og:image 位图（PNG）：给只认位图的平台用，渲染不了就回退同一张 SVG ---------- */
+
+app.get('/play/:id/og.png', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).type('text/plain').send('bad id');
+  const replay = play.replay(id);
+  if (!replay) return res.status(404).type('text/plain').send('not found');
+  const svg = replayCardSvg({ replay, game: data.getGame(replay.game), origin: originOf(req) });
+  return sendOgOrCard(res, 'replay', String(id), svg);
+});
+
+app.get('/u/:name/og.png', (req, res) => {
+  const profile = social.profileByName(String(req.params.name));
+  if (!profile) return res.status(404).type('text/plain').send('not found');
+  const svg = profileCardSvg({ profile, origin: originOf(req) });
+  return sendOgOrCard(res, 'profile', String(profile.username || req.params.name), svg);
+});
+
+app.get('/daily/og.png', (req, res) => {
+  const day = dayKey();
+  const svg = dailyCardSvg({
+    day,
+    game: data.getGame(social.dailySlug(day)),
+    stats: req.user ? social.dailyStats(req.user.id) : null,
+    origin: originOf(req)
+  });
+  return sendOgOrCard(res, 'daily', day, svg);
+});
+
 app.get('/changelog', (req, res) => {
   res.send(ui.changelogPage({ origin: originOf(req), user: req.user }));
 });
@@ -593,6 +826,32 @@ app.get('/changelog', (req, res) => {
 /* 导航页：fishport.cn 下所有能打开的站点一页直达（清单在 src/sites.js） */
 app.get('/nav', (req, res) => {
   res.send(ui.portalPage({ origin: originOf(req), user: req.user }));
+});
+
+/* ---------- 论坛附件（内容实体）：帖子里只存 /ugc/a/<id> 这个链接 ---------- */
+
+app.get('/ugc/a/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[0-9]{1,18}$/.test(id) || !attachStore || attachStore.error) {
+    return res.status(404).type('text/plain; charset=utf-8').send('not found');
+  }
+  let row = null;
+  try {
+    row = await attachStore.get(id, { withBody: true });
+  } catch (e) {
+    console.warn('[attach] 读附件出错：' + (e && e.message ? e.message : e));
+    row = null;
+  }
+  // 只有已经挂到帖子上的（active）才给内容：pending 是还没发成功的草稿，按自增 id 就能枚举，不能公开
+  if (!row || row.error || row.status !== 'active' || !row.body) {
+    return res.status(404).type('text/plain; charset=utf-8').send('not found');
+  }
+  const buf = Buffer.isBuffer(row.body) ? row.body : Buffer.from(row.body);
+  res.setHeader('Content-Type', row.mime || 'application/octet-stream');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', 'inline; filename="' + encodeURIComponent(row.filename || ('a' + row.id)) + '"');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.send(buf);
 });
 
 // ---------- 封面 / SEO 资源 ----------
@@ -1428,6 +1687,7 @@ app.post('/admin/users/:id/ban', requireAdmin, (req, res) => {
     return res.status(400).type('text/plain').send(msg);
   }
   data.logAudit(req.user, r.banned ? 'user.ban' : 'user.unban', '#' + req.params.id, String(b.reason || ''));
+  banCache.invalidate(Number(req.params.id) || 0); // 封禁 / 解封立刻作废快速缓存，别让讨论区还认旧状态
   res.redirect('/admin?ok=ban');
 });
 
@@ -1626,11 +1886,16 @@ function forumToken(req, kind) {
   return { token: forum.issueNonce(req.user.id, kind), honeypot: fguard.HONEYPOT_FIELD };
 }
 
-/** 发帖类 POST 的前置检查：蜜罐字段 + 一次性表单令牌（脚本重放与 CSRF 都在这挡） */
-function forumPrefilter(req, kind) {
-  const b = req.body || {};
-  if (String(b[fguard.HONEYPOT_FIELD] || '').trim()) return { err: 'bot' };
-  const n = forum.consumeNonce(String(b.form_token || ''), req.user.id, kind);
+/**
+ * 发帖类 POST 的前置检查：蜜罐字段 + 一次性表单令牌（脚本重放与 CSRF 都在这挡）。
+ * 必须传 formOf(req) 解析出来的字段对象，不能直接读 req.body：带附件的提交走
+ * express.raw，req.body 是原始 Buffer，读出来 form_token 永远是空 → 一律 err=stale
+ * （2026-10-20 用真 multipart 复现：浏览器里带 enctype 的表单一条也发不出去）。
+ */
+function forumPrefilter(req, b, kind) {
+  const f = b || {};
+  if (String(f[fguard.HONEYPOT_FIELD] || '').trim()) return { err: 'bot' };
+  const n = forum.consumeNonce(String(f.form_token || ''), req.user.id, kind);
   if (!n.ok) return { err: 'stale' };
   return { fastSubmit: Number(n.dwellMs) < fguard.MIN_DWELL_MS };
 }
@@ -1646,10 +1911,11 @@ function forumViewer(req) {
 app.get(['/forum', '/forum/'], (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const q = String(req.query.q || '').slice(0, 60);
-  const list = forum.listThreads({ q, page, viewerId: forumViewer(req) });
+  const tag = String(req.query.tag || '').slice(0, 24);
+  const list = forum.listThreads({ q, tag, page, viewerId: forumViewer(req) });
   res.send(ui.forumHomePage({
     origin: originOf(req), user: req.user, forums: forum.listForums(),
-    threads: list.items, total: list.total, page: list.page, pages: list.pages, q,
+    threads: list.items, total: list.total, page: list.page, pages: list.pages, q, tag,
     base: req.forumBase, stats: forum.forumStats(), notice: forumOkOf(req)
   }));
 });
@@ -1664,15 +1930,15 @@ app.get('/forum/new', (req, res) => {
   }));
 });
 
-app.post('/forum/new', loginPageGuard('/forum/new'), (req, res) => {
-  const b = req.body || {};
+app.post('/forum/new', loginPageGuard('/forum/new'), express.raw({ type: 'multipart/form-data', limit: '6mb' }), async (req, res) => {
+  const b = formOf(req);
   const back = req.forumBase + '/new';
   const rerender = (msg) => res.status(400).send(ui.forumNewPage({
     origin: originOf(req), user: req.user, forums: forum.listForums(),
     forumSlug: String(b.forum || ''), error: msg, values: { title: b.title, body: b.body },
     base: req.forumBase, gate: forum.forumGate(req.user), form: forumToken(req, 'thread')
   }));
-  const pre = forumPrefilter(req, 'thread');
+  const pre = forumPrefilter(req, b, 'thread');
   if (pre.err) return forumTo(res, back, null, pre.err);
   const tv = fguard.validateTitle(b.title);
   if (!tv.ok) return rerender(tv.error);
@@ -1680,6 +1946,8 @@ app.post('/forum/new', loginPageGuard('/forum/new'), (req, res) => {
   if (!bv.ok) return rerender(bv.error);
   const f = forum.getForum(String(b.forum || ''));
   if (!f) return forumTo(res, back, null, 'no_forum');
+  // 频控只由数据层的 checkRate 负责：它排在 forumGate（禁言）与黑名单之后，且站长豁免；
+  // 在路由里再挡一层会把「已禁言」这种更具体的原因盖成 too_fast（2026-10-20 验收实测）
   const r = forum.createThread({ forumId: f.id, user: req.user, title: tv.value, body: bv.value, fastSubmit: pre.fastSubmit });
   if (r.error) return forumTo(res, back, null, r.error);
   data.logAudit(req.user, 'forum.thread.create', String(r.id),
@@ -1690,6 +1958,8 @@ app.post('/forum/new', loginPageGuard('/forum/new'), (req, res) => {
     actorId: req.user.id, threadId: r.id, threadTitle: tv.value,
     ownerId: req.user.id, postId: 0, body: bv.value
   }));
+  if (String(b.tags || '').trim()) forum.setThreadTags(r.id, b.tags, req.user.role); // 标签只认 admin / mod 之外的人吗？不：作者可以给自己的帖子打标签，数据层只清洗内容
+  await saveUploads(req, { ownerId: req.user.id, threadId: r.id });
   forumTo(res, req.forumBase + '/t/' + r.id, Number(r.status) === 1 ? 'published' : 'pending');
 });
 
@@ -1698,14 +1968,15 @@ app.get('/forum/f/:slug', (req, res) => {
   if (!f) return forumNotFound(req, res);
   const page = Math.max(1, Number(req.query.page) || 1);
   const q = String(req.query.q || '').slice(0, 60);
-  const list = forum.listThreads({ forum: f.slug, q, page, viewerId: forumViewer(req) });
+  const tag = String(req.query.tag || '').slice(0, 24);
+  const list = forum.listThreads({ forum: f.slug, q, tag, page, viewerId: forumViewer(req) });
   res.send(ui.forumBoardPage({
     origin: originOf(req), user: req.user, forum: f,
-    threads: list.items, total: list.total, page: list.page, pages: list.pages, q, base: req.forumBase
+    threads: list.items, total: list.total, page: list.page, pages: list.pages, q, tag, base: req.forumBase
   }));
 });
 
-app.get('/forum/t/:id', (req, res) => {
+app.get('/forum/t/:id', async (req, res) => {
   const id = Number(req.params.id) || 0;
   const t = forum.getThread(id, req.user);
   if (!t || !t.canView) return forumNotFound(req, res);
@@ -1715,10 +1986,11 @@ app.get('/forum/t/:id', (req, res) => {
   const rid = Number(req.query.reply) || 0;
   const rp = rid ? forum.getPost(rid, req.user) : null;
   const replyTo = rp && Number(rp.thread_id) === id ? { id: rp.id, floor: 0, name: rp.name || rp.username } : null;
+  const att = await withAttachments(id, list.items);
   res.send(ui.forumThreadPage({
-    origin: originOf(req), user: req.user, thread: t.thread,
+    origin: originOf(req), user: req.user, thread: Object.assign({}, t.thread, { attachments: att.thread }),
     forum: { slug: t.thread.forum_slug, name: t.thread.forum_name, icon: t.thread.forum_icon },
-    posts: list.items, total: list.total, page: list.page, pages: list.pages,
+    posts: att.posts, total: list.total, page: list.page, pages: list.pages,
     base: req.forumBase, replyTo,
     gate: req.user ? forum.forumGate(req.user) : null,
     form: req.user ? forumToken(req, 'post') : null,
@@ -1726,14 +1998,16 @@ app.get('/forum/t/:id', (req, res) => {
   }));
 });
 
-app.post('/forum/t/:id/reply', loginPageGuard('/forum'), (req, res) => {
+app.post('/forum/t/:id/reply', loginPageGuard('/forum'), express.raw({ type: 'multipart/form-data', limit: '6mb' }), async (req, res) => {
   const id = Number(req.params.id) || 0;
   const back = req.forumBase + '/t/' + id;
-  const pre = forumPrefilter(req, 'post');
+  const form = formOf(req);
+  const pre = forumPrefilter(req, form, 'post');
   if (pre.err) return forumTo(res, back, null, pre.err);
-  const bv = fguard.validateBody((req.body || {}).body);
+  const bv = fguard.validateBody(form.body);
   if (!bv.ok) return forumTo(res, back, null, 'empty');
-  const parentId = Number((req.body || {}).parent_id) || null;
+  const parentId = Number(form.parent_id) || null;
+  // 同上：频控交给数据层 checkRate（禁言 / 锁定 / 黑名单的判定顺序都在它前面）
   const r = forum.createReply({ threadId: id, user: req.user, body: bv.value, parentId, fastSubmit: pre.fastSubmit });
   if (r.error) return forumTo(res, back, null, r.error);
   data.logAudit(req.user, 'forum.post.create', String(r.id), '回复主题 #' + id + (Number(r.status) === 1 ? '' : '（转待审）'));
@@ -1746,6 +2020,7 @@ app.post('/forum/t/:id/reply', loginPageGuard('/forum'), (req, res) => {
       ownerId: t.thread.user_id, postId: r.id, body: bv.value
     });
   });
+  await saveUploads(req, { ownerId: req.user.id, threadId: id, postId: r.id });
   forumTo(res, back + '#p' + r.id, Number(r.status) === 1 ? 'replied' : 'pending');
 });
 
@@ -1760,18 +2035,20 @@ app.get('/forum/post/:id/edit', (req, res) => {
   }));
 });
 
-app.post('/forum/post/:id/edit', loginPageGuard('/forum'), (req, res) => {
+app.post('/forum/post/:id/edit', loginPageGuard('/forum'), express.raw({ type: 'multipart/form-data', limit: '6mb' }), async (req, res) => {
   const id = Number(req.params.id) || 0;
   const post = forum.getPost(id, req.user);
   if (!post) return forumNotFound(req, res);
   const back = req.forumBase + '/t/' + post.thread_id;
-  const bv = fguard.validateBody((req.body || {}).body);
-  const pre = forumPrefilter(req, 'post');
+  const form = formOf(req);
+  const bv = fguard.validateBody(form.body);
+  const pre = forumPrefilter(req, form, 'post');
   if (pre.err) return forumTo(res, back, null, pre.err);
   if (!bv.ok) return forumTo(res, req.forumBase + '/post/' + id + '/edit', null, 'empty');
   const r = forum.editPost({ postId: id, user: req.user, body: bv.value, fastSubmit: pre.fastSubmit });
   if (r.error) return forumTo(res, back, null, r.error);
   data.logAudit(req.user, 'forum.post.edit', String(id), '主题 #' + post.thread_id + '：' + String(bv.value).slice(0, 40));
+  await saveUploads(req, { ownerId: req.user.id, threadId: post.thread_id, postId: id }); // 编辑时补的附件也收下（编辑不做频控）
   forumTo(res, back + '#p' + id, r.unchanged ? 'done' : (Number(r.status) === 1 ? 'edited' : 'pending'));
 });
 
@@ -1810,9 +2087,13 @@ app.post('/forum/admin/threads/:id/flags', requireAdmin, (req, res) => {
   const flags = {};
   if (b.pinned !== undefined) flags.pinned = Number(b.pinned) ? 1 : 0;
   if (b.locked !== undefined) flags.locked = Number(b.locked) ? 1 : 0;
-  forum.setThreadFlags(id, flags);
+  if (b.featured !== undefined) flags.featured = Number(b.featured) ? 1 : 0; // 精华只认 admin / mod（角色由数据层二次校验）
+  const fr = forum.setThreadFlags(id, flags, req.user.role);
+  if (fr && fr.error) return forumTo(res, '/forum/admin', null, fr.error);
   data.logAudit(req.user, 'forum.thread.flags', String(id),
-    (flags.pinned !== undefined ? (flags.pinned ? '置顶' : '取消置顶') : '') + (flags.locked !== undefined ? (flags.locked ? ' 锁定' : ' 解锁') : ''));
+    (flags.pinned !== undefined ? (flags.pinned ? '置顶' : '取消置顶') : '') +
+    (flags.locked !== undefined ? (flags.locked ? ' 锁定' : ' 解锁') : '') +
+    (flags.featured !== undefined ? (flags.featured ? ' 精华' : ' 取消精华') : ''));
   forumTo(res, '/forum/admin', 'done');
 });
 
@@ -1873,6 +2154,43 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   console.error('[error]', err);
   res.status(500).type('text/plain').send('500 Internal Server Error');
 });
+
+/* ================= 邮件补发循环 ================= */
+
+/**
+ * 每分钟捞一次到期的信（mail_outbox 里 status='queued' AND next_attempt_at<=now），
+ * 用 mail.deliverNow() 直投——不能再走 sendMail，那会再入队一条新记录、历史那条永远收不了尾。
+ * 成功 markSent、失败 markFailed（内部按 base*2^(n-1) 退避，封顶 6h，次数到上限落 failed）。
+ * 只在配了 RESEND_API_KEY / MAIL_API_URL 时才有活干：没配时 sendMail 早已把记录标成 sent。
+ */
+const MAIL_TICK_MS = Number(process.env.MAIL_TICK_MS || 60000);
+let mailTicking = false;
+
+async function retryDueMail(now = Date.now(), limit = 20) {
+  if (mailTicking) return { done: 0, failed: 0, skipped: 'busy' };
+  mailTicking = true;
+  let done = 0, failed = 0;
+  try {
+    for (const row of outbox.dueList(now, limit)) {
+      const r = await mail.deliverNow({ to: row.to_addr, subject: row.subject, text: row.body_text });
+      if (r.ok) { outbox.markSent(row.id); done++; }
+      else if (r.error === 'not_configured') break;      // 没配传输就别空转，留着下次
+      else { outbox.markFailed(row.id, r.error); failed++; }
+    }
+  } catch (err) {
+    console.error('[mail:tick-error]', err && err.message);
+  } finally {
+    mailTicking = false;
+  }
+  if (done || failed) console.log('[mail:tick] 补发 ' + done + ' 封失败 ' + failed + ' 封');
+  return { done, failed };
+}
+
+/* MAIL_TICK=0 可以关掉（测试里用）；unref 让定时器不阻止进程退出 */
+if (process.env.MAIL_TICK !== '0') {
+  const mailTimer = setInterval(() => { retryDueMail().catch(() => {}); }, MAIL_TICK_MS);
+  if (mailTimer.unref) mailTimer.unref();
+}
 
 const server = app.listen(PORT, () => {
   const s = data.siteStats();

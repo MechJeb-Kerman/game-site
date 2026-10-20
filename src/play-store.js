@@ -11,6 +11,7 @@ import {
   seatOf, isMyTurn, isExpired, publicRoom, mapMoves, parseWatchKey
 } from './play.js';
 import { isSupported, createGame, toResult } from './rules/index.js';
+import { seasonOf, playerKey, blankRating, normRating, nextRatings, ratingRows } from './elo.js';
 
 function room(id) {
   return db.prepare('SELECT * FROM play_rooms WHERE id = ?').get(Number(id)) || null;
@@ -239,7 +240,12 @@ export function sendMove(id, token, move, result, now = Date.now()) {
   };
   db.prepare('UPDATE play_rooms SET turn = ?, move_count = ?, status = ?, result = ?, updated_at = ? WHERE id = ?')
     .run(next.turn, next.move_count, next.status, next.result, now, r.id);
-  if (done) saveReplay(room(r.id), now);
+  if (done) {
+    const fin = room(r.id);
+    saveReplay(fin, now);
+    // Elo 结算：只读 fin 的 game/status/result/昵称，失败也只打一行日志、不影响这次落子的返回
+    settleRatings(db, fin, now);
+  }
   const after = room(r.id);
   return { room: publicRoom(after, seat), seat, seq, finished: done, result: next.result, replayId: Number(after.replay_id || 0) };
 }
@@ -255,7 +261,10 @@ export function resign(id, token, now = Date.now()) {
   db.prepare('UPDATE play_rooms SET status = ?, result = ?, updated_at = ? WHERE id = ?')
     .run(done ? STATUS.CLOSED : STATUS.DONE, done ? '' : seat === 0 ? 'guest' : 'host', now, r.id);
   const after = room(r.id);
-  if (after.status === STATUS.DONE) saveReplay(after, now);
+  if (after.status === STATUS.DONE) {
+    saveReplay(after, now);
+    settleRatings(db, after, now); // 认输也是「一局结束」：照常结算，否则认输就能躲开分数的变化
+  }
   return { room: publicRoom(room(r.id), seat), seat };
 }
 
@@ -290,4 +299,133 @@ export function leave(id, token, now = Date.now()) {
     db.prepare('UPDATE play_rooms SET status = ?, updated_at = ? WHERE id = ?').run(STATUS.CLOSED, now, r.id);
   }
   return { room: publicRoom(room(r.id), seat), seat };
+}
+
+// ---------- Elo 评分 / 天梯 / 赛季 ----------
+//
+// 只有「服务端裁判的棋类 + 一局真的结束了」才结算（sendMove 判出胜负、或认输），读写
+// player_ratings / elo_history 两张表（DDL 见 migrations/0010_elo.sql）。算法全在 src/elo.js
+// （两条线共用），本段只做「查、算、写」，与 worker/play-store.js 的同名函数一一对应、SQL 一样。
+//
+// 这一组函数的第一个参数是 db 句柄，而不是像本文件其它函数那样直接用模块级 db 单例：
+// 页面侧传 src/db.js 的 db，测试里可以传临时库（两条线签名一致，对读方便）。
+
+/** 读一行评分记录；没有就用起始行当底（返回的一定是完整行） */
+function ratingRowOf(db, key, game, season) {
+  return normRating(db.prepare(ELO_SELECT).get(key, game, season), blankRating(key, game, season));
+}
+
+/** upsert 的参数顺序与 ELO_UPSERT 对齐（updated_at 记结算时间） */
+function eloParams(row, now) {
+  return [row.userId, row.game, row.season, row.rating, row.games, row.wins, row.losses, row.draws, row.peak, now];
+}
+
+/** 报错信息（日志只打一行） */
+function messageOf(e) {
+  return e && e.message ? String(e.message) : String(e);
+}
+
+/** UNIQUE 冲突 = 另一个请求抢先结算了，属于正常情况（不算失败、不写日志） */
+function isUniqueError(e) {
+  return /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(messageOf(e));
+}
+
+const ELO_UPSERT = 'INSERT INTO player_ratings (user_id, game, season, rating, games, wins, losses, draws, peak, updated_at) ' +
+  'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+  'ON CONFLICT(user_id, game, season) DO UPDATE SET rating = excluded.rating, games = excluded.games, ' +
+  'wins = excluded.wins, losses = excluded.losses, draws = excluded.draws, peak = excluded.peak, updated_at = excluded.updated_at';
+const ELO_HISTORY = 'INSERT INTO elo_history (room_id, game, season, host_id, guest_id, host_delta, guest_delta, host_after, guest_after, result, created_at) ' +
+  'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+const ELO_SELECT = 'SELECT user_id, game, season, rating, games, wins, losses, draws, peak, updated_at ' +
+  'FROM player_ratings WHERE user_id = ? AND game = ? AND season = ?';
+const ELO_BOARD = 'SELECT user_id, rating, games, wins, losses, draws, peak ' +
+  'FROM player_ratings WHERE game = ? AND season = ? ORDER BY rating DESC, games DESC, user_id ASC LIMIT ?';
+const ELO_COUNT = 'SELECT COUNT(*) AS n FROM player_ratings WHERE game = ? AND season = ?';
+
+/**
+ * 某人某赛季的评分（没有记录就返回起始行 1200 / 0 局，不写库）。
+ * @param {object} db node:sqlite 句柄
+ * @param {string} game 游戏标识（cleanGame 归一，大小写不敏感）
+ * @param {string} userId 身份键：匿名用 playerKey(昵称)，接入账号后用 String(user.id)
+ * @param {string} [season] 赛季串（'2026-Q4'），省略 = 当前赛季
+ * @returns {{userId: string, game: string, season: string, username: string, rating: number, games: number, wins: number, losses: number, draws: number, peak: number, updatedAt: number}}
+ */
+export function ratingOf(db, game, userId, season) {
+  const g = cleanGame(game);
+  const key = String(userId == null ? '' : userId).trim();
+  const sea = String(season || '') || seasonOf(Date.now());
+  if (!g || !key) return blankRating(key, g, sea);
+  return ratingRowOf(db, key, g, sea);
+}
+
+/**
+ * 天梯榜：分数降序，同分比局数，再同则按身份键升序（顺序稳定，不会两次渲染互换）。
+ * @param {object} db node:sqlite 句柄
+ * @param {string} game 游戏标识
+ * @param {string} [season] 赛季串，省略 = 当前赛季
+ * @param {number} [limit=50] 最多几行（1..200）
+ * @returns {{game: string, season: string, total: number, items: Array<{rank: number, userId: string, username: string, rating: number, games: number, wins: number, losses: number, draws: number, peak: number}>}}
+ *   total = 这个赛季的总人数（不受 limit 影响）；items 的 rank 从 1 开始连续编号。
+ */
+export function ratingBoard(db, game, season, limit = 50) {
+  const g = cleanGame(game);
+  const sea = String(season || '') || seasonOf(Date.now());
+  const lim = Math.min(Math.max(Math.floor(Number(limit) || 50), 1), 200);
+  if (!g) return { game: '', season: sea, total: 0, items: [] };
+  const total = Number(((db.prepare(ELO_COUNT).get(g, sea)) || {}).n || 0);
+  return { game: g, season: sea, total, items: ratingRows(db.prepare(ELO_BOARD).all(g, sea, lim)) };
+}
+
+/**
+ * 结算一局（幂等）。结算条件全中才写库：服务端裁判的棋类（isSupported）+ 房间已结束 +
+ * result 是 'host' / 'guest' / 'draw' 之一 + 两边都有非空身份键 + 两边不是同一个人。
+ * 不满足其一就跳过（reason 说明原因）；同一 room_id 只结一次——正常路径靠先查后插，
+ * elo_history.room_id 的 UNIQUE 索引兜住并发窗口。
+ * 绝不抛异常：任何失败只打一行日志并返回 {settled:false, reason:'error'}，结算不该影响接口返回。
+ * @param {object} db node:sqlite 句柄
+ * @param {object} r play_rooms 的整行（sendMove / resign 里 room(id) 的产物）
+ * @param {number} [now] 结算时间（同时决定赛季），默认当前时间
+ * @returns {{settled: boolean, reason: string, season?: string, hostDelta?: number, guestDelta?: number, hostAfter?: number, guestAfter?: number}}
+ */
+export function settleRatings(db, r, now = Date.now()) {
+  let roomId = 0;
+  let game = '';
+  try {
+    roomId = r ? Number(r.id) : 0;
+    game = cleanGame(r && r.game);
+    if (!isSupported(game)) return { settled: false, reason: 'not_judged' };
+    if (!r || r.status !== STATUS.DONE) return { settled: false, reason: 'not_done' };
+    const result = cleanResult(r.result);
+    if (!result) return { settled: false, reason: 'no_result' };
+    const hostKey = playerKey(r.host_name);
+    const guestKey = playerKey(r.guest_name);
+    if (!hostKey || !guestKey || hostKey === guestKey) return { settled: false, reason: 'bad_players' };
+    if (!Number.isInteger(roomId) || roomId <= 0) return { settled: false, reason: 'bad_room' };
+    const season = seasonOf(now);
+    if (db.prepare('SELECT room_id FROM elo_history WHERE room_id = ?').get(roomId)) {
+      return { settled: false, reason: 'duplicate' };
+    }
+    const next = nextRatings(ratingRowOf(db, hostKey, game, season), ratingRowOf(db, guestKey, game, season), result);
+    if (!next) return { settled: false, reason: 'no_result' };
+    // 三条写一个事务：历史与两份新分要么都落、要么都不落（重赛 / 并发时不会只改一半）
+    db.exec('BEGIN');
+    try {
+      db.prepare(ELO_HISTORY).run(roomId, game, season, hostKey, guestKey, next.hostDelta, next.guestDelta, next.host.rating, next.guest.rating, result, now);
+      db.prepare(ELO_UPSERT).run(...eloParams(next.host, now));
+      db.prepare(ELO_UPSERT).run(...eloParams(next.guest, now));
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch (e2) { /* 事务可能已经自己回滚了 */ }
+      throw e;
+    }
+    return {
+      settled: true, reason: '', season,
+      hostDelta: next.hostDelta, guestDelta: next.guestDelta,
+      hostAfter: next.host.rating, guestAfter: next.guest.rating
+    };
+  } catch (e) {
+    if (isUniqueError(e)) return { settled: false, reason: 'duplicate' };
+    console.error('[elo] 结算失败 room=' + roomId + ' game=' + game + '：' + messageOf(e));
+    return { settled: false, reason: 'error' };
+  }
 }

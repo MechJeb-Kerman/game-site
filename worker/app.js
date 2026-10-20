@@ -17,10 +17,14 @@ import * as fguard from '../src/forum-guard.js';
 import { PORTAL_HOSTS } from '../src/sites.js';
 import * as play from './play-store.js';
 import * as social from './social.js';
-import { dayKey } from '../src/daily.js';
+import { dayKey, makeupCheck } from '../src/daily.js';
 import { replayCardSvg, profileCardSvg, dailyCardSvg } from '../src/cards.js';
 import { makeSearchBackend, sqlBackend, meiliBackend } from '../src/search.js';
 import { createCache, redisLikeAdapter } from '../src/rank-cache.js';
+import * as outbox from './outbox.js';
+import * as attach from './attachments.js';
+import * as rules from '../src/rules/index.js';
+import { seasonOf } from '../src/elo.js';
 
 /**
  * 页面响应的安全头。frame-src 额外放行 http(s)：投稿允许填任意外站地址，本站玩法就是把
@@ -361,6 +365,110 @@ function cardReply(ctx, svg) {
   return new Response(svg, { status: 200, headers: makeHeaders(ctx, { type: 'image/svg+xml; charset=utf-8', cache: CARD_CACHE }) });
 }
 
+/* ---------- 附件 / OG 位图 / 天梯（对应 Express 的 saveUploads、sendOgOrCard、ratingsOf） ---------- */
+
+/** 表单里收下来的附件逐个落库；任何一份出错都只打日志，绝不打断发帖（与 server.js 的 saveUploads 同口径） */
+async function saveUploads(ctx, body, place) {
+  const list = body && Array.isArray(body.list) ? body.list : [];
+  if (!list.length) return [];
+  await attach.ensureAttachments(ctx.db);
+  const out = [];
+  for (const f of list) {
+    try {
+      const r = await attach.saveAttachment(ctx.db, {
+        ownerId: place.ownerId,
+        threadId: place.threadId || 0,
+        postId: place.postId || 0,
+        filename: f.name,
+        mime: f.type,
+        bytes: f.bytes
+      });
+      if (r && r.ok) out.push(r);
+      else console.warn('[attach] 附件没收下：' + String((r && (r.error || r.hint)) || 'unknown'));
+    } catch (e) {
+      console.warn('[attach] 附件写入异常：' + (e && e.message ? e.message : String(e)));
+    }
+  }
+  return out;
+}
+
+/** 主题页附件：主题级（post_id=0，发帖时附件先落、楼层随后）单独一层，楼层按 post_id 分组 */
+async function withAttachments(ctx, threadId, posts) {
+  const r = await attach.listThreadAttachments(ctx.db, threadId);
+  const items = (r && Array.isArray(r.items)) ? r.items : [];
+  const top = [];
+  const byPost = new Map();
+  for (const a of items) {
+    const pid = Number(a.post_id || 0);
+    if (!pid) { top.push(a); continue; }
+    if (!byPost.has(pid)) byPost.set(pid, []);
+    byPost.get(pid).push(a);
+  }
+  return {
+    thread: top,
+    posts: (posts || []).map((p) => Object.assign({}, p, { attachments: byPost.get(Number(p.id)) || [] }))
+  };
+}
+
+/** OG 位图要的 HTML 壳（等价于 src/og.js 的 svgToHtml，这里内联一份避免把 node: 依赖拖进 Worker 包） */
+function svgPageHtml(svg) {
+  return '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;overflow:hidden;background:#0b1020}' +
+    'svg{display:block;width:1200px;height:630px}</style></head><body>' + svg + '</body></html>';
+}
+
+/** OG 位图：Workers 侧走 Cloudflare Browser Rendering（配 BROWSER_RENDERING_URL/TOKEN），拿不到就回同一张 SVG，绝不 404 */
+async function sendOgOrCard(ctx, svg) {
+  const env = ctx.env || {};
+  const endpoint = String(env.CLOUDFLARE_BROWSER_RENDERING_URL || env.BROWSER_RENDERING_URL || '');
+  if (!endpoint) return cardReply(ctx, svg);
+  try {
+    const headers = { 'content-type': 'application/json', accept: 'image/png' };
+    const token = String(env.BROWSER_RENDERING_TOKEN || '');
+    if (token) headers.authorization = 'Bearer ' + token;
+    const res = await fetch(endpoint, { method: 'POST', headers: headers, body: JSON.stringify({ html: svgPageHtml(svg) }) });
+    const buf = res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+    if (buf && buf.length > 8 && buf[0] === 137 && buf[1] === 80) {
+      return new Response(buf, { status: 200, headers: makeHeaders(ctx, { type: 'image/png', cache: CARD_CACHE }) });
+    }
+    console.warn('[og] 位图没渲染出来（' + (res.ok ? 'not_png' : 'http_' + res.status) + '）');
+  } catch (e) {
+    console.warn('[og] 位图渲染异常：' + (e && e.message ? e.message : String(e)));
+  }
+  return cardReply(ctx, svg);
+}
+
+/** 天梯：服务端裁判的四款棋（src/rules 的 SLUGS 顺序即展示顺序） */
+const LADDER_GAMES = rules.SLUGS;
+
+async function ladderTabs(ctx) {
+  const out = [];
+  for (const slug of LADDER_GAMES) {
+    const g = await data.getGame(ctx.db, slug);
+    out.push({ slug: slug, title: (g && g.title) || slug, icon: (g && g.emoji) || '♟' });
+  }
+  return out;
+}
+
+/** 某人在四款棋上的天梯战绩（没打过就跳过，与 server.js 的 ratingsOf 同口径） */
+async function ratingsOf(ctx, userId, season) {
+  const out = [];
+  for (const slug of LADDER_GAMES) {
+    const board = await play.ratingBoard(ctx.db, slug, season, 200);
+    const items = (board && board.items) || [];
+    const idx = items.findIndex((x) => Number(x.userId) === Number(userId));
+    if (idx < 0) continue;
+    const row = items[idx];
+    if (!Number(row.games)) continue;
+    const g = await data.getGame(ctx.db, slug);
+    out.push({
+      game: slug, title: (g && g.title) || slug, icon: (g && g.emoji) || '♟',
+      rating: row.rating, games: row.games, wins: row.wins, losses: row.losses, draws: row.draws,
+      peak: row.peak, rank: row.rank || idx + 1, total: board.total
+    });
+  }
+  return out;
+}
+
 /* ---------- 请求工具 ---------- */
 
 /** GET/HEAD 直接返回 {}；JSON 用 request.json()，表单用 request.formData() */
@@ -376,16 +484,25 @@ async function readBody(request) {
       const fd = await request.formData();
       const o = {};
       const files = {};
+      const list = [];
       for (const entry of fd.entries()) {
         if (typeof entry[1] === 'string') { o[entry[0]] = entry[1]; continue; }
-        // File：投稿上传的单文件 HTML，正文读成文本交给数据层校验
-        files[entry[0]] = {
+        // File：投稿上传的单文件 HTML，正文读成文本交给数据层校验；附件还要原始字节
+        const f = {
           name: String(entry[1].name || ''),
           type: String(entry[1].type || ''),
           size: Number(entry[1].size) || 0,
-          html: await entry[1].text()
+          html: '',
+          bytes: null
         };
+        try { f.html = await entry[1].text(); } catch { f.html = ''; }
+        try { f.bytes = new Uint8Array(await entry[1].arrayBuffer()); } catch { f.bytes = null; }
+        list.push(f);
+        const prev = files[entry[0]];
+        if (prev) files[entry[0]] = Array.isArray(prev) ? prev.concat([f]) : [prev, f];
+        else files[entry[0]] = f;
       }
+      if (list.length) o.list = list; // 论坛附件按顺序逐个收（同名字段多文件也在）
       if (files.game_file) o.file = files.game_file;
       else if (Object.keys(files).length === 1) o.file = files[Object.keys(files)[0]];
       return o;
@@ -1378,10 +1495,11 @@ function forumViewer(ctx) {
 async function pageForumHome(ctx) {
   const page = Math.max(1, Number(ctx.url.searchParams.get('page')) || 1);
   const q = String(ctx.url.searchParams.get('q') || '').slice(0, 60);
-  const list = await forum.listThreads(ctx.db, { q: q, page: page, viewerId: forumViewer(ctx) });
+  const tag = String(ctx.url.searchParams.get('tag') || '').slice(0, 24);
+  const list = await forum.listThreads(ctx.db, { q: q, tag: tag, page: page, viewerId: forumViewer(ctx) });
   return okHtml(ctx, ui.forumHomePage({
     origin: ctx.origin, user: ctx.user, forums: await forum.listForums(ctx.db),
-    threads: list.items, total: list.total, page: list.page, pages: list.pages, q: q,
+    threads: list.items, total: list.total, page: list.page, pages: list.pages, q: q, tag: tag,
     base: ctx.forumBase, stats: await forum.forumStats(ctx.db), notice: forumOkOf(ctx)
   }));
 }
@@ -1414,13 +1532,17 @@ async function doForumNew(ctx) {
   if (!bv.ok) return rerender(bv.error);
   const f = await forum.getForum(ctx.db, String(b.forum || ''));
   if (!f) return forumTo(ctx, back, null, 'no_forum');
+  // 频控只由数据层的 checkRate 负责（排在前面的还有 forumGate 禁言与黑名单判定）
   const r = await forum.createThread(ctx.db, {
     forumId: f.id, user: ctx.user, title: tv.value, body: bv.value, fastSubmit: pre.fastSubmit
   });
   if (r.error) return forumTo(ctx, back, null, r.error);
   await data.logAudit(ctx.db, ctx.user, 'forum.thread.create', String(r.id),
     (Number(r.status) === 1 ? '直接发布' : '转待审' + (r.reason ? '（' + r.reason + '）' : '')) + '：' + String(tv.value).slice(0, 40));
+  // 标签只允许 admin/mod 落库（数据层把关，普通作者填了也不报错，与 Express 线一致）
+  if (String(b.tags || '').trim()) await forum.setThreadTags(ctx.db, r.id, b.tags, ctx.user.role);
   await notifyThreadMentions(ctx, r.id, bv.value);
+  await saveUploads(ctx, b, { ownerId: ctx.user.id, threadId: r.id });
   return forumTo(ctx, ctx.forumBase + '/t/' + r.id, Number(r.status) === 1 ? 'published' : 'pending');
 }
 
@@ -1429,10 +1551,11 @@ async function pageForumBoard(ctx, params) {
   if (!f) return okHtml(ctx, ui.notFoundPage({ origin: ctx.origin, user: ctx.user }), 404);
   const page = Math.max(1, Number(ctx.url.searchParams.get('page')) || 1);
   const q = String(ctx.url.searchParams.get('q') || '').slice(0, 60);
-  const list = await forum.listThreads(ctx.db, { forum: f.slug, q: q, page: page, viewerId: forumViewer(ctx) });
+  const tag = String(ctx.url.searchParams.get('tag') || '').slice(0, 24);
+  const list = await forum.listThreads(ctx.db, { forum: f.slug, q: q, tag: tag, page: page, viewerId: forumViewer(ctx) });
   return okHtml(ctx, ui.forumBoardPage({
     origin: ctx.origin, user: ctx.user, forum: f,
-    threads: list.items, total: list.total, page: list.page, pages: list.pages, q: q, base: ctx.forumBase
+    threads: list.items, total: list.total, page: list.page, pages: list.pages, q: q, tag: tag, base: ctx.forumBase
   }));
 }
 
@@ -1446,10 +1569,12 @@ async function pageForumThread(ctx, params) {
   const rid = Number(ctx.url.searchParams.get('reply')) || 0;
   const rp = rid ? await forum.getPost(ctx.db, rid, ctx.user) : null;
   const replyTo = rp && Number(rp.thread_id) === id ? { id: rp.id, floor: 0, name: rp.name || rp.username } : null;
+  // 附件不在帖子行里（data-forum 不带），读侧自己按 post_id 分组补上
+  const att = await withAttachments(ctx, id, list.items);
   return okHtml(ctx, ui.forumThreadPage({
-    origin: ctx.origin, user: ctx.user, thread: t.thread,
+    origin: ctx.origin, user: ctx.user, thread: Object.assign({}, t.thread, { attachments: att.thread }),
     forum: { slug: t.thread.forum_slug, name: t.thread.forum_name, icon: t.thread.forum_icon },
-    posts: list.items, total: list.total, page: list.page, pages: list.pages,
+    posts: att.posts, total: list.total, page: list.page, pages: list.pages,
     base: ctx.forumBase, replyTo: replyTo,
     gate: ctx.user ? await forum.forumGate(ctx.db, ctx.user) : null,
     form: ctx.user ? await forumToken(ctx, 'post') : null,
@@ -1474,6 +1599,7 @@ async function doForumReply(ctx, params) {
   if (r.error) return forumTo(ctx, back, null, r.error);
   await data.logAudit(ctx.db, ctx.user, 'forum.post.create', String(r.id), '回复主题 #' + id + (Number(r.status) === 1 ? '' : '（转待审）'));
   await notifyThreadReply(ctx, id, r.id, bv.value);
+  await saveUploads(ctx, b, { ownerId: ctx.user.id, threadId: id, postId: r.id });
   return forumTo(ctx, back + '#p' + r.id, Number(r.status) === 1 ? 'replied' : 'pending');
 }
 
@@ -1505,6 +1631,8 @@ async function doForumEdit(ctx, params) {
   const r = await forum.editPost(ctx.db, { postId: id, user: ctx.user, body: bv.value, fastSubmit: pre.fastSubmit });
   if (r.error) return forumTo(ctx, back, null, r.error);
   await data.logAudit(ctx.db, ctx.user, 'forum.post.edit', String(id), '主题 #' + post.thread_id + '：' + String(bv.value).slice(0, 40));
+  // 编辑时补的附件也收下（编辑不做频控，与 Express 线一致）
+  await saveUploads(ctx, b, { ownerId: ctx.user.id, threadId: post.thread_id, postId: id });
   return forumTo(ctx, back + '#p' + id, r.unchanged ? 'done' : (Number(r.status) === 1 ? 'edited' : 'pending'));
 }
 
@@ -1699,11 +1827,28 @@ async function pageDaily(ctx) {
     user: ctx.user,
     day: day,
     game: await data.getGame(ctx.db, slug),
-    stats: stats
-      ? { total: stats.total, streak: stats.streak, doneToday: stats.doneToday, done: stats.done }
-      : null,
-    board: await social.dailyBoard(ctx.db, day, 12)
+    // dailyStats 的返回形状就是视图要的形状（含 calendar / perfect / makeupUsed），整份透传
+    stats: stats || null,
+    board: await social.dailyBoard(ctx.db, day, 12),
+    notice: String(ctx.url.searchParams.get('notice') || '')
   }));
+}
+
+/**
+ * 补做：只开放最近两天（src/daily.js 的 makeupCheck），记在目标日那一行、落 makeup=1。
+ * 题目 slug 由目标日重算，客户端补不了别的题；窗口外的日期直接带 notice 回每日挑战页。
+ */
+async function doDailyMakeup(ctx) {
+  const b = await readBody(ctx.request);
+  const guard = needLogin(ctx, '/daily', b);
+  if (guard) return guard;
+  const day = String(b.day || '');
+  const chk = makeupCheck(day);
+  if (chk) return redirectTo(ctx, withQuery('/daily', 'notice=' + encodeURIComponent(chk)));
+  const slug = await social.dailySlug(ctx.db, day);
+  const r = await social.markDaily(ctx.db, ctx.user.id, slug, Date.now(), { day: day });
+  const key = r && r.error ? r.error : 'makeup';
+  return redirectTo(ctx, withQuery('/daily', 'notice=' + encodeURIComponent(key)));
 }
 
 async function pageProfile(ctx, params) {
@@ -1716,6 +1861,7 @@ async function pageProfile(ctx, params) {
     isSelf: !!(ctx.user && Number(ctx.user.id) === Number(profile.id)),
     counts: await social.followCounts(ctx.db, profile.id),
     following: ctx.user ? await social.isFollowing(ctx.db, ctx.user.id, profile.id) : false,
+    ratings: await ratingsOf(ctx, profile.id, seasonOf(Date.now())),
     notice: FOLLOW_TEXT[String(ctx.url.searchParams.get('notice') || '')] || ''
   }));
 }
@@ -1963,6 +2109,67 @@ async function notifyGameComment(ctx, slug, commentId, body) {
   }
 }
 
+/* ================= 天梯 / 棋谱列表 / OG 位图（第二轮，对应 server.js /ladder · /replays · 三条 og.png） ================= */
+
+/** 天梯：四款服务端裁判棋的 Elo 榜（?game=<slug> 切换，缺省第一款） */
+async function pageLadder(ctx) {
+  const asked = String(ctx.url.searchParams.get('game') || '');
+  const game = LADDER_GAMES.indexOf(asked) >= 0 ? asked : (LADDER_GAMES[0] || '');
+  const season = seasonOf(Date.now());
+  return okHtml(ctx, ui.ladderPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    game: game,
+    games: await ladderTabs(ctx),
+    board: game ? await play.ratingBoard(ctx.db, game, season, 50) : null,
+    season: season,
+    notice: String(ctx.url.searchParams.get('notice') || '')
+  }));
+}
+
+/** 棋谱列表：只列裁判棋的对局（?game= 过滤、?page= 翻页） */
+async function pageReplays(ctx) {
+  const PAGE = 20;
+  const asked = String(ctx.url.searchParams.get('game') || '');
+  const game = LADDER_GAMES.indexOf(asked) >= 0 ? asked : '';
+  const asked2 = Math.max(1, Number(ctx.url.searchParams.get('page')) || 1);
+  const list = await play.replayList(ctx.db, { game: game, limit: PAGE, offset: (asked2 - 1) * PAGE });
+  const total = Number((list && list.total) || 0);
+  const pages = Math.max(1, Math.ceil(total / PAGE));
+  return okHtml(ctx, ui.replaysPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    items: (list && list.items) || [],
+    total: total,
+    game: game,
+    games: await ladderTabs(ctx),
+    page: Math.min(asked2, pages),
+    pages: pages
+  }));
+}
+
+/** 棋谱 OG 位图：非法 id 给 400（地址写错了），棋谱没了给 404 */
+async function ogReplay(ctx, params) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id <= 0) return plainText(ctx, 'bad id', 400);
+  const rep = await play.replay(ctx.db, id);
+  if (!rep) return plainText(ctx, 'not found', 404);
+  return sendOgOrCard(ctx, replayCardSvg({ replay: rep, game: await data.getGame(ctx.db, rep.game), origin: ctx.origin }));
+}
+
+async function ogProfile(ctx, params) {
+  const profile = await social.profileByName(ctx.db, String(params.name || ''));
+  if (!profile) return plainText(ctx, 'not found', 404);
+  return sendOgOrCard(ctx, profileCardSvg({ profile: profile, origin: ctx.origin }));
+}
+
+async function ogDaily(ctx) {
+  const day = dayKey();
+  const slug = await social.dailySlug(ctx.db, day);
+  const stats = ctx.user ? await social.dailyStats(ctx.db, ctx.user.id) : null;
+  return sendOgOrCard(ctx, dailyCardSvg({ day: day, game: await data.getGame(ctx.db, slug), stats: stats, origin: ctx.origin }));
+}
+
 /* ================= 路由表 ================= */
 
 const ROUTES = [
@@ -1972,6 +2179,8 @@ const ROUTES = [
   { m: 'GET', p: '/tag/:tag', fn: pageTag },
   { m: 'GET', p: '/search', fn: pageSearch },
   { m: 'GET', p: '/game/:slug', fn: pageGame },
+  /* 附件下载：must 排在 /ugc/:file 之前（匹配按段数 + 字面段，这里额外走一层 /a/） */
+  { m: 'GET', p: '/ugc/a/:id', fn: attach.pageAttachment },
   { m: 'GET', p: '/ugc/:file', fn: pageUgcFile },
   { m: 'GET', p: '/notice', fn: pageNotice },
   { m: 'GET', p: '/notice/:slug', fn: pageNoticeDetail },
@@ -1979,11 +2188,17 @@ const ROUTES = [
   { m: 'GET', p: '/nav', fn: pagePortal },
   { m: 'GET', p: '/rank', fn: pageRank },
   { m: 'GET', p: '/daily', fn: pageDaily },
+  { m: 'POST', p: '/daily/makeup', fn: doDailyMakeup },
   { m: 'GET', p: '/daily/card.svg', fn: cardDaily },
   { m: 'GET', p: '/u/:name', fn: pageProfile },
   { m: 'GET', p: '/u/:name/card.svg', fn: cardProfile },
   { m: 'GET', p: '/replay/:id', fn: pageReplay },
   { m: 'GET', p: '/play/:id/card.svg', fn: cardReplay },
+  { m: 'GET', p: '/ladder', fn: pageLadder },
+  { m: 'GET', p: '/replays', fn: pageReplays },
+  { m: 'GET', p: '/play/:id/og.png', fn: ogReplay },
+  { m: 'GET', p: '/daily/og.png', fn: ogDaily },
+  { m: 'GET', p: '/u/:name/og.png', fn: ogProfile },
   // 社交：通知 / 私信 / 关注列表（第七批）
   { m: 'GET', p: '/notifications', fn: pageNotifications, need: 'user' },
   { m: 'POST', p: '/notifications/read', fn: doNotificationsRead },
@@ -2209,8 +2424,8 @@ const PWA_SW = `/* 趣玩小游戏 Service Worker —— 保守策略 + 真离�
  */
 
 /* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
-/* 33 条 · 848.7 KB · 最大单文件 95.8 KB */
-const PRECACHE_VERSION = 'p1-334370f07955';
+/* 33 条 · 850.7 KB · 最大单文件 95.8 KB */
+const PRECACHE_VERSION = 'p1-c0878b03c7a8';
 const PRECACHE_FALLBACK = [
   '/',
   '/games/2048/index.html',
@@ -2689,9 +2904,46 @@ async function serveAsset(ctx) {
   }
 }
 
+/* ================= 邮件补发（机会式） ================= */
+
+/**
+ * 每分钟最多检查一次：把 D1 里到期的信重投。
+ * Workers 没有常驻定时器——线上建议配 Cron Trigger 调 mailRetryTick，
+ * 没配时就用「有请求顺带跑一次」兜底（同一个 isolate 内不会并发跑两份）。
+ * 只投递不改发件箱：走 mail.sendMail 会再入队一条新记录，历史那条永远收不了尾。
+ */
+let mailTickAt = 0;
+let mailTicking = false;
+
+export async function mailRetryTick(ctx) {
+  const now = Date.now();
+  const tickMs = Number(ctx.env.MAIL_TICK_MS || 60000);
+  if (mailTicking || now - mailTickAt < tickMs) return { skipped: 'throttled' };
+  mailTickAt = now;
+  if (ctx.env.MAIL_TICK === '0') return { skipped: 'off' };
+  if (!mail.mailConfigured(ctx.env)) return { skipped: 'unconfigured' };  // 没配传输时 sendMail 早已标 sent
+
+  mailTicking = true;
+  let done = 0, failed = 0;
+  try {
+    for (const row of await outbox.dueList(ctx.db, now, 20)) {
+      const r = await mail.deliverNow(ctx.env, { to: row.to_addr, subject: row.subject, text: row.body_text });
+      if (r.ok) { await outbox.markSent(ctx.db, row.id); done++; }
+      else if (r.error === 'not_configured') break;
+      else { await outbox.markFailed(ctx.env, ctx.db, row.id, r.error); failed++; }
+    }
+  } catch (err) {
+    console.error('[mail:tick-error] ' + (err && err.message));
+  } finally {
+    mailTicking = false;
+  }
+  if (done || failed) console.log('[mail:tick] 补发 ' + done + ' 封失败 ' + failed + ' 封');
+  return { done, failed };
+}
+
 /* ================= 入口 ================= */
 
-export async function appFetch(request, env) {
+export async function appFetch(request, env, execCtx) {
   const started = Date.now();
   if (!env || !env.DB) {
     return new Response('D1 binding "DB" is not configured. See DEPLOY-CLOUDFLARE-D1.md.', {
@@ -2743,6 +2995,12 @@ export async function appFetch(request, env) {
   if (pathname.indexOf('/static') !== 0 && pathname.indexOf('/cover') !== 0) {
     console.log(request.method + ' ' + pathname + url.search + ' ' + res.status + ' ' + (Date.now() - started) + 'ms');
   }
+
+  // 邮件补发：有 waitUntil 就丢后台跑（不拖慢这次响应），本地 dev 没有 ctx 就地 await
+  const tick = mailRetryTick(ctx);
+  if (execCtx && typeof execCtx.waitUntil === 'function') execCtx.waitUntil(tick);
+  else await tick;
+
   return res;
 }
 

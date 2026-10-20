@@ -7,6 +7,9 @@ data/*.db-wal
 data/*.db-shm
 data/worker*.db*
 
+# 附件上传目录：本地自测（e2e 探针）会把图片落到这里，别提交
+data/attachments/
+
 # 构建产物：Cloudflare 的构建命令会重新生成，不用提交
 # （如果按 DEPLOY-GITHUB-PAGES.md 的路线上传产物，用 git add -f dist 强制添加）
 dist/

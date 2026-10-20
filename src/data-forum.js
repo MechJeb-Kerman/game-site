@@ -19,9 +19,12 @@ import {
 } from './forum-guard.js';
 
 const THREAD_COLS =
-  't.id, t.title, t.status, t.pinned, t.locked, t.reply_count, t.view_count, ' +
+  't.id, t.title, t.status, t.pinned, t.featured, t.locked, t.reply_count, t.view_count, ' +
   't.created_at, t.last_reply_at, t.user_id, u.display_name AS name, u.username, ' +
-  'f.id AS forum_id, f.slug AS forum_slug, f.name AS forum_name, f.icon AS forum_icon';
+  'f.id AS forum_id, f.slug AS forum_slug, f.name AS forum_name, f.icon AS forum_icon, ' +
+  // 标签跟主题一趟取回：GROUP_CONCAT 拼成 a,b，再由 threadRow 切成数组（省掉每行再查一次库）
+  // 标签里不会有逗号 —— cleanTags 已把逗号一并剔除，所以按逗号切是安全的
+  "(SELECT GROUP_CONCAT(tt.tag, ',') FROM thread_tags tt WHERE tt.thread_id = t.id) AS tags";
 
 const POST_COLS =
   'p.id, p.thread_id, p.body, p.status, p.is_op, p.parent_id, p.edited_at, p.edit_count, p.created_at, ' +
@@ -89,7 +92,7 @@ function visibleThreadSql(viewerId) {
   return viewerId ? '(t.status = 1 OR t.user_id = ?)' : 't.status = 1';
 }
 
-export function listThreads({ forum = '', q = '', page = 1, pageSize = 20, viewerId = null } = {}) {
+export function listThreads({ forum = '', q = '', tag = '', featuredOnly = false, pinnedFirst = false, page = 1, pageSize = 20, viewerId = null } = {}) {
   const where = [visibleThreadSql(viewerId)];
   const args = viewerId ? [viewerId] : [];
   if (forum) { where.push('f.slug = ?'); args.push(forum); }
@@ -99,16 +102,21 @@ export function listThreads({ forum = '', q = '', page = 1, pageSize = 20, viewe
     where.push("(t.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM forum_posts op WHERE op.thread_id = t.id AND op.is_op = 1 AND op.body LIKE ? ESCAPE '\\'))");
     args.push(like, like);
   }
+  // 按标签筛主题：EXISTS 走 idx_thread_tags_tag；不改动其它条件与分页语义
+  if (tag) {
+    where.push('EXISTS (SELECT 1 FROM thread_tags tt WHERE tt.thread_id = t.id AND tt.tag = ?)');
+    args.push(String(tag));
+  }
+  if (featuredOnly) where.push('t.featured = 1');
   const w = 'WHERE ' + where.join(' AND ');
   const total = db.prepare('SELECT COUNT(*) n ' + THREAD_JOINS + w).get(...args).n;
   const size = Math.min(Math.max(Number(pageSize) || 20, 1), 50);
   const pages = Math.max(1, Math.ceil(total / size));
   const p = Math.min(Math.max(Number(page) || 1, 1), pages);
   const items = db.prepare(
-    'SELECT ' + THREAD_COLS + ' ' + THREAD_JOINS + w +
-    ' ORDER BY t.pinned DESC, COALESCE(t.last_reply_at, t.created_at) DESC, t.id DESC LIMIT ? OFFSET ?'
+    'SELECT ' + THREAD_COLS + ' ' + THREAD_JOINS + w + ' ' + threadOrder(pinnedFirst) + ' LIMIT ? OFFSET ?'
   ).all(...args, size, (p - 1) * size);
-  return { items, total, page: p, pages, pageSize: size };
+  return { items: items.map(threadRow), total, page: p, pages, pageSize: size };
 }
 
 /**
@@ -121,7 +129,7 @@ export function getThread(id, viewer = null) {
   const isAdmin = !!viewer && viewer.role === 'admin';
   const isOwner = !!viewer && Number(viewer.id) === Number(row.user_id);
   const canView = Number(row.status) === 1 || isOwner || isAdmin;
-  return { thread: row, canView, isOwner, isAdmin };
+  return { thread: threadRow(row), canView, isOwner, isAdmin };
 }
 
 export function bumpThreadView(id) {
@@ -467,7 +475,7 @@ export function listPendingThreads(limit = 50) {
     // 后台要能看到待审的原文，包括「首楼编辑后重新待审」的新正文
     'SELECT ' + THREAD_COLS + ', op.body AS body ' + THREAD_JOINS +
     'LEFT JOIN forum_posts op ON op.thread_id = t.id AND op.is_op = 1 WHERE t.status = 0 ORDER BY t.id ASC LIMIT ?'
-  ).all(Number(limit) || 50);
+  ).all(Number(limit) || 50).map(threadRow);
 }
 
 export function listPendingPosts(limit = 50) {
@@ -492,10 +500,19 @@ export function setPostStatus(id, status) {
   return { ok: true, status: s };
 }
 
-export function setThreadFlags(id, { pinned, locked } = {}) {
+/**
+ * 置顶 / 锁定 / 精华（后台动作）。actorRole 收角色字符串（'admin' / 'mod'）或 user 对象：
+ * - 不传角色：既有后台路由的老调用路径（路由本身已过 requireAdmin），行为与以前完全一样；
+ * - 传了角色：不是 admin/mod 就返回 { error: 'forbidden' }；
+ * - featured 是新能力，必须显式带 admin/mod 角色（老路由不认识它，不传就当越权挡掉）。
+ */
+export function setThreadFlags(id, { featured, pinned, locked } = {}, actorRole) {
+  if (actorRole !== undefined && actorRole !== null && !isModerator(actorRole)) return { error: 'forbidden' };
+  if (featured !== undefined && !isModerator(actorRole)) return { error: 'forbidden' };
   const tid = Number(id) || 0;
   if (pinned !== undefined) db.prepare('UPDATE forum_threads SET pinned = ? WHERE id = ?').run(pinned ? 1 : 0, tid);
   if (locked !== undefined) db.prepare('UPDATE forum_threads SET locked = ? WHERE id = ?').run(locked ? 1 : 0, tid);
+  if (featured !== undefined) db.prepare('UPDATE forum_threads SET featured = ? WHERE id = ?').run(featured ? 1 : 0, tid);
   return { ok: true };
 }
 
@@ -519,3 +536,98 @@ export function listMuted(limit = 20) {
     "WHERE muted_until IS NOT NULL AND muted_until > datetime('now','localtime') ORDER BY muted_until LIMIT ?"
   ).all(Number(limit) || 20);
 }
+
+/* ---------- 主题标签 / 精华 / 置顶 ---------- */
+
+/** 单个标签最长 16 字符（中文按 1 个字符算），一个主题最多 3 个 */
+export const TAG_MAX = 16;
+export const TAG_LIMIT = 3;
+// 只留中文（含扩展 A）、英文字母、数字与 - _，其余（空白、标点、emoji）统统剔除
+const TAG_STRIP = /[^\u3400-\u4dbf\u4e00-\u9fffA-Za-z0-9_-]/g;
+const TAG_SPLIT = /[,，、\s]+/;
+
+/** 版主及以上：站长（admin）与版主（mod）同一档。收角色字符串，也收整条 user */
+export function isModerator(actor) {
+  const role = typeof actor === 'string' ? actor : (actor && actor.role) || '';
+  return role === 'admin' || role === 'mod';
+}
+
+/**
+ * 标签清洗：切成一个个标签 → 剔掉中英数字与 - _ 之外的字符 → 去空、去重
+ * → 单个截到 16 字符 → 最多留 3 个。数组或 "a,b" / "a b" 这样的字符串都收。
+ */
+export function cleanTags(tags) {
+  const raw = Array.isArray(tags)
+    ? tags
+    : tags === undefined || tags === null || tags === ''
+      ? []
+      : String(tags).split(TAG_SPLIT);
+  const list = [];
+  for (const item of raw) {
+    const tag = String(item === undefined || item === null ? '' : item).replace(TAG_STRIP, '').slice(0, TAG_MAX);
+    if (!tag || list.indexOf(tag) >= 0) continue;
+    list.push(tag);
+    if (list.length >= TAG_LIMIT) break;
+  }
+  return list;
+}
+
+/** 行里的 tags 是 GROUP_CONCAT 拼出来的 "a,b"：还原成数组，没标签就是 [] */
+function threadRow(row) {
+  if (!row) return row;
+  row.tags = row.tags ? String(row.tags).split(',') : [];
+  return row;
+}
+
+/**
+ * 列表排序。默认顺序与老代码逐字一致（置顶在前，各自按最新回复，再按 id 兜底）；
+ * pinnedFirst 只是把「置顶优先」写得更直白：置顶内部一样按最新回复，
+ * 以后默认顺序若要改，显式传 pinnedFirst 的调用方不会跟着变。
+ */
+function threadOrder(pinnedFirst) {
+  const rest = 'COALESCE(t.last_reply_at, t.created_at) DESC, t.id DESC';
+  return pinnedFirst
+    ? 'ORDER BY CASE WHEN t.pinned = 1 THEN 0 ELSE 1 END, ' + rest
+    : 'ORDER BY t.pinned DESC, ' + rest;
+}
+
+/** 标签云：只数已发布主题上的标签，用得多的排前面（同数按标签字典序） */
+export function listTags(limit = 20) {
+  const size = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  return db.prepare(
+    'SELECT tt.tag AS tag, COUNT(*) AS count FROM thread_tags tt ' +
+    'JOIN forum_threads t ON t.id = tt.thread_id WHERE t.status = 1 ' +
+    'GROUP BY tt.tag ORDER BY COUNT(*) DESC, tt.tag ASC LIMIT ?'
+  ).all(size).map((r) => ({ tag: r.tag, count: Number(r.count) }));
+}
+
+/** 按标签翻主题：薄封装，分页形状与 listThreads 完全一致（page / pageSize / viewerId / pinnedFirst 都能一起传） */
+export function threadsByTag(tag, opts = {}) {
+  return listThreads(Object.assign({}, opts, { tag }));
+}
+
+/**
+ * 覆盖式设置某个主题的标签（先清后插，一个事务里做完）。
+ * 只允许 admin/mod：返回 { ok: true, tags: 落库的标签 }；主题不存在 → { error: 'no_thread' }；
+ * 权限不够 → { error: 'forbidden' }（新接口，不传角色也算没权限）。
+ */
+export function setThreadTags(threadId, tags, actorRole) {
+  if (!isModerator(actorRole)) return { error: 'forbidden' };
+  const tid = Number(threadId) || 0;
+  const row = db.prepare('SELECT id FROM forum_threads WHERE id = ?').get(tid);
+  if (!row) return { error: 'no_thread', message: '没有这个主题' };
+  const list = cleanTags(tags);
+  const del = db.prepare('DELETE FROM thread_tags WHERE thread_id = ?');
+  const ins = db.prepare('INSERT OR IGNORE INTO thread_tags (thread_id, tag) VALUES (?, ?)');
+  db.exec('BEGIN');
+  try {
+    del.run(tid);
+    for (const tag of list) ins.run(tid, tag);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return { ok: true, tags: list };
+}
+

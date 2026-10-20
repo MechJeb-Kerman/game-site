@@ -574,6 +574,34 @@ async function main() {
   const fOpId = Number(((r.text.match(/id="p(\d+)"/) || [])[1]) || 0);
   ok('主题页给出首楼 id（编辑与审核要用）', !!fOpId, r.status);
 
+  console.log('--- 论坛：带附件的 multipart 发帖（forumPrefilter 回归） ---');
+  /* 2026-10-20 的真 bug：带附件的表单走 express.raw，req.body 是 Buffer；forumPrefilter 若直接读 req.body
+   * 就永远拿不到 form_token → 一律 err=stale，浏览器里带附件一条也发不出去。这条用例用真 FormData 守住它。 */
+  r = await req('/forum/new', { j: jarAd });
+  const atTok = (r.text.match(/name="form_token" value="([0-9a-f]{32})"/) || [])[1];
+  const TINY_PNG = new Uint8Array(Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64'));
+  const afd = new FormData();
+  afd.append('forum', 'general');
+  afd.append('title', '附件主题' + STAMP);
+  afd.append('body', '带一张 1x1 小图 ' + STAMP);
+  afd.append('form_token', atTok);
+  afd.append('website', '');
+  afd.append('files', new Blob([TINY_PNG], { type: 'image/png' }), 'dot.png');
+  r = await req('/forum/new', { method: 'POST', j: jarAd, fd: afd, redirect: 'manual' });
+  ok('multipart 发帖不是 stale（令牌必须从已解析的表单字段里读）',
+    r.status === 302 && r.location.indexOf('err=') < 0, r.status + ' ' + r.location);
+  const aPath = (r.location.match(/^(\/forum\/t\/\d+)/) || [])[1] || '';
+  r = await req(aPath || '/forum/');
+  const aUrl = (r.text.match(/\/ugc\/a\/\d+/) || [])[0] || '';
+  ok('主题页渲染出附件链接（/ugc/a/:id）', !!aUrl, aPath + ' ' + r.status);
+  const aRes = await fetch(BASE + (aUrl || '/ugc/a/0'));
+  const aBuf = new Uint8Array(await aRes.arrayBuffer());
+  ok('附件取回是同一张 PNG（200 + image/png + 字节一致）',
+    aRes.status === 200 && String(aRes.headers.get('content-type')).indexOf('image/png') === 0 &&
+    aBuf.length === TINY_PNG.length && aBuf.every((b, i) => b === TINY_PNG[i]),
+    aRes.status + ' ' + aBuf.length + 'B vs ' + TINY_PNG.length + 'B');
+
   console.log('--- 论坛：邮箱门槛、黑名单、蜜罐、一次性令牌与限流 ---');
   const f1Name = 'fu' + STAMP + 'a';
   r = await req('/api/auth/register', { method: 'POST', j: jarF1, json: { username: f1Name, password: 'pass1234', display_name: '论坛甲' } });

@@ -3,7 +3,7 @@
  * 与 worker/social.js 一一对应，那边每个函数第一个参数是 D1 绑定、全程 await。
  */
 import { db } from './db.js';
-import { dayKey, pickDaily, streakOf } from './daily.js';
+import { dayKey, pickDaily, streakOf, makeupCheck, calendarCells, monthPerfect } from './daily.js';
 import { badgesOf, levelOf, titleOf } from './badges.js';
 import { listGames } from './data.js';
 
@@ -14,36 +14,121 @@ export function dailySlug(day = dayKey()) {
   return pickDaily(day, listGames({ limit: 500 }));
 }
 
-/** 每日挑战的进度：今天做了没、累计几次、连续几天 */
+/* ================= 第八批：全勤日历 / 补做 =================
+ * 与 worker/social.js 一一对应：同名同参同返回，那边多一个 db 参数、全程 await。
+ * daily_results 要多两列（makeup / done_day）。src/db.js 的 migrate() 本次不许动，
+ * 所以照 ensureSocial 的思路在第一次用到时幂等补列——migrations/0006_social.sql 头部注释
+ * 说的就是这个坑：迁移文件里只放「建表 / 建索引」，补列交给运行时 ALTER，两边才不会打架。
+ * 口径（窗口多长、连续天数认不认补做）写在 src/daily.js 第八批那一段。
+ */
+
+const dailyReady = new WeakSet();
+
+/** 幂等补 daily_results 的两列（按库对象各记一次：测试里一个进程可能开好几个临时库） */
+function ensureDaily() {
+  if (dailyReady.has(db)) return;
+  const cols = db.prepare('PRAGMA table_info(daily_results)').all().map((c) => String(c.name));
+  if (!cols.includes('makeup')) db.exec('ALTER TABLE daily_results ADD COLUMN makeup INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('done_day')) db.exec("ALTER TABLE daily_results ADD COLUMN done_day TEXT NOT NULL DEFAULT ''");
+  dailyReady.add(db);
+}
+
+/** 最近 N 天的全勤日历（含今天，按时间正序）；未登录给一份全 false 的格子 */
+export function dailyCalendar(userId, days = 28, now = Date.now()) {
+  const uid = Number(userId) || 0;
+  const n = Math.min(120, Math.max(1, Number(days) || 28));
+  const today = dayKey(now);
+  if (!uid) return { day: today, today: null, cells: calendarCells([], n, now) };
+  ensureDaily();
+  const rows = db.prepare('SELECT day, slug, makeup, done_day FROM daily_results WHERE user_id = ? ORDER BY day DESC LIMIT 200').all(uid);
+  return { day: today, today: rows.find((r) => String(r.day) === today) || null, cells: calendarCells(rows, n, now) };
+}
+
+/** 月度全勤：month = 'YYYY-MM'（缺省 / 不合法 = 当前月）；补做也算完成，口径见 src/daily.js */
+export function monthlyPerfect(userId, month = '', now = Date.now()) {
+  const uid = Number(userId) || 0;
+  const m = /^(\d{4})-(\d{2})$/.exec(String(month || '').trim());
+  const label = m ? m[1] + '-' + m[2] : dayKey(now).slice(0, 7);
+  if (!uid) return monthPerfect(label, [], now);
+  ensureDaily();
+  const rows = db.prepare('SELECT day FROM daily_results WHERE user_id = ? AND day LIKE ?').all(uid, label + '-%');
+  return monthPerfect(label, rows.map((r) => String(r.day)), now);
+}
+
+/**
+ * 每日挑战的进度：今天做了没、累计几次、连续几天。
+ * 第八批只加字段、不改口径：total / done / doneToday 数「目标日」有没有记录（补做也算完成），
+ * streak 只数自然打卡（补做不续连续），done 还是最近 60 个目标日。
+ * 新增：calendar（28 天格子）、perfect（当月全勤）、makeupUsed（补做次数）、
+ *       makeup（最近一次补做）、doneRows（目标日 + 是否补做 + 实际完成日）。
+ */
 export function dailyStats(userId, now = Date.now()) {
   const uid = Number(userId) || 0;
   const day = dayKey(now);
-  if (!uid) return { day: day, slug: dailySlug(day), total: 0, streak: 0, doneToday: false, done: [] };
-  const rows = db.prepare('SELECT day FROM daily_results WHERE user_id = ? ORDER BY day DESC LIMIT 400').all(uid).map((r) => String(r.day));
-  const days = new Set(rows);
+  if (!uid) {
+    return {
+      day: day,
+      slug: dailySlug(day),
+      total: 0,
+      streak: 0,
+      doneToday: false,
+      done: [],
+      calendar: dailyCalendar(0, 28, now),
+      perfect: monthlyPerfect(0, '', now),
+      makeupUsed: 0,
+      makeup: { day: '', slug: '', makeup: false, doneDay: '' },
+      doneRows: []
+    };
+  }
+  ensureDaily();
+  const rows = db.prepare('SELECT day, slug, makeup, done_day FROM daily_results WHERE user_id = ? ORDER BY day DESC LIMIT 400').all(uid);
+  const targets = rows.map((r) => String(r.day));
+  const days = new Set(targets);
+  const natural = rows.filter((r) => !Number(r.makeup)).map((r) => String(r.day));
+  const made = rows.filter((r) => Number(r.makeup));
   return {
     day: day,
     slug: dailySlug(day),
     total: one('SELECT COUNT(*) n FROM daily_results WHERE user_id = ?', uid),
-    streak: streakOf(rows, now),
+    streak: streakOf(natural, now),
     doneToday: days.has(day),
-    done: rows.slice(0, 60)
+    done: targets.slice(0, 60),
+    calendar: dailyCalendar(uid, 28, now),
+    perfect: monthlyPerfect(uid, '', now),
+    makeupUsed: one('SELECT COUNT(*) n FROM daily_results WHERE user_id = ? AND makeup = 1', uid),
+    makeup: made.length
+      ? { day: String(made[0].day), slug: String(made[0].slug || ''), makeup: true, doneDay: String(made[0].done_day || '') }
+      : { day: '', slug: '', makeup: false, doneDay: '' },
+    doneRows: rows.map((r) => ({ day: String(r.day), slug: String(r.slug || ''), makeup: !!Number(r.makeup), doneDay: String(r.done_day || r.day || '') }))
   };
 }
 
 /**
  * 记一次每日挑战完成（当天已记过就跳过——UNIQUE(day,user_id) 兜底）。
  * fresh=true 表示这一次是新记上的（页面据此显示「打卡成功」）。
+ *
+ * opts.day = 补做的目标日 'YYYY-MM-DD'：不传 / 空串 = 当天打卡（老调用点行为不变）。
+ * opts.makeup 只作页面自述，落库的 makeup 一律由目标日决定（目标日不是今天就是补做）——
+ * 不给任何人留「把过去的日子伪装成自然打卡、借此续上连续」的口子。
+ * 返回值在 fresh / day 之外加了 makeup（这次算不算补做）、doneDay（实际完成日）、error：
+ *   'too_late' 超出补做窗口（含未来日期）、'bad_day' 日期格式不对、'slug_mismatch' 传的 slug 不是那天的题
+ *   —— 除当天重复打卡（fresh=false、error 为空）外都不落库。
  */
-export function markDaily(userId, slug, now = Date.now()) {
+export function markDaily(userId, slug, now = Date.now(), opts = {}) {
   const uid = Number(userId) || 0;
-  const day = dayKey(now);
-  if (!uid) return { fresh: false, day: day };
-  if (String(slug) !== dailySlug(day)) return { fresh: false, day: day };
+  const today = dayKey(now);
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const target = String(o.day || '') || today;
+  if (!uid) return { fresh: false, day: target, makeup: false, doneDay: today, error: '' };
+  const bad = makeupCheck(o.day, now);
+  if (bad) return { fresh: false, day: target, makeup: false, doneDay: today, error: bad };
+  ensureDaily();
+  const makeup = target !== today;
+  if (String(slug) !== dailySlug(target)) return { fresh: false, day: target, makeup: makeup, doneDay: today, error: 'slug_mismatch' };
   const info = db
-    .prepare('INSERT OR IGNORE INTO daily_results (day, user_id, slug, created_at) VALUES (?, ?, ?, ?)')
-    .run(day, uid, String(slug), now);
-  return { fresh: !!info.changes, day: day };
+    .prepare('INSERT OR IGNORE INTO daily_results (day, user_id, slug, created_at, makeup, done_day) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(target, uid, String(slug), now, makeup ? 1 : 0, today);
+  return { fresh: !!info.changes, day: target, makeup: makeup, doneDay: today, error: '' };
 }
 
 /** 一个账号的全部统计：徽章、等级、个人主页都用它 */

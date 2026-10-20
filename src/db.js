@@ -106,9 +106,11 @@ export function migrate() {
     CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites(user_id);
 
     -- 评论：status 1 可见 / 0 被管理员隐藏（软删除，可恢复）
+    -- 注意：game_id 是「目标 id」而不是外键——target='game' 时是游戏 id，target='post' 时是公告帖 id。
+    -- 老库上它曾被建成 REFERENCES games(id)，公告评论因此撞外键 500；rebuildCommentsNoGameFk() 负责摘掉（见文件末尾；D1 侧是 migrations/0012）。
     CREATE TABLE IF NOT EXISTS comments (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      game_id    INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+      game_id    INTEGER NOT NULL,
       user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       body       TEXT NOT NULL,
       status     INTEGER DEFAULT 1,
@@ -335,6 +337,89 @@ export function migrate() {
       created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_user ON daily_results(day, user_id);
+
+    -- 第八批：主题标签与精华（featured 是新增列，老库由下面的 addColumn 补）
+    CREATE TABLE IF NOT EXISTS thread_tags (
+      thread_id INTEGER NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+      tag       TEXT NOT NULL,
+      PRIMARY KEY (thread_id, tag)
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_tags_tag ON thread_tags(tag);
+
+    -- 第九批：发件箱（外发邮件先落库，失败按指数退避重试，退信可查，见 docs/EMAIL.md）
+    CREATE TABLE IF NOT EXISTS mail_outbox (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      to_addr         TEXT NOT NULL,
+      subject         TEXT NOT NULL DEFAULT '',
+      body_text       TEXT NOT NULL DEFAULT '',
+      tag             TEXT NOT NULL DEFAULT '',
+      status          TEXT NOT NULL DEFAULT 'queued',
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_error      TEXT NOT NULL DEFAULT '',
+      next_attempt_at TEXT,
+      created_at      TEXT DEFAULT (datetime('now','localtime')),
+      updated_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_mail_outbox_status ON mail_outbox(status, next_attempt_at);
+
+    -- 第十批：联机棋类 Elo（只结算服务端裁判的四款棋类；赛季 = UTC 自然季度；身份键见 src/elo.js）
+    -- player_ratings 必须恰好这 10 列：少一列多一列都会让 upsert 静默失败
+    CREATE TABLE IF NOT EXISTS player_ratings (
+      user_id    TEXT NOT NULL,
+      game       TEXT NOT NULL,
+      season     TEXT NOT NULL,
+      rating     INTEGER NOT NULL DEFAULT 1200,
+      games      INTEGER NOT NULL DEFAULT 0,
+      wins       INTEGER NOT NULL DEFAULT 0,
+      losses     INTEGER NOT NULL DEFAULT 0,
+      draws      INTEGER NOT NULL DEFAULT 0,
+      peak       INTEGER NOT NULL DEFAULT 1200,
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, game, season)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ratings_board ON player_ratings(game, season, rating DESC, games DESC, user_id);
+    -- elo_history 故意不加 REFERENCES play_rooms(id)：sweep 删房间时不能把「这房间结过没」的凭据一起抹掉
+    CREATE TABLE IF NOT EXISTS elo_history (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id     INTEGER NOT NULL,
+      game        TEXT NOT NULL,
+      season      TEXT NOT NULL,
+      host_id     TEXT NOT NULL,
+      guest_id    TEXT NOT NULL,
+      host_delta  INTEGER NOT NULL DEFAULT 0,
+      guest_delta INTEGER NOT NULL DEFAULT 0,
+      host_after  INTEGER NOT NULL DEFAULT 0,
+      guest_after INTEGER NOT NULL DEFAULT 0,
+      result      TEXT NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_elo_history_room ON elo_history(room_id);
+    CREATE INDEX IF NOT EXISTS idx_elo_history_season ON elo_history(game, season, id DESC);
+
+    -- 第十一批：论坛附件（owner_id 故意不加 REFERENCES users：附件是软删 + 内容寻址共用实体）
+    CREATE TABLE IF NOT EXISTS attachments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id   INTEGER NOT NULL,
+      thread_id  INTEGER NOT NULL DEFAULT 0,
+      post_id    INTEGER NOT NULL DEFAULT 0,
+      filename   TEXT    NOT NULL,
+      mime       TEXT    NOT NULL DEFAULT '',
+      bytes      INTEGER NOT NULL DEFAULT 0,
+      sha256     TEXT    NOT NULL DEFAULT '',
+      storage    TEXT    NOT NULL DEFAULT '',
+      "key"      TEXT    NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      status     TEXT NOT NULL DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS idx_attachments_post   ON attachments(post_id, status, id);
+    CREATE INDEX IF NOT EXISTS idx_attachments_thread ON attachments(thread_id, status, id);
+    CREATE INDEX IF NOT EXISTS idx_attachments_owner  ON attachments(owner_id, status, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_attachments_sha    ON attachments(sha256, storage, status);
+    CREATE INDEX IF NOT EXISTS idx_attachments_gc     ON attachments(status, created_at);
+    CREATE TABLE IF NOT EXISTS attachments_blob (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      data_b64 TEXT NOT NULL
+    );
   `);
 
   // games.status 语义：1 已上架 / 0 已下架 / 2 待审核
@@ -369,6 +454,12 @@ export function migrate() {
   // 第六批：观战凭证（房间内玩家可分享的只读钥匙）与已存档的棋谱 id
   addColumn('play_rooms', 'watch_token', "watch_token TEXT NOT NULL DEFAULT ''");
   addColumn('play_rooms', 'replay_id', 'replay_id INTEGER DEFAULT 0');
+
+  // 第八批：论坛精华（置顶/锁定是既有的 pinned/locked；featured 是新增列）
+  addColumn('forum_threads', 'featured', 'featured INTEGER NOT NULL DEFAULT 0');
+
+  // 修历史遗留：comments.game_id 上的 games 外键（公告评论插不进去）
+  rebuildCommentsNoGameFk();
 }
 
 /** 幂等补索引 */
@@ -381,4 +472,44 @@ function addColumn(table, column, ddl) {
   const cols = db.prepare('PRAGMA table_info(' + table + ')').all();
   if (cols.some((c) => c.name === column)) return;
   db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + ddl);
+}
+
+/**
+ * 摘掉 comments.game_id 上遗留的 REFERENCES games(id) 外键（幂等，只在老库上动手）。
+ *
+ * 背景：comments.game_id 是通用目标 id —— target='game' 存游戏 id、target='post' 存公告帖 id
+ * （src/data.js addCommentTo）。外键让「公告帖 id 恰好不是某个游戏 id」时插入直接失败，
+ * Express 线表现为公告评论一律 500（FOREIGN KEY constraint failed）；worker 线不强制外键所以没暴露。
+ * 做法：按 sqlite_master 里的原 DDL 复刻一张新表、摘掉指向 games 的外键，拷行、换名、重建索引。
+ * user_id 指向 users 的外键与三个索引都保留；列集合完全由原 DDL 决定，不写死。
+ */
+function rebuildCommentsNoGameFk() {
+  const fks = db.prepare('PRAGMA foreign_key_list(comments)').all();
+  if (!fks.some((f) => String(f.table || '').toLowerCase() === 'games')) return false;
+  const master = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'comments'").get();
+  if (!master || !master.sql) return false;
+  const idx = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'comments' AND sql IS NOT NULL").all();
+  const cols = db.prepare('PRAGMA table_info(comments)').all().map((c) => c.name).join(', ');
+  const NEW = 'comments_rebuild';
+  const ddl = String(master.sql)
+    .replace(/^CREATE TABLE\s+"?comments"?/i, 'CREATE TABLE ' + NEW)
+    .replace(/\s+REFERENCES\s+games\s*\(\s*id\s*\)(\s+ON\s+DELETE\s+CASCADE)?/gi, '');
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec('BEGIN');
+    db.exec(ddl);
+    db.exec('INSERT INTO ' + NEW + ' (' + cols + ') SELECT ' + cols + ' FROM comments');
+    db.exec('DROP TABLE comments');
+    db.exec('ALTER TABLE ' + NEW + ' RENAME TO comments');
+    db.exec('COMMIT');
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    throw e;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+  for (const r of idx) db.exec(String(r.sql));
+  const left = db.prepare('PRAGMA foreign_key_list(comments)').all().filter((f) => String(f.table || '').toLowerCase() === 'games');
+  if (left.length) throw new Error('comments 外键重建失败：games 外键仍在');
+  return true;
 }
