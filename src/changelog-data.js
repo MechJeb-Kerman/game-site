@@ -1,7 +1,23 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 01:15";
-export const CHANGELOG_TOTAL = 47;
+export const CHANGELOG_GENERATED = "2026-10-20 02:57";
+export const CHANGELOG_TOTAL = 49;
 export const CHANGELOG = [
+  {
+    "hash": "2e6f1c7",
+    "date": "2026-10-20 10:57",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "第二轮「后续可做」落地（论坛标签与精华、附件上传、限流适配层、Elo 天梯、棋谱列表、邮件发件箱、OAuth 网关、每日挑战补做、OG 位图）"
+  },
+  {
+    "hash": "90ee563",
+    "date": "2026-10-20 09:17",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "通知/私信/关注、联机棋类服务端裁判、分享卡、搜索与榜单适配层、PWA 真离线"
+  },
   {
     "hash": "46367c2",
     "date": "2026-10-20 01:25",
