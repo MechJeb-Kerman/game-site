@@ -1,7 +1,15 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 05:42";
-export const CHANGELOG_TOTAL = 54;
+export const CHANGELOG_GENERATED = "2026-10-20 05:46";
+export const CHANGELOG_TOTAL = 55;
 export const CHANGELOG = [
+  {
+    "hash": "b70006d",
+    "date": "2026-10-20 13:42",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "更新说明补上本轮提交（54 条）"
+  },
   {
     "hash": "77c492b",
     "date": "2026-10-20 13:42",

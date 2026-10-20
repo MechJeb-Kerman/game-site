@@ -14,6 +14,7 @@
  *   D. 失效与熔断：假服务回 410 → 订阅行被删；回 500 连续 5 次 → fail_count=5 且 disabled=1，之后不再发请求。
  *   E. Workers 线（可选）：tools/serve-worker.mjs 起 createWorkerServer，key/subscribe/subscribed 一致，
  *      worker 侧 follow 也真推到假服务（独立库 data/worker-push-wiring-test.db，跑完删除）。
+ *   F. 未配 VAPID 空转：configured:false、publicKey 空串、notify 一个 HTTP 都不发（另起一台没有 VAPID_* 的 Express 实测）。
  *
  * 怎么跑：  cd D:/CODE/game-site && node tools/push-wiring-test.mjs
  * 退出码：  有 FAIL → 1；全过 → 0。
@@ -815,6 +816,83 @@ async function sectionE(ctx) {
   }
 }
 
+/* ===================================================================== F */
+
+/** 未配 VAPID（env / process.env 里没有三件套）：configured:false、publicKey 空串、整条链路空转不发一个 HTTP。
+ *  进程内那段用 worker/push.js 而不是 src/push.js —— 后者 import 了 src/db.js，一 import 就会打开真库 data/games.db。
+ *  端到端那段是另起一台 Express：同一个 %TEMP% 副本、同一个副本库，只是 env 里没有 VAPID_*。
+ */
+async function sectionF(ctx) {
+  head('F. 未配 VAPID：configured:false / publicKey 空串 / notify 一次 HTTP 都不发');
+  const before = ctx.fake.reqs.length;
+
+  const wp = await import(pathToFileURL(join(ROOT, 'worker', 'push.js')).href);
+  const cfg = wp.pushConfigured({});
+  ok('F1 未配时 pushConfigured({}) → {ok:false, reason:"no_keys", publicKey 空}',
+    cfg.ok === false && cfg.reason === 'no_keys' && !cfg.publicKey,
+    'ok=' + cfg.ok + ' reason=' + cfg.reason + ' publicKey=' + JSON.stringify(cfg.publicKey));
+  ok('F2 未配时 vapidPublicKey({}) → ""', wp.vapidPublicKey({}) === '', 'value=' + JSON.stringify(wp.vapidPublicKey({})));
+
+  const realFetch = globalThis.fetch;
+  let fetched = 0;
+  let notifyErr = '';
+  globalThis.fetch = function () { fetched++; return realFetch.apply(globalThis, arguments); };
+  try {
+    wp.notifyPush(null, {}, 1, { kind: 'follow', actorId: 2, targetType: 'user', targetId: 2 });
+    await sleep(150);
+  } catch (e) {
+    notifyErr = String((e && e.message) || e);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  ok('F3 未配时 notifyPush() 立刻返回、一次 HTTP 都不发', fetched === 0 && !notifyErr,
+    'fetch ' + fetched + ' 次' + (notifyErr ? ' err=' + notifyErr : ''));
+
+  const port = await freePort();
+  const base = 'http://127.0.0.1:' + port;
+  const proc = startExpress(ctx.copyDir, port, { PUSH_TEST_FAKE_PORT: String(ctx.fake.port) }, writeFetchShim(ctx.copyDir, ctx.fake.port));
+  info('未配 VAPID 的 Express: ' + base + '（env 里没有 VAPID_*，库=同一个 %TEMP% 副本库）');
+  const ready = await waitHttp200(base + '/api/push/key', 90000);
+  ok('F4 未配 VAPID 时服务照常起得来（GET /api/push/key 有响应）', ready.ok === true, '等待 ' + ready.ms + 'ms');
+  if (!ready.ok) {
+    info('子进程输出尾部：' + tailText(proc.tail));
+    return;
+  }
+
+  const kAnon = await req(base, '/api/push/key', { jar: makeJar() });
+  ok('F5 未登录 GET /api/push/key → {ok:true, configured:false, publicKey:""}',
+    kAnon.status === 200 && !!(kAnon.data && kAnon.data.ok === true && kAnon.data.configured === false) && kAnon.data.publicKey === '',
+    'status=' + kAnon.status + ' body=' + JSON.stringify(kAnon.data).slice(0, 160));
+  ok('F6 未配时 subscribed 仍是布尔值（接口形状不塌）', !!(kAnon.data && typeof kAnon.data.subscribed === 'boolean'));
+
+  const target = await registerAccount(base, 'Ft');
+  const fan = await registerAccount(base, 'Ff');
+  ok('F7 未配 VAPID 也能注册账号（后面前置就位）',
+    target.status === 201 && target.id > 0 && fan.status === 201 && fan.id > 0,
+    'target=' + target.status + '/' + target.id + ' fan=' + fan.status + '/' + fan.id);
+
+  const ep = ctx.fake.epOf('/sub/' + randHex(6));
+  const s = await req(base, '/api/push/subscribe', { method: 'POST', json: { subscription: subOf(ep, ctx.ua) }, jar: target.jar });
+  ok('F8 未配 VAPID 时订阅照常落库（200 + id>0）', s.status === 200 && Number(s.data && s.data.id) > 0,
+    'status=' + s.status + ' body=' + String(s.text).slice(0, 140));
+  const k2 = await req(base, '/api/push/key', { jar: target.jar });
+  ok('F9 已登录也一样：configured:false + publicKey:"" + subscribed:true（行确实在库里）',
+    k2.status === 200 && !!(k2.data && k2.data.configured === false && k2.data.publicKey === '' && k2.data.subscribed === true),
+    JSON.stringify(k2.data).slice(0, 160));
+
+  const f = await follow(base, fan.jar, target.username, 'follow');
+  ok('F10 未配 VAPID 时关注请求照常成功（302 + notice=followed）',
+    f.status === 302 && String(loc(f)).indexOf('notice=followed') >= 0, 'status=' + f.status + ' loc=' + String(loc(f)).slice(0, 80));
+  const rows = await dbRows(ctx.dbf, 'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND kind = ?', [target.id, 'follow']);
+  ok('F11 站内通知照常落库（未配 VAPID 只影响推送，不影响写库）', Number(rows && rows[0] && rows[0].n) >= 1,
+    'notifications=' + JSON.stringify(rows));
+  await sleep(1200);
+  ok('F12 未配 VAPID 时 notifyPush 没有发任何 HTTP（假推送服务零新增请求）', ctx.fake.reqs.length === before,
+    '新增 ' + (ctx.fake.reqs.length - before) + ' 条');
+  ok('F13 那条订阅从头到尾没被投递过（假服务里没有它的请求）', hits(ctx.fake, pathOf(ep)).length === 0,
+    'hits=' + hits(ctx.fake, pathOf(ep)).length);
+}
+
 /* ==================================================================== main */
 
 async function main() {
@@ -858,6 +936,7 @@ async function main() {
   await sectionC(ctx);
   await sectionD(ctx);
   await sectionE(ctx);
+  await sectionF(ctx);
 
   head('Z. 收尾核对');
   const realAfter = snapshot(REAL_DB);
