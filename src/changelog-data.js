@@ -1,7 +1,39 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 07:05";
-export const CHANGELOG_TOTAL = 57;
+export const CHANGELOG_GENERATED = "2026-10-20 09:45";
+export const CHANGELOG_TOTAL = 61;
 export const CHANGELOG = [
+  {
+    "hash": "32af7b6",
+    "date": "2026-10-20 17:45",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "新增打砖块 / 跳一跳 / 飞机大战三款游戏（20 → 23 款）"
+  },
+  {
+    "hash": "832ad99",
+    "date": "2026-10-20 15:24",
+    "day": "2026-10-20",
+    "kind": "fix",
+    "kindLabel": "修复",
+    "subject": "gen-sw --check 归一化行尾与结尾空行（Windows autocrlf 假阳性）"
+  },
+  {
+    "hash": "89c0c03",
+    "date": "2026-10-20 15:06",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "重跑验收脚本刷新页面截图"
+  },
+  {
+    "hash": "4f50395",
+    "date": "2026-10-20 15:05",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "更新说明补上本轮提交（57 条）"
+  },
   {
     "hash": "2fbaab6",
     "date": "2026-10-20 15:05",
