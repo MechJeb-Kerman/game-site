@@ -21,7 +21,8 @@ import { isValidSubscription, pushPayload, vapidHeader, encryptPayload, PUSH_KIN
 /** 与 src/push.js 的 PUSH_DDL 逐字相同（tools/push-test.mjs 会断言这一点） */
 export const PUSH_DDL = [
   'CREATE TABLE IF NOT EXISTS push_subs ( id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, ua TEXT NOT NULL DEFAULT \'\', created_at TEXT NOT NULL, ok_at TEXT DEFAULT \'\', fail_count INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0 )',
-  'CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs (user_id, disabled)'
+  'CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs (user_id, disabled)',
+  'CREATE TABLE IF NOT EXISTS push_keys ( k TEXT PRIMARY KEY, v TEXT NOT NULL, changed_at TEXT NOT NULL DEFAULT \'\' )'
 ];
 
 /** 连续失败多少次就置 disabled（与 src/push.js 同值） */
@@ -71,6 +72,94 @@ export function pushConfigured(env = {}) {
 /** 留给前端的 applicationServerKey（没配就返回空串） */
 export function vapidPublicKey(env = {}) {
   const cfg = pushConfigured(env);
+  if (!cfg.ok) return '';
+  try {
+    return b64u(fromB64u(cfg.publicKey));
+  } catch (err) {
+    return '';
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * VAPID 密钥自举：PUSH_AUTO_KEYS 打开时，D1 里没有一对键就现生成一对落库
+ * （与 src/push.js 同名同形，区别只是首参是 D1 绑定、全程 await）
+ * ------------------------------------------------------------------ */
+
+const AUTO_KEY_FLAG = ['1', 'on', 'true', 'yes'];
+const KEY_NAMES = { pub: 'public', priv: 'private', sub: 'subject' };
+
+/** PUSH_AUTO_KEYS 是否打开（默认关） */
+export function pushAutoKeys(env = {}) {
+  const e = env || {};
+  const v = String(e.PUSH_AUTO_KEYS == null ? '' : e.PUSH_AUTO_KEYS).trim().toLowerCase();
+  return AUTO_KEY_FLAG.includes(v);
+}
+
+/** 生成一对 VAPID 键：公钥 = 65 字节未压缩点（raw），私钥 = 32 字节标量（jwk.d） */
+async function genVapidPair() {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const point = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  return { publicKey: b64u(point), privateKey: String(jwk.d || '') };
+}
+
+async function readKeyRows(db) {
+  const out = {};
+  const r = await db.prepare('SELECT k, v FROM push_keys').all();
+  for (const row of (r && r.results) || []) out[String(row.k)] = String(row.v == null ? '' : row.v);
+  return out;
+}
+
+/** 从 D1 里取一对键（缺了就生成一对落库再读回）；拿不到合法键时返回 null */
+async function autoVapid(db, env) {
+  const e = env || {};
+  await ensurePush(db);
+  let rows = await readKeyRows(db);
+  if (!rows[KEY_NAMES.pub] || !rows[KEY_NAMES.priv]) {
+    const pair = await genVapidPair();
+    const at = iso(Date.now());
+    const subject = String(e.VAPID_SUBJECT || '').trim() || DEFAULT_VAPID_SUBJECT;
+    // INSERT OR IGNORE：并发的首个请求只有一条能写进去，其余读回同一对键
+    const ins = 'INSERT OR IGNORE INTO push_keys (k, v, changed_at) VALUES (?, ?, ?)';
+    await db.prepare(ins).bind(KEY_NAMES.pub, pair.publicKey, at).run();
+    await db.prepare(ins).bind(KEY_NAMES.priv, pair.privateKey, at).run();
+    await db.prepare(ins).bind(KEY_NAMES.sub, subject, at).run();
+    rows = await readKeyRows(db);
+  }
+  const pub = String(rows[KEY_NAMES.pub] || '');
+  const priv = String(rows[KEY_NAMES.priv] || '');
+  try {
+    if (fromB64u(pub).length !== 65 || fromB64u(priv).length !== 32) return null;
+  } catch (err) {
+    return null;
+  }
+  const envSubject = String(e.VAPID_SUBJECT || '').trim();
+  const storedSubject = String(rows[KEY_NAMES.sub] || '').trim();
+  const subject = envSubject || storedSubject || DEFAULT_VAPID_SUBJECT;
+  if (!/^(mailto:|https:\/\/)/i.test(subject)) return null;
+  return { ok: true, reason: '', publicKey: pub, privateKey: priv, subject: subject, defaultSubject: !(envSubject || storedSubject), source: 'db' };
+}
+
+/**
+ * 实际生效的 VAPID 配置（src/push.js 的异步镜像）。
+ * 环境变量配好就用 env；否则 PUSH_AUTO_KEYS 开着时用 D1 里的自举密钥；都不成立就空转。
+ */
+export async function resolveVapid(db, env = {}) {
+  const base = pushConfigured(env);
+  if (base.ok) return Object.assign({}, base, { source: 'env' });
+  if (!pushAutoKeys(env) || !db) return Object.assign({}, base, { source: '' });
+  try {
+    const auto = await autoVapid(db, env);
+    if (auto) return auto;
+  } catch (err) {
+    // D1 不可用 / 只读：当没配置降级
+  }
+  return Object.assign({}, base, { source: '' });
+}
+
+/** 给前端的 applicationServerKey（src/push.js 的异步镜像） */
+export async function keyForClient(db, env = {}) {
+  const cfg = await resolveVapid(db, env);
   if (!cfg.ok) return '';
   try {
     return b64u(fromB64u(cfg.publicKey));
@@ -151,7 +240,7 @@ export async function deliver(db, env, userId, payload, opts = {}) {
   const uid = Number(userId) || 0;
   try {
     if (!uid || !db) return out;
-    const cfg = pushConfigured(env || opts.env || {});
+    const cfg = opts.cfg || (await resolveVapid(db, env || opts.env || {}));
     if (!cfg.ok) return out;
     await ensurePush(db);
     const r = await db.prepare('SELECT * FROM push_subs WHERE user_id = ? AND disabled = 0 ORDER BY id').bind(uid).all();
@@ -219,7 +308,7 @@ export async function deliver(db, env, userId, payload, opts = {}) {
  */
 export function notifyPush(db, env, userId, notification, opts = {}) {
   try {
-    if (!pushConfigured(env || opts.env || {}).ok) return;
+    if (!pushConfigured(env || opts.env || {}).ok && !pushAutoKeys(env || opts.env || {})) return;
     const n = notification || {};
     const kind = String(n.kind || '').trim();
     if (!PUSH_KINDS.includes(kind)) return;

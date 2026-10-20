@@ -508,6 +508,48 @@ head('⑥ 未配置 VAPID 时优雅空转');
 }
 
 /* ---------------------------------------------------------------- *
+ * ⑦ PUSH_AUTO_KEYS 自举（库里现生成一对 VAPID 键）
+ * ---------------------------------------------------------------- */
+head('⑦ PUSH_AUTO_KEYS 自举');
+{
+  const FLAG = { PUSH_AUTO_KEYS: '1' };
+  const rowsOf = (h) => h.prepare('SELECT k, v FROM push_keys').all();
+  // Express：第一次解析就生成并落库
+  const before = rowsOf(dbmod.db).length;
+  const cfgE = P.resolveVapid(FLAG);
+  ok('⑦-1 打开开关后 resolveVapid 给出可用配置（source=db）', cfgE.ok === true && cfgE.source === 'db', cfgE.source + ' / ok=' + cfgE.ok);
+  ok('⑦-2 公钥是 65 字节未压缩点、私钥是 32 字节标量（base64url 无填充）',
+    unb64u(cfgE.publicKey).length === 65 && unb64u(cfgE.privateKey).length === 32 && cfgE.publicKey.indexOf('=') < 0,
+    cfgE.publicKey.length + ' / ' + cfgE.privateKey.length + ' 字符');
+  eq('⑦-3 库里正好落了 public/private/subject 三行（此前 ' + before + ' 行）', rowsOf(dbmod.db).map((r) => r.k).sort(), ['private', 'public', 'subject']);
+  const rowsE1 = rowsOf(dbmod.db);
+  const cfgE2 = P.resolveVapid(FLAG);
+  ok('⑦-4 再解析一次拿到同一对键、不重复生成', cfgE2.publicKey === cfgE.publicKey && cfgE2.privateKey === cfgE.privateKey && JSON.stringify(rowsOf(dbmod.db)) === JSON.stringify(rowsE1));
+  eq('⑦-5 keyForClient 与库里公钥一致（且是给浏览器的 base64url）', P.keyForClient(FLAG), cfgE.publicKey);
+  eq('⑦-6 开关关掉后，库里的键不再外泄（keyForClient 回空串、resolveVapid 不 ok）', [P.keyForClient({}), P.resolveVapid({}).ok], ['', false]);
+  const envCfg = P.resolveVapid({ VAPID_PUBLIC_KEY: VAPID_PUB, VAPID_PRIVATE_KEY: VAPID_PRIV, VAPID_SUBJECT: 'mailto:admin@fishport.cn', PUSH_AUTO_KEYS: '1' });
+  ok('⑦-7 环境变量给了三件套时优先用它（source=env），不碰库里的自举键', envCfg.source === 'env' && envCfg.publicKey === VAPID_PUB && envCfg.privateKey === VAPID_PRIV && JSON.stringify(rowsOf(dbmod.db)) === JSON.stringify(rowsE1));
+  const badFlag = P.resolveVapid({ PUSH_AUTO_KEYS: 'yes' });
+  ok('⑦-8 开关认 yes/on/true/1 四种写法，其它值一律当关', badFlag.ok === true && P.resolveVapid({ PUSH_AUTO_KEYS: 'maybe' }).ok === false && P.resolveVapid({ PUSH_AUTO_KEYS: '0' }).ok === false);
+  // Worker：同一套语义（首参是 D1）
+  const wdb2 = new LocalD1(':memory:');
+  const cfgW = await W.resolveVapid(wdb2, FLAG);
+  ok('⑦-9 Worker 线同样自举成功（source=db，长度合规）', cfgW.ok === true && cfgW.source === 'db' && unb64u(cfgW.publicKey).length === 65 && unb64u(cfgW.privateKey).length === 32);
+  eq('⑦-10 Worker 线也只落三行、再解析拿同一对键', [(await wdb2.prepare('SELECT k FROM push_keys').all()).results.map((r) => r.k).sort(), await W.keyForClient(wdb2, FLAG)], [['private', 'public', 'subject'], cfgW.publicKey]);
+  // 并发首启：两个请求同时进来，只能有一对键留下来（靠 INSERT OR IGNORE）
+  const wdb3 = new LocalD1(':memory:');
+  const [c1, c2, c3] = await Promise.all([W.keyForClient(wdb3, FLAG), W.keyForClient(wdb3, FLAG), W.keyForClient(wdb3, FLAG)]);
+  const rowsW3 = (await wdb3.prepare('SELECT k, v FROM push_keys').all()).results;
+  ok('⑦-11 并发首启不分叉：三次读回同一把公钥、库里仍只有三行', c1 !== '' && c1 === c2 && c2 === c3 && rowsW3.length === 3 && rowsW3.filter((r) => r.k === 'public')[0].v === c1, rowsW3.length + ' 行');
+  eq('⑦-12 Worker 线关掉开关同样不外泄、没有 env 时也照旧空转', [await W.keyForClient(wdb2, {}), (await W.resolveVapid(wdb2, {})).ok], ['', false]);
+  // 库里被写坏（长度不对）时不当作可用配置，降级回去而不是拿坏键去签 JWT
+  await dbmod.db.prepare("UPDATE push_keys SET v = 'AAAA' WHERE k = 'public'").run();
+  ok('⑦-13 库里的键被写坏 → 当没配置降级（不拿坏键去签名）', P.resolveVapid(FLAG).ok === false && P.keyForClient(FLAG) === '');
+  await dbmod.db.prepare('UPDATE push_keys SET v = ? WHERE k = ?').run(cfgE.publicKey, 'public');
+  ok('⑦-14 修回去立刻恢复可用（坏键不会被缓存住）', P.keyForClient(FLAG) === cfgE.publicKey);
+}
+
+/* ---------------------------------------------------------------- *
  * 收尾
  * ---------------------------------------------------------------- */
 await new Promise((resolve) => server.close(resolve));

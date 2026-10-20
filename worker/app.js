@@ -2248,7 +2248,7 @@ async function apiMessagesUnread(ctx) {
 
 /** 公钥：前端拿它当 applicationServerKey 订阅（views.js 的 pushScript 认 configured/publicKey/subscribed） */
 async function apiPushKey(ctx) {
-  const key = push.vapidPublicKey(ctx.env);
+  const key = await push.keyForClient(ctx.db, ctx.env);
   const subs = ctx.user ? await push.listSubscriptions(ctx.db, ctx.user.id) : [];
   return okJson(ctx, {
     ok: true,

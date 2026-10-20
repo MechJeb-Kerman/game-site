@@ -439,6 +439,15 @@ export function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs(user_id, disabled);
 
+    -- 第十六批：推送密钥自举。PUSH_AUTO_KEYS 打开后，第一次用到推送就在这里生成一对
+    -- VAPID 键（公钥/私钥/subject 三行），省掉「去控制台填密钥」这一步。与 worker/push.js 的
+    -- PUSH_DDL 里那条逐字相同，模块内也幂等自建一次（见 src/push.js 的 resolveVapid）。
+    CREATE TABLE IF NOT EXISTS push_keys (
+      k          TEXT PRIMARY KEY,
+      v          TEXT NOT NULL,
+      changed_at TEXT NOT NULL DEFAULT ''
+    );
+
     -- 第十三批：邮件抑制名单（退信 / 投诉 / 硬失败自动进名单，也能在 /admin/mail 手工加）。
     -- 与 src/outbox.js 的 SUPPRESSION_DDL / worker/schema.js 同名同形，模块内也幂等自建一次。
     CREATE TABLE IF NOT EXISTS mail_suppression (

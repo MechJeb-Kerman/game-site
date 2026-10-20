@@ -1995,7 +1995,7 @@ app.get('/api/messages/unread', (req, res) => {
 
 /** 公钥：前端拿它当 applicationServerKey 订阅（views.js 的 pushScript 认 configured/publicKey/subscribed） */
 app.get('/api/push/key', (req, res) => {
-  const key = push.vapidPublicKey();
+  const key = push.keyForClient();
   const subs = req.user ? push.listSubscriptions(req.user.id) : [];
   res.json({
     ok: true,

@@ -18,12 +18,14 @@
  * （push 事件里 event.data.json() → showNotification(data.title, { body: data.body, tag: data.tag, data: { url: data.url } })）。
  */
 import { db } from './db.js';
+import { generateKeyPairSync } from 'node:crypto';
 import { isValidSubscription, pushPayload, vapidHeader, encryptPayload, PUSH_KINDS, DEFAULT_VAPID_SUBJECT, fromB64u, b64u } from './push-core.js';
 
 /** 建表语句（每条必须是单行字符串；worker/push.js 里有一份逐字相同的，测试会断言两线一致） */
 export const PUSH_DDL = [
   'CREATE TABLE IF NOT EXISTS push_subs ( id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, ua TEXT NOT NULL DEFAULT \'\', created_at TEXT NOT NULL, ok_at TEXT DEFAULT \'\', fail_count INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0 )',
-  'CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs (user_id, disabled)'
+  'CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subs (user_id, disabled)',
+  'CREATE TABLE IF NOT EXISTS push_keys ( k TEXT PRIMARY KEY, v TEXT NOT NULL, changed_at TEXT NOT NULL DEFAULT \'\' )'
 ];
 
 /** 连续失败多少次就置 disabled（等浏览器重订阅或下次登录再清） */
@@ -88,6 +90,97 @@ export function pushConfigured(env = process.env) {
 /** 留给前端的 applicationServerKey（没配就返回空串）；返回归一化后的 base64url，无填充 */
 export function vapidPublicKey(env = process.env) {
   const cfg = pushConfigured(env);
+  if (!cfg.ok) return '';
+  try {
+    return b64u(fromB64u(cfg.publicKey));
+  } catch (err) {
+    return '';
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * VAPID 密钥自举：PUSH_AUTO_KEYS 打开时，库里没有一对键就现生成一对落库
+ *
+ * 为什么要它：Cloudflare 控制台里手填 VAPID 三件套是唯一没法用代码完成的一步。
+ * 打开这个开关后，第一次访问 /api/push/key（或第一次发通知）就把一对 P-256 键
+ * 生成进 push_keys 表，从此这台环境自己带着推送密钥，控制台不用碰。
+ * 关着（默认）时行为和以前逐字节相同：一个 SQL 都不查、notifyPush 立刻返回。
+ * ------------------------------------------------------------------ */
+
+/** 认哪些写法是「开」 */
+const AUTO_KEY_FLAG = ['1', 'on', 'true', 'yes'];
+const KEY_NAMES = { pub: 'public', priv: 'private', sub: 'subject' };
+
+/** PUSH_AUTO_KEYS 是否打开（默认关） */
+export function pushAutoKeys(env = process.env) {
+  const e = env || {};
+  const v = String(e.PUSH_AUTO_KEYS == null ? '' : e.PUSH_AUTO_KEYS).trim().toLowerCase();
+  return AUTO_KEY_FLAG.includes(v);
+}
+
+/** 生成一对 VAPID 键：公钥 = 65 字节未压缩点，私钥 = 32 字节标量（都是 base64url、无填充） */
+function genVapidPair() {
+  const jwk = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
+  const point = Buffer.concat([Buffer.from([0x04]), Buffer.from(fromB64u(jwk.x)), Buffer.from(fromB64u(jwk.y))]);
+  return { publicKey: b64u(point), privateKey: String(jwk.d || '') };
+}
+
+function readKeyRows(h) {
+  const out = {};
+  for (const row of h.prepare('SELECT k, v FROM push_keys').all()) out[String(row.k)] = String(row.v == null ? '' : row.v);
+  return out;
+}
+
+/** 从库里取一对键（缺了就生成一对落库再读回）；拿不到合法键时返回 null */
+function autoVapid(env) {
+  const e = env || {};
+  const h = ensurePush();
+  let rows = readKeyRows(h);
+  if (!rows[KEY_NAMES.pub] || !rows[KEY_NAMES.priv]) {
+    const pair = genVapidPair();
+    const at = iso(Date.now());
+    const subject = String(e.VAPID_SUBJECT || '').trim() || DEFAULT_VAPID_SUBJECT;
+    // INSERT OR IGNORE：多进程同时首启时只有第一个赢，其余读回同一对键，不会分叉
+    const ins = h.prepare('INSERT OR IGNORE INTO push_keys (k, v, changed_at) VALUES (?, ?, ?)');
+    ins.run(KEY_NAMES.pub, pair.publicKey, at);
+    ins.run(KEY_NAMES.priv, pair.privateKey, at);
+    ins.run(KEY_NAMES.sub, subject, at);
+    rows = readKeyRows(h);
+  }
+  const pub = String(rows[KEY_NAMES.pub] || '');
+  const priv = String(rows[KEY_NAMES.priv] || '');
+  try {
+    if (fromB64u(pub).length !== 65 || fromB64u(priv).length !== 32) return null;
+  } catch (err) {
+    return null;
+  }
+  const envSubject = String(e.VAPID_SUBJECT || '').trim();
+  const storedSubject = String(rows[KEY_NAMES.sub] || '').trim();
+  const subject = envSubject || storedSubject || DEFAULT_VAPID_SUBJECT;
+  if (!/^(mailto:|https:\/\/)/i.test(subject)) return null;
+  return { ok: true, reason: '', publicKey: pub, privateKey: priv, subject: subject, defaultSubject: !(envSubject || storedSubject), source: 'db' };
+}
+
+/**
+ * 实际生效的 VAPID 配置：环境变量配好就用它，否则（PUSH_AUTO_KEYS 开着时）用库里的自举密钥，
+ * 都不成立就照旧空转。返回值是 pushConfigured() 的形状再加一个 source（'env' / 'db' / ''）。
+ */
+export function resolveVapid(env = process.env) {
+  const base = pushConfigured(env);
+  if (base.ok) return Object.assign({}, base, { source: 'env' });
+  if (!pushAutoKeys(env)) return Object.assign({}, base, { source: '' });
+  try {
+    const auto = autoVapid(env);
+    if (auto) return auto;
+  } catch (err) {
+    // 库只读 / 被锁：当没配置降级，别把 /api/push/key 带崩
+  }
+  return Object.assign({}, base, { source: '' });
+}
+
+/** 给前端的 applicationServerKey：与 resolveVapid 同源，返回归一化 base64url，没配置就给空串 */
+export function keyForClient(env = process.env) {
+  const cfg = resolveVapid(env);
   if (!cfg.ok) return '';
   try {
     return b64u(fromB64u(cfg.publicKey));
@@ -167,7 +260,7 @@ export async function deliver(userId, payload, opts = {}) {
   const uid = Number(userId) || 0;
   try {
     if (!uid) return out;
-    const cfg = pushConfigured(opts.env || process.env);
+    const cfg = opts.cfg || resolveVapid(opts.env || process.env);
     if (!cfg.ok) return out;                                    // 没配 VAPID：零值返回，一个 SQL 都不查
     const h = ensurePush();
     const rows = h.prepare('SELECT * FROM push_subs WHERE user_id = ? AND disabled = 0 ORDER BY id').all(uid);
@@ -235,7 +328,7 @@ export async function deliver(userId, payload, opts = {}) {
  */
 export function notifyPush(userId, notification, opts = {}) {
   try {
-    if (!pushConfigured(opts.env || process.env).ok) return;
+    if (!resolveVapid(opts.env || process.env).ok) return;
     const n = notification || {};
     const kind = String(n.kind || '').trim();
     if (!PUSH_KINDS.includes(kind)) return;
