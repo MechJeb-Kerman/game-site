@@ -1,7 +1,31 @@
 // 这个文件由 tools/gen-changelog.mjs 从 git 提交历史生成，不要手改；发版前重跑一次并一起提交。
-export const CHANGELOG_GENERATED = "2026-10-20 02:57";
-export const CHANGELOG_TOTAL = 49;
+export const CHANGELOG_GENERATED = "2026-10-20 04:36";
+export const CHANGELOG_TOTAL = 52;
 export const CHANGELOG = [
+  {
+    "hash": "91d8940",
+    "date": "2026-10-20 12:32",
+    "day": "2026-10-20",
+    "kind": "feat",
+    "kindLabel": "新功能",
+    "subject": "补中国象棋/国际象棋裁判、好友动态流与棋谱检索导出"
+  },
+  {
+    "hash": "00de420",
+    "date": "2026-10-20 11:18",
+    "day": "2026-10-20",
+    "kind": "test",
+    "kindLabel": "测试",
+    "subject": "附件回归覆盖 multipart 三个调用点，README 计数同步到 255"
+  },
+  {
+    "hash": "4b90825",
+    "date": "2026-10-20 10:57",
+    "day": "2026-10-20",
+    "kind": "docs",
+    "kindLabel": "文档",
+    "subject": "重跑更新说明（49 条提交，含第二轮功能与三处修复）"
+  },
   {
     "hash": "2e6f1c7",
     "date": "2026-10-20 10:57",
