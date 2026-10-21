@@ -481,3 +481,35 @@
     });
   })();
 })();
+
+/* 页面栏（桌面端左侧导航）：折叠状态记在浏览器本地，下次打开保持；
+   当前页高亮；小于 1024px 时 .rail 由 CSS 隐藏，这里不做事。 */
+(function () {
+  var root = document.documentElement;
+  var btn = document.getElementById('railToggle');
+  if (!btn) return;
+
+  function apply(off) {
+    root.classList.toggle('rail-off', off);
+    btn.setAttribute('aria-expanded', off ? 'false' : 'true');
+    btn.title = off ? '展开页面栏' : '折叠页面栏';
+  }
+
+  var off = false;
+  try { off = localStorage.getItem('railOff') === '1'; } catch (e) { }
+  apply(off);
+
+  btn.addEventListener('click', function () {
+    off = !off;
+    apply(off);
+    try { localStorage.setItem('railOff', off ? '1' : '0'); } catch (e) { }
+  });
+
+  var here = location.pathname.replace(/\/index\.html$/, '/').replace(/\/+$/, '') || '/';
+  Array.prototype.forEach.call(document.querySelectorAll('.rail-nav a'), function (a) {
+    var href = (a.getAttribute('href') || '').replace(/\/+$/, '') || '/';
+    if (href === here || (href !== '/' && here.indexOf(href + '/') === 0)) {
+      a.setAttribute('aria-current', 'page');
+    }
+  });
+})();

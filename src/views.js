@@ -197,16 +197,18 @@ ${noindex ? '<meta name="robots" content="noindex,follow">' : ''}
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png">
-<link rel="stylesheet" href="/static/css/style.css?v=9">
+<link rel="stylesheet" href="/static/css/style.css?v=10">
 ${preload}${ld}${STATIC_MODE ? '' : pwaRegisterScript()}
+<script>try{if(localStorage.getItem('railOff')==='1')document.documentElement.classList.add('rail-off')}catch(e){}</script>
 </head>
 <body${bodyClass ? ' class="' + bodyClass + '"' : ''}>
 <a class="skip" href="#main">跳到主要内容</a>
+${bare ? '' : pageRail()}
 ${bare ? '' : header(user)}
 <main id="main">${content}</main>
 ${bare ? '' : footer()}
-<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=9" defer></script>
-<script src="/static/js/offline-wire.js?v=9" defer></script>
+<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=10" defer></script>
+<script src="/static/js/offline-wire.js?v=10" defer></script>
 </body>
 </html>`;
 }
@@ -260,6 +262,38 @@ function header(user = null) {
     <div class="acct">${account}</div>
   </div>
 </header>`;
+}
+
+/* 页面栏：桌面端左侧可折叠导航。移动端仍用顶栏的 ☰ 抽屉，两者互不干扰。
+   分组顺序按使用频率排：发现 → 分类 → 社区；STATIC_MODE 下没有服务端路由的项自动隐藏。 */
+function pageRail() {
+  const groups = [
+    { title: '发现', items: [
+      ['/', '🏠', '首页'], ['/games', '🎮', '全部游戏'], ['/hot', '🔥', '热度榜'], ['/rank', '🏆', '排行榜']
+    ] },
+    { title: '分类', items: [
+      ['/category/action', '🕹', '动作'], ['/category/puzzle', '🧩', '益智'],
+      ['/category/casual', '☕', '休闲'], ['/category/board', '♟', '棋牌']
+    ] },
+    { title: '社区', items: [
+      STATIC_MODE ? null : ['/daily', '🎯', '每日挑战'],
+      ['/notice', '📢', '公告'],
+      STATIC_MODE ? null : ['/forum', '💬', '论坛'],
+      STATIC_MODE ? null : ['/submit', '✍️', '投稿']
+    ] }
+  ];
+  const body = groups.map((g) => {
+    const links = g.items.filter(Boolean).map(([href, ico, label]) =>
+      '<a href="' + href + '" title="' + label + '"><span class="ri" aria-hidden="true">' + ico + '</span>' +
+      '<span class="rl">' + label + '</span></a>').join('');
+    return '<p class="rail-h">' + g.title + '</p>' + links;
+  }).join('');
+  return `<aside class="rail" id="rail">
+  <button class="rail-toggle" id="railToggle" type="button" aria-controls="railNav" aria-expanded="true" title="折叠页面栏">
+    <span class="ri" aria-hidden="true">☰</span><span class="rl">页面</span>
+  </button>
+  <nav class="rail-nav" id="railNav" aria-label="页面栏">${body}</nav>
+</aside>`;
 }
 
 /* 排名涨跌的小标签：move > 0 上升，move < 0 下降，hasPrev 为假说明是本期新上榜 */
