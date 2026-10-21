@@ -365,6 +365,8 @@ code{background:rgba(0,0,0,.35);padding:2px 7px;border-radius:6px;font-size:13px
 .rk-title{font-size:15px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rk-title:hover{color:var(--brand-2)}
 .rk-body small{font-size:12px;color:var(--dim-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 热度榜：三档窗口的原始播放量（今日 / 3 日 / 7 日），等宽数字便于纵向对比 */
+.rk-body .hot-win{font-variant-numeric:tabular-nums;opacity:.85}
 .rk-val{flex:0 0 auto;text-align:right;display:flex;flex-direction:column;line-height:1.25;min-width:56px}
 .rk-val b{font-size:18px;color:#fff}
 .rk-val small{font-size:12px;color:var(--dim-2)}

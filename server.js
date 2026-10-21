@@ -29,6 +29,9 @@ import * as og from './src/og.js';
 import * as rules from './src/rules/index.js';
 import * as push from './src/push.js';
 import * as rewards from './src/rewards.js';
+// 热度榜评分与 SEO 文本（robots / sitemap / JSON-LD）都收在纯函数模块里，方便单测与静态导出复用
+import * as hot from './src/hot.js';
+import * as seo from './src/seo.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -597,6 +600,25 @@ app.get('/rank', (req, res, next) => {
     .catch(next); // loader 抛错（比如库挂了）原样交给错误处理，与接线前同样 500
 });
 
+// 热度榜：与 /rank 的「窗口内累计次数」不同，这里把今日 / 近 3 天 / 近 7 天三档动量递减加权，
+// 再叠评分质量与上架衰减（算法在 src/hot.js，60 秒进程内缓存），新火的游戏能立刻冒头。
+app.get('/hot', (req, res, next) => {
+  try {
+    const rows = hot.hotGames({ limit: 20 });
+    res.send(
+      ui.hotPage({
+        origin: originOf(req),
+        user: req.user,
+        rows,
+        updatedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        windowLabel: '按今日 / 近 3 天 / 近 7 天播放量加权，每分钟重算一次'
+      })
+    );
+  } catch (e) {
+    next(e); // 库挂了照常 500，与其它页面一致
+  }
+});
+
 
 app.get('/game/:slug', (req, res) => {
   const game = data.getGame(req.params.slug);
@@ -945,60 +967,48 @@ app.get('/precache.json', (req, res) => {
 });
 
 app.get('/robots.txt', (req, res) => {
-  const origin = originOf(req);
-  res.type('text/plain').send(
-    [
-      'User-agent: *',
-      'Allow: /',
-      'Disallow: /api/',
-      'Disallow: /admin',
-      'Disallow: /login',
-      'Disallow: /register',
-      'Disallow: /favorites',
-      'Disallow: /submit',
-      'Disallow: /account',
-      'Disallow: /forgot',
-      'Disallow: /reset',
-      'Disallow: /auth',
-      'Disallow: /comments/',
-  'Disallow: /forum/admin',
-      '',
-      'Sitemap: ' + origin + '/sitemap.xml',
-      ''
-    ].join('\n')
-  );
+  res.type('text/plain').send(seo.robotsTxt(originOf(req)));
 });
 
+// 站点地图：静态页 + 公告 + 分类 + 游戏，规则与转义都在 src/seo.js（纯函数，可单测）
 app.get('/sitemap.xml', (req, res) => {
-  const origin = originOf(req);
-  const urls = [{ loc: '/', pri: '1.0' }, { loc: '/rank', pri: '0.7' }, { loc: '/forum', pri: '0.5' },
-    { loc: '/notice', pri: '0.6' }, { loc: '/changelog', pri: '0.4' }, { loc: '/nav', pri: '0.5' },
-    { loc: '/privacy', pri: '0.3' }, { loc: '/terms', pri: '0.3' }];
-  for (const p of data.listPosts({ status: 1, limit: 50 })) {
-    urls.push({ loc: '/notice/' + encodeURIComponent(p.slug), pri: '0.6', lm: String(p.published_at || p.created_at).slice(0, 10) });
-  }
-  for (const c of data.listCategories()) {
-    if (c.total > 0) urls.push({ loc: '/category/' + c.slug, pri: '0.8' });
-  }
-  for (const g of data.listGames({ sort: 'new', limit: 100 })) {
-    urls.push({ loc: '/game/' + g.slug, pri: '0.9', lm: String(g.created_at).slice(0, 10) });
-  }
-  const body =
-    '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
-    urls
-      .map(
-        (u) =>
-          '<url><loc>' + origin + u.loc + '</loc>' +
-          (u.lm ? '<lastmod>' + u.lm + '</lastmod>' : '') +
-          '<priority>' + u.pri + '</priority></url>'
-      )
-      .join('') +
-    '</urlset>';
-  res.type('application/xml').send(body);
+  const entries = seo.sitemapEntries({
+    posts: data.listPosts({ status: 1, limit: 50 }),
+    categories: data.listCategories(),
+    games: data.listGames({ sort: 'new', limit: 100 })
+  });
+  res.type('application/xml').send(seo.sitemapXml(originOf(req), entries));
 });
 
 // ---------- JSON API ----------
+// 热度榜 JSON：字段与页面口径一致，供外部小组件或第三方抓取；缓存 60 秒与进程内缓存对齐
+app.get('/api/hot', (req, res, next) => {
+  try {
+    const rows = hot.hotGames({ limit: Number(req.query.limit) || 12 });
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json({
+      updated: new Date().toISOString(),
+      count: rows.length,
+      games: rows.map((g, i) => ({
+        rank: i + 1,
+        slug: g.slug,
+        title: g.title,
+        emoji: g.emoji,
+        plays: g.plays,
+        rating: g.rating,
+        votes: g.rating_count,
+        p1: g.p1,
+        p3: g.p3,
+        p7: g.p7,
+        hot: g.hot,
+        trend: g.trend
+      }))
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
 app.get('/api/games', (req, res) => {
   const q = String(req.query.q || '');
   const category = String(req.query.category || '');

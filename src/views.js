@@ -9,6 +9,8 @@ import { rewardsOf, rewardSummary } from './rewards.js';
 import { groupedSites, siteUrl } from './sites.js';
 // 23 款游戏的静态封面（public/covers/*.svg）：命中就用真封面，没命中回落动态 /cover/:slug.svg
 import { coverFor } from './covers.js';
+// 结构化数据（WebSite / VideoGame）只留一份定义在 seo.js，服务端渲染与静态导出共用
+import { gameJsonLd, websiteJsonLd } from './seo.js';
 
 export const SITE = {
   name: '趣玩小游戏',
@@ -244,6 +246,7 @@ function header(user = null) {
     <nav class="nav" aria-label="主导航">
       <a href="/">首页</a>
       <a href="/games">全部游戏</a>
+      <a href="/hot">热度榜</a>
       <a href="/rank">排行榜</a>
       ${STATIC_MODE ? '' : '<a href="/daily">每日挑战</a>'}
       <a href="/notice">公告</a>
@@ -320,6 +323,67 @@ export function rankPage({ origin, user = null, kind = 'today', label = '', desc
   });
 }
 
+/* 升温 / 降温：今日播放相对「前两天的日均」的涨跌标签 */
+function trendTag(trend) {
+  if (trend === 'up') return '<span class="mv up" title="今日播放高于近两天的日均">▲ 升温</span>';
+  if (trend === 'down') return '<span class="mv down" title="今日播放低于近两天的日均">▼ 降温</span>';
+  return '<span class="mv flat">—</span>';
+}
+
+/**
+ * 热度榜页。和 /rank 的热玩榜不同：这里不是「窗口内累计次数」，而是把
+ * 今日 / 近 3 天 / 近 7 天三档动量做递减加权，再乘评分质量与上架衰减，
+ * 所以刚火起来的游戏能立刻冒头，而长期没人玩的会自己沉下去。
+ * 分数由 src/hot.js 现算（60 秒进程内缓存），三档原始播放量一并摊开便于判断走势。
+ */
+export function hotPage({ origin, user = null, rows = [], updatedAt = '', windowLabel = '' }) {
+  const body = rows.length
+    ? '<ol class="rk-list">' + rows.map((r, i) => {
+        const rank = i + 1;
+        const sub = [r.category ? r.category.name : '小游戏',
+          Number(r.rating_count) ? '⭐ ' + Number(r.rating).toFixed(1) : '未评',
+          fmtNum(r.plays) + ' 次游玩'].join(' · ');
+        return '<li class="rk-row">' +
+          '<span class="rk-no n' + Math.min(3, rank) + '">' + rank + '</span>' +
+          '<a class="rk-cover" href="/game/' + esc(r.slug) + '" tabindex="-1" aria-hidden="true" style="--a:' + esc(r.accent || '#6366f1') + ';--b:' + esc(r.accent2 || '#8b5cf6') + '">' +
+            '<img src="' + esc((coverFor(r.slug) || {}).src || '/cover/' + r.slug + '.svg') + '" alt="" loading="lazy" decoding="async" width="120" height="75"></a>' +
+          '<span class="rk-body"><a class="rk-title" href="/game/' + esc(r.slug) + '">' + esc(r.emoji || '🎮') + ' ' + esc(r.title) + '</a>' +
+            '<small class="dim">' + sub + '</small>' +
+            '<small class="dim hot-win">今日 ' + fmtNum(r.p1) + ' · 3 日 ' + fmtNum(r.p3) + ' · 7 日 ' + fmtNum(r.p7) + '</small></span>' +
+          '<span class="rk-val"><b>' + fmtNum(r.p1) + '</b><small>今日</small></span>' +
+          trendTag(r.trend) +
+        '</li>';
+      }).join('') + '</ol>'
+    : '<p class="empty">今天还没人玩，去 <a href="/games">全部游戏</a> 挑一款开个头吧 🎮</p>';
+
+  const content = '<div class="wrap page">' +
+    '<nav class="crumb"><a href="/">首页</a><span>›</span><b>热度榜</b></nav>' +
+    '<div class="page-head"><h1>🔥 热度榜</h1>' +
+      '<p class="page-sub">' + esc(windowLabel || '按今日 / 近 3 天 / 近 7 天播放量加权，每分钟重算一次') + '</p>' +
+      '<p class="page-count">共 <b>' + rows.length + '</b> 款在榜' + (updatedAt ? ' · 更新于 ' + esc(updatedAt) : '') + '</p></div>' +
+    body +
+    '<p class="rank-note">热度分 = 动量（今日 ×3、近 3 天 ×1.5、近 7 天 ×1）+ 评分质量（好评率 × 对数样本量）+ 历史播放（对数）× 上架衰减（半衰期 90 天）。' +
+      '不同口径的榜单见 <a href="/rank">排行榜</a>。</p>' +
+    '</div>';
+
+  return layout({
+    origin, user, title: '热度榜 - 实时热门小游戏', description: '按今日、近 3 天、近 7 天播放量加权的实时小游戏热度榜',
+    path: '/hot', content,
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'ItemList',
+      name: '热度榜',
+      url: origin + '/hot',
+      itemListElement: rows.slice(0, 10).map((r, i) => ({
+        '@type': 'ListItem',
+        position: i + 1,
+        url: origin + '/game/' + r.slug,
+        name: r.title
+      }))
+    }
+  });
+}
+
 function footer() {
   return `<footer class="ftr">
   <div class="wrap">
@@ -379,18 +443,7 @@ export function noticeBanner(post) {
 }
 
 export function homePage({ origin, featured, hot, newest, categories, tags, stats, user = null, notice = null }) {
-  const ld = {
-    '@context': 'https://schema.org',
-    '@type': 'WebSite',
-    name: SITE.name,
-    url: origin + '/',
-    description: SITE.tagline,
-    potentialAction: {
-      '@type': 'SearchAction',
-      target: origin + '/search?q={search_term_string}',
-      'query-input': 'required name=search_term_string'
-    }
-  };
+  const ld = websiteJsonLd({ origin, name: SITE.name, description: SITE.tagline });
 
   const chips = categories
     .filter((c) => c.total > 0)
@@ -551,29 +604,8 @@ function commentPanel({ thread, total = 0, user = null, path, slug, endpoint, lo
 export function gamePage({ origin, game, related, myStars = 0, user = null, favorited = false, favCount = 0, comments = [], commentTotal = 0, thread = null, preview = false, cmtNotice = '', watch = '', replay = '' }) {
   const path = '/game/' + game.slug;
   const votes = Number(game.rating_count) || 0;
-  const ld = {
-    '@context': 'https://schema.org',
-    '@type': 'VideoGame',
-    name: game.title,
-    description: game.description,
-    url: origin + path,
-    image: origin + '/cover/' + game.slug + '.svg',
-    genre: game.category ? game.category.name : '休闲',
-    gamePlatform: 'Web Browser',
-    applicationCategory: 'Game',
-    operatingSystem: 'Any',
-    offers: { '@type': 'Offer', price: '0', priceCurrency: 'CNY', availability: 'https://schema.org/InStock' }
-  };
-  // schema.org 要求 ratingCount >= 1，没人评分时宁可不带这个字段，也不造数
-  if (votes > 0) {
-    ld.aggregateRating = {
-      '@type': 'AggregateRating',
-      ratingValue: Number(game.rating).toFixed(1),
-      ratingCount: votes,
-      bestRating: '5',
-      worstRating: '1'
-    };
-  }
+  // schema.org 要求 ratingCount >= 1，没人评分时宁可不带这个字段，也不造数（判定在 seo.js 里）
+  const ld = gameJsonLd(game, origin);
 
   const tagLinks = game.tags
     .map((t) => `<a class="tag" href="/tag/${encodeURIComponent(t)}">${esc(t)}</a>`)

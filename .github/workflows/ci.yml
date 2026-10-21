@@ -1,0 +1,98 @@
+name: CI
+
+# 每次推到 main 或开 PR 都跑一遍：语法 -> 单元测试 -> 建库 -> 真起服务打一遍关键路由。
+# 设计原则：只用仓库里已有的零依赖脚本，不装浏览器、不连外网（npm 装 express 除外），
+# 所以本地 `bash .github/workflows/ci.yml` 里那几条命令手敲一遍就能复现同样结果。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 单元测试 + 启动冒烟
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # node:sqlite 在 Node 24 已无需 --experimental-sqlite；22.x 还得加 flag，
+      # 所以 CI 直接钉 24，engines 里的 >=22.5 仍然是对的（本机就用 26）。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 语法检查
+        run: |
+          fail=0
+          for f in server.js $(git ls-files 'src/*.js' 'src/**/*.js' 'tools/*.mjs'); do
+            node --check "$f" || { echo "::error file=$f::语法错误"; fail=1; }
+          done
+          exit $fail
+
+      - name: 单元测试（零依赖、零外网）
+        run: |
+          node tools/hot-test.mjs
+          node tools/rules-test.mjs
+          node tools/adapters-test.mjs
+          node tools/cards-test.mjs
+          node tools/ratelimit-test.mjs
+          node tools/check-forum-host.mjs
+
+      - name: 建库 + 启动冒烟
+        run: |
+          npm run reset
+          PORT=3000 node server.js > server.log 2>&1 &
+          SRV=$!
+          trap 'kill $SRV 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 1
+          done
+
+          # 200/301/302 都算通；/notifications 这类登录态页面本来就 302
+          for p in / /hot /api/hot /games /rank /forum /daily /nav /replays \
+                   /sitemap.xml /robots.txt /sw.js /manifest.webmanifest /precache.json \
+                   /game/2048 /games/2048/index.html /static/css/style.css; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$p")
+            echo "$p -> $code"
+            case "$code" in
+              200|301|302) ;;
+              *) echo "::error::$p 返回 $code"; exit 1 ;;
+            esac
+          done
+
+          # 接口要真是 JSON、且字段齐全（榜单为空时 games 仍是数组）
+          curl -sf http://127.0.0.1:3000/api/hot | node -e '
+            let s = "";
+            process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              const j = JSON.parse(s);
+              if (!Array.isArray(j.games)) { console.error("games 不是数组"); process.exit(1); }
+              for (const g of j.games) {
+                for (const k of ["rank","slug","title","p1","p3","p7","hot","trend"]) {
+                  if (!(k in g)) { console.error("缺字段 " + k); process.exit(1); }
+                }
+              }
+              console.log("api/hot ok: " + j.games.length + " 款");
+            });'
+
+          # sitemap 必须是合法 XML 头部，并不多出空 <url>
+          curl -sf http://127.0.0.1:3000/sitemap.xml | head -c 60 | grep -q '<urlset' \
+            || { echo "::error::sitemap.xml 头部异常"; exit 1; }
+
+      - name: 失败时打印服务日志
+        if: failure()
+        run: tail -50 server.log || true
