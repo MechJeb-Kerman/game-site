@@ -19,6 +19,7 @@ import * as play from './play-store.js';
 import * as recordExport from '../src/record-export.js';
 import * as social from './social.js';
 import { dayKey, makeupCheck } from '../src/daily.js';
+import { rankHotGames } from '../src/hot-score.js';
 import { replayCardSvg, profileCardSvg, dailyCardSvg } from '../src/cards.js';
 import { makeSearchBackend, sqlBackend, meiliBackend } from '../src/search.js';
 import { createCache, redisLikeAdapter } from '../src/rank-cache.js';
@@ -742,6 +743,51 @@ async function pageRank(ctx) {
     rows: rows,
     boards: Object.entries(data.BOARD_KINDS).map(function (e) { return { kind: e[0], label: e[1].label }; })
   }));
+}
+
+/* ================= 热度榜 ================= */
+
+/**
+ * 热度榜的行：一次取「近 1/3/7 天播放」+ 全部上架游戏，再交给与 Node 端共用的
+ * rankHotGames 打分排序——公式只写一份，两条线上榜单一模一样。
+ */
+async function hotRows(ctx, limit) {
+  const now = Date.now();
+  const counts = await data.playWindowCounts(ctx.db, now);
+  // listGames 的 limit 上限就是 100，等于「全站上架游戏」
+  const games = await data.listGames(ctx.db, { sort: 'new', limit: 100 });
+  return rankHotGames(games, counts, now).slice(0, limit);
+}
+
+async function pageHot(ctx) {
+  const rows = await hotRows(ctx, 20);
+  return okHtml(ctx, ui.hotPage({
+    origin: ctx.origin,
+    user: ctx.user,
+    rows: rows,
+    updatedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    windowLabel: '按今日 / 近 3 天 / 近 7 天播放量加权，每分钟重算一次'
+  }));
+}
+
+async function apiHot(ctx) {
+  const limit = Math.max(1, Math.min(50, Number(ctx.url.searchParams.get('limit')) || 12));
+  const rows = await hotRows(ctx, limit);
+  // 与 Node 版 /api/hot 同构：字段、顺序、60 秒公共缓存都一致
+  return new Response(JSON.stringify({
+    updated: new Date().toISOString(),
+    count: rows.length,
+    games: rows.map(function (g, i) {
+      return {
+        rank: i + 1, slug: g.slug, title: g.title, emoji: g.emoji,
+        plays: g.plays, rating: g.rating, votes: g.rating_count,
+        p1: g.p1, p3: g.p3, p7: g.p7, hot: g.hot, trend: g.trend
+      };
+    })
+  }), {
+    status: 200,
+    headers: makeHeaders(ctx, { type: 'application/json; charset=utf-8', cache: 'public, max-age=60' })
+  });
 }
 
 /* ================= 账号 ================= */
@@ -2562,6 +2608,7 @@ const ROUTES = [
   { m: 'GET', p: '/changelog', fn: pageChangelog },
   { m: 'GET', p: '/nav', fn: pagePortal },
   { m: 'GET', p: '/rank', fn: pageRank },
+  { m: 'GET', p: '/hot', fn: pageHot },
   { m: 'GET', p: '/daily', fn: pageDaily },
   { m: 'POST', p: '/daily/makeup', fn: doDailyMakeup },
   { m: 'GET', p: '/daily/card.svg', fn: cardDaily },
@@ -2616,6 +2663,7 @@ const ROUTES = [
   { m: 'POST', p: '/api/auth/register', fn: apiRegister },
   { m: 'POST', p: '/api/auth/logout', fn: apiLogout },
   { m: 'GET', p: '/api/games', fn: apiGames },
+  { m: 'GET', p: '/api/hot', fn: apiHot },
   { m: 'GET', p: '/api/games/:slug', fn: apiGame },
   { m: 'POST', p: '/api/games/:slug/play', fn: apiPlay },
   { m: 'POST', p: '/api/games/:slug/rate', fn: apiRate },

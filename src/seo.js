@@ -61,9 +61,21 @@ export function robotsTxt(origin, opts = {}) {
   return lines.join('\n');
 }
 
-/** 把数据行映射成 sitemap 条目（每行形状：{slug, created_at} 之类） */
-export function sitemapEntries({ posts = [], categories = [], games = [] } = {}) {
-  const entries = STATIC_ENTRIES.slice();
+/**
+ * 把数据行映射成 sitemap 条目（每行形状：{slug, created_at} 之类）
+ *
+ * 静态页（/、/hot、/rank…）没有自己的更新时间，但一个连 <lastmod> 都没有的 sitemap
+ * 只能让爬虫靠猜——这里用「最近一次内容变动」当站点级的 lastmod：
+ * 取公告发布日与游戏上架日里最新的那天（拿不到就不写，绝不用今天凑数）。
+ */
+export function sitemapEntries({ posts = [], categories = [], games = [], updatedAt = '' } = {}) {
+  const marks = [];
+  for (const p of posts) marks.push(String(p.published_at || p.created_at || '').slice(0, 10));
+  for (const g of games) marks.push(String(g.created_at || '').slice(0, 10));
+  if (updatedAt) marks.push(String(updatedAt).slice(0, 10));
+  const siteLm = marks.filter(Boolean).sort().pop() || '';
+
+  const entries = STATIC_ENTRIES.map((e) => (siteLm ? { ...e, lm: siteLm } : { ...e }));
   for (const p of posts) {
     entries.push({
       loc: '/notice/' + encodeURIComponent(p.slug),

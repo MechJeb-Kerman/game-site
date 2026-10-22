@@ -6,6 +6,7 @@
  */
 import { buildSearchIndex, queryVariants } from '../src/pinyin.js';
 import { validateHtmlUpload, UGC_PREFIX } from '../src/upload.js';
+import { dayKey } from '../src/daily.js';
 
 const SELECT_BASE =
   'SELECT g.*, c.slug AS category_slug, c.name AS category_name, c.icon AS category_icon ' +
@@ -1051,6 +1052,30 @@ export async function recentPlays(db, slug, days = 1) {
     " WHERE g.slug = ? AND p.day >= date('now','localtime', ?)")
     .bind(String(slug), '-' + Math.max(0, Number(days) - 1) + ' days').first();
   return row ? row.n : 0;
+}
+
+/**
+ * 近 1 / 3 / 7 天的每游戏播放次数（含当日，累计口径），给热度榜用。
+ * 与 src/hot.js 的 countsByWindow 同一条 SQL、同一个日界（dayKey，Workers 上即 UTC）。
+ * @returns {Promise<Map<number,{p1:number,p3:number,p7:number}>>}
+ */
+export async function playWindowCounts(db, now = Date.now()) {
+  const day = 24 * 60 * 60 * 1000;
+  const d1 = dayKey(now);
+  const d3 = dayKey(now - 2 * day);
+  const d7 = dayKey(now - 6 * day);
+  const res = await db.prepare('SELECT g.id AS game_id,' +
+    ' SUM(CASE WHEN l.day >= ? THEN 1 ELSE 0 END) AS p1,' +
+    ' SUM(CASE WHEN l.day >= ? THEN 1 ELSE 0 END) AS p3,' +
+    ' SUM(CASE WHEN l.day >= ? THEN 1 ELSE 0 END) AS p7' +
+    ' FROM games g LEFT JOIN play_logs l ON l.game_id = g.id' +
+    ' WHERE g.status = 1 GROUP BY g.id')
+    .bind(d1, d3, d7).all();
+  const map = new Map();
+  for (const r of res.results) {
+    map.set(r.game_id, { p1: Number(r.p1) || 0, p3: Number(r.p3) || 0, p7: Number(r.p7) || 0 });
+  }
+  return map;
 }
 
 /** 榜单页 / 后台头部的全站概览：今日、近 7 天、近 14 天趋势 */

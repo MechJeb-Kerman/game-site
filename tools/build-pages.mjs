@@ -21,6 +21,7 @@ import { ROOT, GAMES_DIR, PUBLIC_DIR, migrate } from "../src/db.js";
 import { seed } from "../src/seed.js";
 import { coverSvg, ogSvg } from "../src/cover.js";
 import * as data from "../src/data.js";
+import * as hot from "../src/hot.js";
 import * as ui from "../src/views.js";
 import { buildSearchIndex } from "../src/pinyin.js";
 
@@ -204,6 +205,15 @@ for (const t of boardTabs) {
     rows: board.rows, boards: boardTabs
   }));
 }
+
+/* 热度榜：静态版是构建时的快照（与排行榜同性质），数据取自本机 games.db 的 play_logs。
+   注意静态页里 /hot 的「实时重算」做不到，所以把口径写进 windowLabel，别让读者以为是活的 */
+const hotRows = hot.hotGames({ limit: 20 });
+page("hot.html", ui.hotPage({
+  origin: origin, user: null, rows: hotRows,
+  updatedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+  windowLabel: "静态快照 · 每次构建按今日 / 近 3 天 / 近 7 天播放量重新计算"
+}));
 
 for (const g of games) {
   page("game/" + g.slug + ".html", ui.gamePage({

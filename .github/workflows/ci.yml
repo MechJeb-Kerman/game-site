@@ -37,19 +37,20 @@ jobs:
       - name: 语法检查
         run: |
           fail=0
-          for f in server.js $(git ls-files 'src/*.js' 'src/**/*.js' 'tools/*.mjs'); do
+          for f in server.js $(git ls-files 'src/*.js' 'src/**/*.js' 'worker/*.js' 'public/js/*.js' 'tools/*.mjs'); do
             node --check "$f" || { echo "::error file=$f::语法错误"; fail=1; }
           done
           exit $fail
 
-      - name: 单元测试（零依赖、零外网）
-        run: |
-          node tools/hot-test.mjs
-          node tools/rules-test.mjs
-          node tools/adapters-test.mjs
-          node tools/cards-test.mjs
-          node tools/ratelimit-test.mjs
-          node tools/check-forum-host.mjs
+      # 静态导出先建出来：worker 静态版冒烟（tools/worker-test.mjs）就是拿 dist-cf 当 env.ASSETS 爬链接的，
+      # 不先建就会把「/hot 没有对应静态页」误判成 Worker 缺路由。
+      - name: 构建静态站（dist-cf）
+        run: node tools/build-pages.mjs --cf --base=/ --out=dist-cf
+
+      # test-all 会自己起一个临时端口跑 account / feature / play-api 这三组整合测试，
+      # 跑完自动关掉，不依赖外部服务。
+      - name: 单元 + 整合测试
+        run: node tools/test-all.mjs
 
       - name: 建库 + 启动冒烟
         run: |
@@ -92,6 +93,29 @@ jobs:
           # sitemap 必须是合法 XML 头部，并不多出空 <url>
           curl -sf http://127.0.0.1:3000/sitemap.xml | head -c 60 | grep -q '<urlset' \
             || { echo "::error::sitemap.xml 头部异常"; exit 1; }
+
+      # 传输层这几条以前靠肉眼比 curl 输出，现在钉死：少了压缩或长缓存，CI 直接红。
+      - name: 传输层断言（压缩 / 缓存分级）
+        run: |
+          set -e
+          hdrs() { curl -s -D - -o /dev/null -H 'Accept-Encoding: gzip, br' "http://127.0.0.1:3000$1"; }
+
+          hdrs / | grep -qi '^content-encoding: \(gzip\|br\)' \
+            || { echo "::error::HTML 没有压缩"; exit 1; }
+          hdrs / | grep -qi '^vary:.*accept-encoding' \
+            || { echo "::error::缺 Vary: Accept-Encoding"; exit 1; }
+
+          hdrs '/static/css/style.css?v=10' | grep -qi 'cache-control: public, max-age=31536000, immutable' \
+            || { echo "::error::带版本号的静态资源不是 immutable"; exit 1; }
+          hdrs /static/css/style.css | grep -qi 'cache-control: public, max-age=604800' \
+            || { echo "::error::无版本号的静态资源缓存时长变了"; exit 1; }
+
+          hdrs /login | grep -qi 'cache-control: private, no-store' \
+            || { echo "::error::登录页不该被公共缓存"; exit 1; }
+          hdrs /api/games | grep -qi 'cache-control: public, max-age=60' \
+            || { echo "::error::/api/games 缺 60 秒公共缓存"; exit 1; }
+          hdrs / | grep -qi 'cache-control: public, max-age=0, s-maxage=60' \
+            || { echo "::error::HTML 页缺 s-maxage"; exit 1; }
 
       - name: 失败时打印服务日志
         if: failure()

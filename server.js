@@ -32,6 +32,8 @@ import * as rewards from './src/rewards.js';
 // 热度榜评分与 SEO 文本（robots / sitemap / JSON-LD）都收在纯函数模块里，方便单测与静态导出复用
 import * as hot from './src/hot.js';
 import * as seo from './src/seo.js';
+// 零依赖的响应压缩（brotli / gzip），只压文本类且大于 1KB 的响应
+import { compress } from './src/compress.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
@@ -50,6 +52,9 @@ app.set('trust proxy', true);
 app.use(express.json({ limit: '64kb' }));
 // 登录 / 注册 / 投稿 / 后台都走原生表单提交，禁用 JS 也能用
 app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+// 压缩中间件要尽量靠前：它靠拦截 res.write / res.end 工作，装在路由和静态资源之前
+// 才能同时覆盖 SSR 页面、JSON 接口和 express.static 的流式输出
+app.use(compress());
 
 /* ---------- 第二轮接线的单例（进程内建一次，测试可注入） ---------- */
 
@@ -322,8 +327,40 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------- 缓存策略 ----------
+// 分三种情况，避免「所有页面都不缓存」和「所有人都缓存」这两个极端：
+//  1. 静态资源（/static /icons /covers /games）交给各自的挂载点，这里直接放行——
+//     send 只在 Cache-Control 未设置时才写自己的 max-age，这里插手会盖掉它。
+//  2. 个人化页面、后台、写操作：private, no-store，别让 CDN 把别人的登录态发出去。
+//  3. 公开页面：浏览器每次回源验一次（有 ETag，命中就是 304），CDN 侧缓存 60 秒抗突发；
+//     公开接口（/api/games、/api/hot、/api/replays）直接给 60 秒。
+// 注意必须放在 auth 中间件之后：个人化判断依赖 req.user。
+const STATIC_PREFIXES = ['/static/', '/icons/', '/covers/', '/games/'];
+const PRIVATE_PATH = /^\/(?:api\/(?!games(?:\/|$)|hot(?:\/|$)|replays(?:\/|$))|admin|account|favorites|submit|messages|notifications|feed|login|register|logout|forgot|reset|auth|comments|mail)\b/;
+app.use((req, res, next) => {
+  const path = req.path || '/';
+  if (STATIC_PREFIXES.some((prefix) => path.startsWith(prefix))) return next();
+  const readOnly = req.method === 'GET' || req.method === 'HEAD';
+  if (!readOnly) {
+    res.setHeader('Cache-Control', 'private, no-store');
+  } else if (req.user || PRIVATE_PATH.test(path)) {
+    res.setHeader('Cache-Control', 'private, no-store');
+  } else if (/^\/api\/(?:games|hot|replays)\b/.test(path)) {
+    res.setHeader('Cache-Control', 'public, max-age=60');
+  } else {
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60, stale-while-revalidate=300');
+  }
+  next();
+});
+
 // ---------- 静态资源 ----------
-app.use('/static', express.static(PUBLIC_DIR, { maxAge: '7d', etag: true }));
+// 带 ?v= 的资源是版本化的（layout() 里统一 ?v=10），可以放心用一年缓存；
+// 不带 ?v= 的直链（图标、封面）仍走 7 天。
+const staticPublic = express.static(PUBLIC_DIR, { maxAge: '7d', etag: true });
+app.use('/static', (req, res, next) => {
+  if (req.query && req.query.v) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  staticPublic(req, res, next);
+});
 // PWA 图标：public/ 根目录没有整体挂静态，单独把 icons 目录挂出来（manifest 里声明的 4 张图）
 app.use('/icons', express.static(join(PUBLIC_DIR, 'icons'), { maxAge: '30d', etag: true }));
 // 23 款游戏的静态封面（public/covers/<slug>.svg，由 tools/gen-covers.mjs 生成、src/covers.js 是唯一事实来源）：

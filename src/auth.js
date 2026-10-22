@@ -167,8 +167,23 @@ export function ensureAdmin() {
   const has = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();
   if (has) return false;
   const username = String(process.env.ADMIN_USER || DEFAULT_ADMIN.username).trim();
-  const password = String(process.env.ADMIN_PASS || DEFAULT_ADMIN.password);
+  let password = String(process.env.ADMIN_PASS || '');
+  let generated = '';
+  if (!password) {
+    /* 生产环境不落「admin/admin123」：没给 ADMIN_PASS 就随机生成一个，只在启动日志里出现一次。
+       开发环境仍用默认值，否则每次 reset 都要去翻日志抄口令，本地调试成本太高。 */
+    if (process.env.NODE_ENV === 'production') {
+      password = randomBytes(12).toString('base64url');
+      generated = password;
+    } else {
+      password = DEFAULT_ADMIN.password;
+    }
+  }
   createUser(username, password, '站长', 'admin');
+  if (generated) {
+    console.warn('[auth] NODE_ENV=production 且未设置 ADMIN_PASS，已生成随机站长口令：' + generated);
+    console.warn('[auth] 这个口令只打印这一次，请立即登录 /admin 修改，或用 ADMIN_PASS 固定它。');
+  }
   return true;
 }
 

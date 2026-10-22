@@ -1,6 +1,12 @@
 # 依赖
 node_modules/
 
+# 本机为了在没有 npm 的环境里装依赖而临时解包出来的 npm 本体（12MB，别进仓库）
+.tools/
+
+# 本机数据库的备份副本（data/backup-<日期>/）
+data/backup-*/
+
 # 本地数据库：里面有账号、会话、评论，别提交
 data/*.db
 data/*.db-wal
