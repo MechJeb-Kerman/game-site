@@ -139,11 +139,15 @@ for (const [id, file, what, needsServer] of picked) {
   const env = needsServer ? { ...process.env, BASE } : process.env;
   const r = spawnSync(process.execPath, [filePath], { cwd: ROOT, encoding: 'utf8', timeout: 180000, env });
   const ms = Date.now() - started;
-  const out = String(r.stdout || '') + String(r.stderr || '');
-  const tail = out.trim().split(/\r?\n/).slice(-3).join(' | ');
+  const lines = (String(r.stdout || '') + String(r.stderr || '')).trim().split(/\r?\n/);
+  const tail = lines.slice(-3).join(' | ');
   const status = r.status === 0 ? 'ok' : 'fail';
   results.push({ id, file, what, status, ms, tail });
   console.log((status === 'ok' ? 'PASS ' : 'FAIL ') + id.padEnd(18) + (ms + 'ms').padStart(7) + '  ' + tail.slice(0, 110));
+  // 失败时把末尾 40 行原样打出来（含堆栈），否则 CI 上只剩一行摘要，根本看不出哪一行炸了。
+  if (status === 'fail') {
+    for (const line of lines.slice(-40)) console.log('    | ' + line);
+  }
 }
 stopServer();
 

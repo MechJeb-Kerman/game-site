@@ -19,6 +19,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
+// 顶层 await 链里漏掉的 rejection 会直接终止进程，日志只留一行 "Node.js vXX"，
+// CI 上完全看不出原因。这里统一接住，把真实堆栈打出来再以非零码退出。
+process.on('unhandledRejection', (e) => {
+  console.error('UNHANDLED REJECTION:', (e && e.stack) || e);
+  process.exit(1);
+});
+
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 3157);
 const SECRET = 'probe-webhook-secret-' + Date.now().toString(36);
