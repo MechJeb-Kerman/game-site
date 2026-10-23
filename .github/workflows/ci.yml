@@ -47,6 +47,10 @@ jobs:
       - name: 轻量 lint
         run: node tools/lint.mjs
 
+      # 压缩产物漂移检查：改了 public/ 的 CSS/JS 却忘了重跑 minify 就红（产物入库，改了源文件必须一起提交）。
+      - name: 压缩产物一致性
+        run: node tools/minify.mjs --check
+
       # 静态导出先建出来：worker 静态版冒烟（tools/worker-test.mjs）就是拿 dist-cf 当 env.ASSETS 爬链接的，
       # 不先建就会把「/hot 没有对应静态页」误判成 Worker 缺路由。
       - name: 构建静态站（dist-cf）

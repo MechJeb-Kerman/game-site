@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT, GAMES_DIR, PUBLIC_DIR, migrate } from "../src/db.js";
+import { MIN_SOURCES, minAssetsReady, minOutRel, swapMinRefs } from "../src/assets.js";
 import { seed } from "../src/seed.js";
 import { coverSvg, ogSvg } from "../src/cover.js";
 import * as data from "../src/data.js";
@@ -119,6 +120,9 @@ function page(rel, html) { put(rel, staticize(html)); }
 migrate();
 seed();
 ui.setStaticMode(true);
+/* 压缩产物齐备就让页面引用 *.min.*（产物由 tools/minify.mjs 生成并入库，跟着导出） */
+const useMinAssets = minAssetsReady(PUBLIC_DIR);
+ui.setMinAssets(useMinAssets);
 const categories = data.listCategories();
 const games = data.listGames({ sort: "new", limit: 500 });
 const tags = data.listTags(200);
@@ -242,6 +246,12 @@ put("static/js/net-play.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "net-pl
    静态托管上少一个就是 404 + console 报错，所以两件都得跟着产物导出 */
 put("static/js/offline-queue.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "offline-queue.js"), "utf8"));
 put("static/js/offline-wire.js", fs.readFileSync(path.join(PUBLIC_DIR, "js", "offline-wire.js"), "utf8"));
+/* 建置期压缩产物：页面启用时引用的是 *.min.*，产物目录必须同时带上，否则静态托管直接 404 */
+if (useMinAssets) {
+  for (const rel of MIN_SOURCES) {
+    put("static/" + minOutRel(rel), fs.readFileSync(path.join(PUBLIC_DIR, minOutRel(rel)), "utf8"));
+  }
+}
 const FAVICON = "<svg xmlns=" + Q + "http://www.w3.org/2000/svg" + Q + " viewBox=" + Q + "0 0 64 64" + Q + "><rect width=" + Q + "64" + Q + " height=" + Q + "64" + Q + " rx=" + Q + "22" + Q + " fill=" + Q + "#6366f1" + Q + "/><text x=" + Q + "32" + Q + " y=" + Q + "43" + Q + " font-size=" + Q + "34" + Q + " text-anchor=" + Q + "middle" + Q + ">🎮</text></svg>";
 put("favicon.svg", FAVICON);
 
@@ -279,7 +289,9 @@ for (const g of games) {
     const link = NL + "<link rel=" + Q + "icon" + Q + " href=" + Q + "/favicon.svg" + Q + ">";
     html = HEAD.test(html) ? html.replace(HEAD, function (m) { return m + link; }) : link + html;
   }
-  /* 游戏本体是自包含单文件，但手柄脚本用的是 /static 根路径，子路径部署下也要静态化 */
+  /* 游戏本体是自包含单文件，直接写 /static/js/gamepad.js、net-play.js；压缩产物齐备时换成 .min
+     （必须在 staticize 之前换，换的是根路径，之后由 staticize 统一补 base 前缀）。 */
+  if (useMinAssets) html = swapMinRefs(html);
   put("games/" + g.slug + "/index.html", staticize(html));
 }
 
@@ -391,6 +403,18 @@ if (CF_MODE) {
 (function verifyAssets() {
   const problems = [];
   const rels = written.map(function (w) { return w[0]; });
+  /* 页面可能引原始文件，也可能引压缩产物（MIN_ASSETS 生效时），自检两种都认。
+     压缩产物必须随产物导出，否则线上就是 404。 */
+  function hasAsset(html, rel) {
+    return html.indexOf(base + rel) >= 0 || html.indexOf(base + minOutRel(rel)) >= 0;
+  }
+  if (useMinAssets) {
+    MIN_SOURCES.forEach(function (rel) {
+      if (rels.indexOf("static/" + minOutRel(rel)) < 0) {
+        problems.push("没有产出 static/" + minOutRel(rel) + "（页面已启用压缩产物，静态托管会 404）");
+      }
+    });
+  }
   if (rels.indexOf("static/js/app.js") < 0) problems.push("没有产出 static/js/app.js");
   else {
     const dyn = fs.readFileSync(path.join(OUT, "static", "js", "app.js"), "utf8");
@@ -427,16 +451,20 @@ if (CF_MODE) {
   if (idxHtml.indexOf(base + "manifest.webmanifest") < 0) problems.push("首页 head 的 manifest 链接没有指向 " + base + "manifest.webmanifest");
   if (idxHtml.indexOf(base + "icons/apple-touch-icon-180.png") < 0) problems.push("首页 head 的 apple-touch-icon 没有指向 " + base + "icons/apple-touch-icon-180.png");
   if (idxHtml.indexOf(base + "covers/") < 0) problems.push("首页封面没带 base 前缀（应为 " + base + "covers/…）——子路径部署会 404");
-  if (idxHtml.indexOf(base + "static/js/offline-wire.js") < 0) problems.push("首页没引 " + base + "static/js/offline-wire.js（离线兜底）");
+  if (!hasAsset(idxHtml, "static/js/offline-wire.js")) problems.push("首页没引 " + base + "static/js/offline-wire.js（或其 .min.js 压缩产物，离线兜底）");
   const gpWant = base + "static/js/gamepad.js";
+  const gpWantMin = base + "static/js/gamepad.min.js";
   const gamePages = rels.filter(function (r) { return r.indexOf("games/") === 0 && /index[.]html$/.test(r); });
   if (!gamePages.length) problems.push("没有产出任何游戏本体页");
   gamePages.forEach(function (rel) {
     const html = fs.readFileSync(path.join(OUT, rel), "utf8");
     /* 页面自带手柄轮询时可以免引共享 shim：在 <head> 里写 <meta name="gamepad" content="self">（黑洞吞噬就是这种） */
     const selfGp = /<meta\s+name="gamepad"\s+content="self"/i.test(html);
-    if (!selfGp && html.indexOf(gpWant) < 0) {
-      problems.push(rel + " 没有引用手柄脚本（应为 " + gpWant + "；自带手柄轮询的页面请加 <meta name=\"gamepad\" content=\"self\">）");
+    if (!selfGp && html.indexOf(gpWant) < 0 && html.indexOf(gpWantMin) < 0) {
+      problems.push(rel + " 没有引用手柄脚本（应为 " + gpWant + " 或压缩产物；自带手柄轮询的页面请加 <meta name=\"gamepad\" content=\"self\">）");
+    }
+    if (useMinAssets && !selfGp && html.indexOf(gpWantMin) < 0) {
+      problems.push(rel + " 手柄脚本没换成压缩产物（应为 " + gpWantMin + "）");
     }
     /* base = "/" 时 base 前缀就是根路径本身，不算问题；只有子路径部署才要求已经被补上前缀 */
     if (base !== "/" && html.indexOf("\"/static/js/gamepad.js\"") >= 0) {
@@ -444,6 +472,15 @@ if (CF_MODE) {
     }
   });
   /* 联机小部件同理：游戏页里只能写根路径 /static/js/net-play.js，由 staticize 补 base 前缀 */
+  if (useMinAssets) {
+    var npMinWant = base + "static/js/net-play.min.js";
+    gamePages.forEach(function (rel) {
+      var html = fs.readFileSync(path.join(OUT, rel), "utf8");
+      if (/<script[^>]+src=[^>]*net-play[^>]*>/.test(html) && html.indexOf(npMinWant) < 0) {
+        problems.push(rel + " 的联机小部件没换成压缩产物（应为 " + npMinWant + "）");
+      }
+    });
+  }
   if (base !== "/") {
     var npRoot = Q + "/static/js/net-play.js" + Q;
     var npWant = base + "static/js/net-play.js";
@@ -451,7 +488,7 @@ if (CF_MODE) {
       var html = fs.readFileSync(path.join(OUT, rel), "utf8");
       if (html.indexOf(npRoot) >= 0) {
         problems.push(rel + "的联机小部件用的是根路径 /static/js/net-play.js，没带 base 前缀 —— 子路径部署会 404");
-      } else if (html.indexOf("net-play.js") >= 0 && html.indexOf(npWant) < 0) {
+      } else if (html.indexOf("net-play.js") >= 0 && html.indexOf(npWant) < 0 && html.indexOf(npMinWant) < 0) {
         problems.push(rel + " 引了 net-play.js 但路径不对（应为 " + npWant + "）");
       }
     });
@@ -460,9 +497,11 @@ if (CF_MODE) {
     if (!/.html$/.test(rel)) return;
     if (rel.indexOf("games/") === 0) return; // 游戏本体是自包含的单文件页，不引主站前端
     const html = fs.readFileSync(path.join(OUT, rel), "utf8");
-    if (html.indexOf("app-static.js") < 0) problems.push(rel + " 没有引用 static/js/app-static.js");
-    if (new RegExp("js/app[.]js").test(html.replace(new RegExp("app-static[.]js", "g"), ""))) {
-      problems.push(rel + " 引用了动态前端 static/js/app.js（静态页面应该只引 app-static.js）");
+    if (!hasAsset(html, "static/js/app-static.js")) problems.push(rel + " 没有引用 static/js/app-static.js（或其 .min.js 压缩产物）");
+    /* 先把静态版（含压缩产物）抹掉，剩下的 js/app.js 或 js/app.min.js 就是误引动态前端 */
+    var rest = html.replace(/app-static(\.min)?\.js/g, "");
+    if (/js\/app(\.min)?\.js/.test(rest)) {
+      problems.push(rel + " 引用了动态前端 static/js/app(.min).js（静态页面应该只引 app-static.js）");
     }
   });
   if (problems.length) {

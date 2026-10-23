@@ -9,6 +9,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "reset": "node src/seed.js --force",
+    "minify": "node tools/minify.mjs",
+    "minify:check": "node tools/minify.mjs --check",
     "smoke": "node tools/browser-smoke.mjs",
     "check:forum": "node tools/check-forum-host.mjs",
     "test:hot": "node tools/hot-test.mjs",

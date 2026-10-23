@@ -27,6 +27,18 @@ export let STATIC_MODE = false;
 
 export function setStaticMode(on) { STATIC_MODE = !!on; }
 
+/* 建置期压缩产物是否就位（tools/minify.mjs 生成 public 下的 *.min.*）。
+ * 默认关：Workers 线打包时不该依赖磁盘探测；由 server.js / build-pages.mjs 在启动时按存在性打开。 */
+export let MIN_ASSETS = false;
+
+export function setMinAssets(on) { MIN_ASSETS = !!on; }
+
+/** 把一个 /static/ 资源换成压缩产物；没启用或不是可压缩资源时原样返回 */
+export function asset(url) {
+  if (!MIN_ASSETS) return url;
+  return url.replace(/^\/static\/(.+?)\.(css|js)(\?|$)/, (m, name, ext, tail) => name.startsWith('min/') ? m : '/static/' + name + '.min.' + ext + (tail || ''));
+}
+
 export const isStaticMode = () => STATIC_MODE;
 
 export const HINTS = {
@@ -200,7 +212,7 @@ ${noindex ? '<meta name="robots" content="noindex,follow">' : ''}
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png">
-<link rel="stylesheet" href="/static/css/style.css?v=10">
+<link rel="stylesheet" href="${asset('/static/css/style.css?v=11')}">
 ${preload}${ld}${STATIC_MODE ? '' : pwaRegisterScript()}
 <script>try{if(localStorage.getItem('railOff')==='1')document.documentElement.classList.add('rail-off')}catch(e){}</script>
 </head>
@@ -210,8 +222,8 @@ ${bare ? '' : pageRail()}
 ${bare ? '' : header(user)}
 <main id="main">${content}</main>
 ${bare ? '' : footer()}
-<script src="/static/js/${STATIC_MODE ? "app-static" : "app"}.js?v=10" defer></script>
-<script src="/static/js/offline-wire.js?v=10" defer></script>
+<script src="${asset((STATIC_MODE ? '/static/js/app-static.js' : '/static/js/app.js') + '?v=11')}" defer></script>
+<script src="${asset('/static/js/offline-wire.js?v=11')}" defer></script>
 </body>
 </html>`;
 }

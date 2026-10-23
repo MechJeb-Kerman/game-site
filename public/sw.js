@@ -19,8 +19,8 @@
  */
 
 /* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
-/* 38 条 · 946.0 KB · 最大单文件 93.0 KB */
-const PRECACHE_VERSION = 'p1-1c5ffc930251';
+/* 44 条 · 1049.6 KB · 最大单文件 93.0 KB */
+const PRECACHE_VERSION = 'p1-63f590545f00';
 const PRECACHE_FALLBACK = [
   '/',
   '/games/2048/index.html',
@@ -47,12 +47,18 @@ const PRECACHE_FALLBACK = [
   '/games/whack/index.html',
   '/games/xiangqi/index.html',
   '/static/js/app-static.js',
+  '/static/js/app-static.min.js',
   '/static/js/app.js',
+  '/static/js/app.min.js',
   '/static/js/gamepad.js',
+  '/static/js/gamepad.min.js',
   '/static/js/net-play.js',
+  '/static/js/net-play.min.js',
   '/static/js/offline-queue.js',
   '/static/js/offline-wire.js',
+  '/static/js/offline-wire.min.js',
   '/static/css/style.css',
+  '/static/css/style.min.css',
   '/icons/apple-touch-icon-180.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import { join } from 'node:path';
 import { PUBLIC_DIR, GAMES_DIR, db as sqlite } from './src/db.js';
 import { seed } from './src/seed.js';
@@ -35,10 +36,17 @@ import * as seo from './src/seo.js';
 import { seoRoutes } from './src/routes/seo.js';
 // 零依赖的响应压缩（brotli / gzip），只压文本类且大于 1KB 的响应
 import { compress } from './src/compress.js';
+// 建置期压缩产物（public 下的 *.min.*）的清单与就位探测
+import { minAssetsReady, swapMinRefs } from './src/assets.js';
 
 // 首次启动自动建表 + 灌入种子数据，并保证有一个管理员账号
 seed(false);
 auth.ensureAdmin();
+
+// 产物齐备就切到 *.min.*（tools/minify.mjs 生成并入库）；缺一份就整体回退到源文件
+const minAssets = minAssetsReady(PUBLIC_DIR);
+ui.setMinAssets(minAssets);
+
 
 // 老库升级：search_pinyin 是后加的列，seed 不会算拼音，启动时把空索引补一遍（只处理空行，很快）
 const indexedGames = data.reindexSearchIndex();
@@ -367,6 +375,35 @@ app.use('/icons', express.static(join(PUBLIC_DIR, 'icons'), { maxAge: '30d', eta
 // 23 款游戏的静态封面（public/covers/<slug>.svg，由 tools/gen-covers.mjs 生成、src/covers.js 是唯一事实来源）：
 // 和 icons 同理，public/ 根没有整体挂静态，所以单独挂一层；查不到就回落动态 /cover/:slug.svg。
 app.use('/covers', express.static(join(PUBLIC_DIR, 'covers'), { maxAge: '7d', etag: true }));
+/* 游戏页是自包含的静态 HTML，直接引 /static/js/gamepad.js、net-play.js，不走模板的 asset()。
+   压缩产物齐备时在静态中间件之前把这两个引用换成 .min（回退规则与主站一致：缺产物就整体不切）。
+   只处理 <slug>/index.html 这种一层路径，文件内容按 URL 缓存，改完文件重启即生效。 */
+if (minAssets) {
+  const minGamePages = new Map();
+  app.use('/games', (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const m = /^\/([^/]+)\/index\.html$/.exec(req.path);
+    if (!m) return next();
+    let html = minGamePages.get(req.path);
+    if (html === undefined) {
+      let slug;
+      try { slug = decodeURIComponent(m[1]); } catch { return next(); }
+      /* 解码后可能带 / 或 \\（%2F 之类），别让拼路径跳出 GAMES_DIR */
+      if (!slug || slug === '.' || slug === '..' || slug.indexOf('/') >= 0 || slug.indexOf('\\') >= 0) return next();
+      let raw;
+      try {
+        raw = fs.readFileSync(join(GAMES_DIR, slug, 'index.html'), 'utf8');
+      } catch {
+        return next();
+      }
+      html = swapMinRefs(raw);
+      if (html === raw) return next(); // 页面没引这些脚本（如 blackhole 自带手柄），交给静态中间件
+      minGamePages.set(req.path, html);
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600'); // 与下面 express.static 的 maxAge 一致
+    res.send(html);
+  });
+}
 // 生产环境建议把游戏放到独立域名（如 games.example.com）做沙箱隔离
 app.use('/games', express.static(GAMES_DIR, { maxAge: '1h', etag: true }));
 

@@ -1,10 +1,10 @@
 {
-  "version": "p1-1c5ffc930251",
-  "generatedAt": "2026-10-23T00:21:43.571Z",
+  "version": "p1-63f590545f00",
+  "generatedAt": "2026-10-23T21:13:04.774Z",
   "generator": "tools/gen-precache.mjs",
   "note": "PWA 离线清单：sw.js 在 install 时按 urls 逐条预缓存（单条失败只计数，不整体失败）",
-  "count": 38,
-  "bytes": 968703,
+  "count": 44,
+  "bytes": 1074807,
   "maxBytes": 95216,
   "urls": [
     {
@@ -183,11 +183,25 @@
       "file": "public/js/app-static.js"
     },
     {
+      "url": "/static/js/app-static.min.js",
+      "kind": "script",
+      "revision": "2bc315292539",
+      "bytes": 10224,
+      "file": "public/js/app-static.min.js"
+    },
+    {
       "url": "/static/js/app.js",
       "kind": "script",
       "revision": "d76391da11b2",
       "bytes": 21564,
       "file": "public/js/app.js"
+    },
+    {
+      "url": "/static/js/app.min.js",
+      "kind": "script",
+      "revision": "46389d7d4b9c",
+      "bytes": 16055,
+      "file": "public/js/app.min.js"
     },
     {
       "url": "/static/js/gamepad.js",
@@ -197,11 +211,25 @@
       "file": "public/js/gamepad.js"
     },
     {
+      "url": "/static/js/gamepad.min.js",
+      "kind": "script",
+      "revision": "f9977349a55b",
+      "bytes": 6988,
+      "file": "public/js/gamepad.min.js"
+    },
+    {
       "url": "/static/js/net-play.js",
       "kind": "script",
       "revision": "108304868bfc",
       "bytes": 31267,
       "file": "public/js/net-play.js"
+    },
+    {
+      "url": "/static/js/net-play.min.js",
+      "kind": "script",
+      "revision": "60004bfd79ff",
+      "bytes": 22986,
+      "file": "public/js/net-play.min.js"
     },
     {
       "url": "/static/js/offline-queue.js",
@@ -218,11 +246,25 @@
       "file": "public/js/offline-wire.js"
     },
     {
+      "url": "/static/js/offline-wire.min.js",
+      "kind": "script",
+      "revision": "b1b5d28f3015",
+      "bytes": 3971,
+      "file": "public/js/offline-wire.min.js"
+    },
+    {
       "url": "/static/css/style.css",
       "kind": "style",
       "revision": "0f01775795f6",
       "bytes": 51425,
       "file": "public/css/style.css"
+    },
+    {
+      "url": "/static/css/style.min.css",
+      "kind": "style",
+      "revision": "a359c402edd4",
+      "bytes": 45880,
+      "file": "public/css/style.min.css"
     },
     {
       "url": "/icons/apple-touch-icon-180.png",
