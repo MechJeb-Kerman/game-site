@@ -127,8 +127,20 @@ export async function createWorkerServer(opts) {
     out: out,
     /** 预热一次首页：触发建表 / 灌种子 / 建管理员，和 Express 版启动时做的事一致 */
     async warmup() {
+      // 先把自举错误原样抛出来：appFetch 会把它转成 500，调用方只看得到
+      // 一句「no such table: games」，根本不知道 DDL 为什么没跑成。
+      const { ensureReady } = await import('../worker/schema.js');
+      await ensureReady(env);
       const r = await worker.fetch(new Request('http://127.0.0.1:' + address.port + '/'), env);
-      const n = await d1.prepare('SELECT COUNT(*) AS n FROM games').first();
+      let n = null;
+      try {
+        n = await d1.prepare('SELECT COUNT(*) AS n FROM games').first();
+      } catch (e) {
+        const tables = await d1.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()
+          .then((x) => ((x && x.results) || []).map((t) => t.name).join(','))
+          .catch(() => '(查询失败)');
+        throw new Error('worker 自举后仍没有 games 表（' + e.message + '）；现有表：' + (tables || '(空)'));
+      }
       return { status: r.status, games: n ? n.n : 0 };
     },
     close() { return new Promise((r) => server.close(r)); }
