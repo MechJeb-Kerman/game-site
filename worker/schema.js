@@ -571,24 +571,47 @@ export async function seedMissing(db) {
   return { seeded: true, added: missing.map((g) => g.slug) };
 }
 
-let readyPromise = null;
-
 /**
  * 幂等自举：建表 → 按 slug 补齐缺失的种子 → 保证有管理员。
- * 一次 isolate 生命周期只跑一次；失败则重置，让下次请求重试。
+ *
+ * 按 D1 绑定分别记忆：一个 isolate 里可能有多个 env（测试里每段落都新建
+ * LocalD1，甚至把文件删掉重建）。之前用单个模块级 Promise，第二次自举会
+ * 直接复用第一次的结果 —— 在 Linux 上删文件是真删，新库就一张表都没有，
+ * 首页一路 500（Windows 上删不掉旧文件，反而掩盖了这个 bug）。
  */
+const readyByDb = new WeakMap();
+let readySingle = null;
+
+function bootstrap(env) {
+  return (async () => {
+    await migrate(env.DB);
+    await seedMissing(env.DB);
+    await ensureAdmin(env.DB, env);
+    await reindexSearchIndex(env.DB);
+    return true;
+  })();
+}
+
 export function ensureReady(env) {
-  if (!readyPromise) {
-    readyPromise = (async () => {
-      await migrate(env.DB);
-      await seedMissing(env.DB);
-      await ensureAdmin(env.DB, env);
-      await reindexSearchIndex(env.DB);
-      return true;
-    })().catch((err) => {
-      readyPromise = null;
+  const db = env && env.DB;
+  if (!db || typeof db !== 'object') {
+    // 没有 D1 绑定（离线构建 / 纯函数调用）：退回单一记忆
+    if (!readySingle) {
+      readySingle = bootstrap(env).catch((err) => {
+        readySingle = null;
+        throw err;
+      });
+    }
+    return readySingle;
+  }
+  let p = readyByDb.get(db);
+  if (!p) {
+    p = bootstrap(env).catch((err) => {
+      // 失败就清掉，让下一个请求重试（和原来「失败重置」的语义一致）
+      if (readyByDb.get(db) === p) readyByDb.delete(db);
       throw err;
     });
+    readyByDb.set(db, p);
   }
-  return readyPromise;
+  return p;
 }
