@@ -11,7 +11,7 @@
  * 所以父页面调 window.__pad.set(...) 就等于在按 iframe 里那台手柄，能验证真实详情页路径。
  */
 import { spawn } from "node:child_process";
-import { requireBrowser } from './browser.mjs';
+import { chromeArgs, requireBrowser } from './browser.mjs';
 import fs from "node:fs";
 import path from "node:path";
 
@@ -368,9 +368,7 @@ async function main() {
   }
   if (!up) throw new Error("服务器连不上：" + BASE + "（先在 game-site 目录起 node server.js）");
   if (!fs.existsSync(SHOTS)) fs.mkdirSync(SHOTS, { recursive: true });
-  const proc = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
-    "--no-first-run", "--disable-extensions", "--remote-debugging-port=" + String(PORT),
-    "--user-data-dir=" + PROFILE, "about:blank"], { stdio: "ignore" });
+  const proc = spawn(CHROME, chromeArgs({ port: PORT, profile: PROFILE }), { stdio: "ignore" });
   let info = null;
   for (let i = 0; i < 40; i++) {
     try {

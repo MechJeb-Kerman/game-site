@@ -5,7 +5,7 @@
 //   node tools/board-games-test.mjs        # 或 pnpm test:boards
 // 环境变量：BASE、CHROME、SHOTS_DIR。
 import { spawn } from 'node:child_process';
-import { requireBrowser } from './browser.mjs';
+import { chromeArgs, requireBrowser } from './browser.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,21 +39,17 @@ function ok(name, cond, extra) {
 const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
 const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'board-cdp-'));
-const chrome = spawn(CHROME, [
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
-  '--disable-extensions', '--no-first-run', '--mute-audio',
-  '--remote-debugging-port=' + PORT, '--user-data-dir=' + ud, 'about:blank'
-], { stdio: 'ignore' });
+const chrome = spawn(CHROME, chromeArgs({ port: PORT, profile: ud }), { stdio: 'ignore' });
 /* unref：别让子进程句柄吊住事件循环——否则跑完 main 后 node 永不退出，下面的 exit 钩子也就永不触发 */
 chrome.unref();
 process.on('exit', function () { try { chrome.kill(); } catch (e) {} });
 
 async function ready() {
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 150; i++) {
     try { const r = await fetch('http://127.0.0.1:' + PORT + '/json/version'); if (r.ok) return; } catch (e) {}
     await sleep(200);
   }
-  throw new Error('Chrome DevTools 端口没能启动');
+  throw new Error('Chrome DevTools 端口没能启动（150 次 × 200ms 都没就绪；profile=' + ud + '）');
 }
 
 class CDP {

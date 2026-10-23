@@ -53,6 +53,30 @@ export function requireBrowser() {
 }
 
 /**
+ * 无头 Chrome 的统一启动参数。
+ *
+ * `--disable-dev-shm-usage` 是给 CI 的：GitHub runner 的 /dev/shm 只有 64 MB，
+ * 不加这条渲染进程会莫名其妙崩掉，表现就是「DevTools 端口没能启动」这种看不出原因的红。
+ */
+export const CHROME_FLAGS = [
+  '--headless=new',
+  '--disable-gpu',
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+  '--hide-scrollbars',
+  '--disable-extensions',
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--mute-audio',
+  '--disable-background-networking',
+];
+
+/** 拼出完整的参数表（端口 + 独立 profile + about:blank 收尾） */
+export function chromeArgs({ port, profile, extra = [] }) {
+  return [...CHROME_FLAGS, '--remote-debugging-port=' + port, '--user-data-dir=' + profile, ...extra, 'about:blank'];
+}
+
+/**
  * 收尾杀进程：只杀自己 spawn 的那棵子树。
  *
  * Windows 用 taskkill /T /F；Linux/macOS 用 SIGKILL（子进程一般是直接 spawn 的，

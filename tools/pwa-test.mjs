@@ -16,7 +16,7 @@
  * 浏览器：无头 Edge，独立 user-data-dir（mkdtemp），退出时删掉。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { findBrowser, killTree } from './browser.mjs';
+import { chromeArgs, findBrowser, killTree } from './browser.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -337,8 +337,7 @@ async function launchBrowser() {
   const exe = findBrowser();
   if (!exe) throw new Error('找不到 Edge/Chrome，可用 CHROME 环境变量指定');
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'pwa-cdp-'));
-  const args = ['--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars', '--disable-extensions',
-    '--no-first-run', '--mute-audio', '--remote-debugging-port=' + CDP_PORT, '--user-data-dir=' + ud, 'about:blank'];
+  const args = chromeArgs({ port: CDP_PORT, profile: ud, extra: ["--hide-scrollbars"] });
   const child = spawn(exe, args, { stdio: 'ignore' });
   let ready = false;
   for (let i = 0; i < 60; i += 1) {

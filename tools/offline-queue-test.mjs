@@ -11,7 +11,7 @@
  * 端口只占 3123 / 9391，绝不碰 3000 / 4400，也不读真实 data/games.db。
  */
 import fs from 'node:fs';
-import { findBrowser as sharedFindBrowser } from './browser.mjs';
+import { chromeArgs, findBrowser as sharedFindBrowser } from './browser.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -661,8 +661,7 @@ async function cdpConnect(wsUrl) {
 }
 async function startBrowser(exe) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oq-cdp-'));
-  const args = ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--disable-extensions',
-    '--mute-audio', '--disable-background-networking', '--remote-debugging-port=' + CDP_PORT, '--user-data-dir=' + profile, 'about:blank'];
+  const args = chromeArgs({ port: CDP_PORT, profile });
   const proc = spawn(exe, args, { stdio: 'ignore', windowsHide: true });
   let version = null;
   for (let i = 0; i < 120 && !version; i += 1) {
