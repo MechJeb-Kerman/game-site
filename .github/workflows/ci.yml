@@ -102,6 +102,14 @@ jobs:
       - name: 传输层断言（压缩 / 缓存分级）
         run: |
           set -e
+          # 每个 run: 是独立 shell，上一步的服务早被 kill 了，这里要自己起一个
+          PORT=3000 node server.js > transport.log 2>&1 &
+          SRV=$!
+          trap 'kill $SRV 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 1
+          done
           hdrs() { curl -s -D - -o /dev/null -H 'Accept-Encoding: gzip, br' "http://127.0.0.1:3000$1"; }
 
           hdrs / | grep -qi '^content-encoding: \(gzip\|br\)' \
