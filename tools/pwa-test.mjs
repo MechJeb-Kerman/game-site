@@ -16,7 +16,7 @@
  * 浏览器：无头 Edge，独立 user-data-dir（mkdtemp），退出时删掉。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { findBrowser } from './browser.mjs';
+import { findBrowser, killTree } from './browser.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -800,8 +800,8 @@ async function main() {
       try { serverChild.kill(); } catch (e) { /* 忽略 */ }
       await sleep(500);
       if (serverChild.exitCode === null && serverChild.pid) {
-        info('Express 子进程没退，收尾 taskkill /pid ' + serverChild.pid + ' /T /F（只针对自己 spawn 的 pid）');
-        try { spawn('taskkill', ['/pid', String(serverChild.pid), '/T', '/F'], { stdio: 'ignore' }); } catch (e) { /* 忽略 */ }
+        info('Express 子进程没退，收尾强杀 pid ' + serverChild.pid + '（只针对自己 spawn 的 pid）');
+        killTree(serverChild);
       }
     }
   }

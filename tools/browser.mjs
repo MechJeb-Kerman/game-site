@@ -7,6 +7,7 @@
  * 优先级：CHROME 环境变量 → PUPPETEER_EXECUTABLE_PATH → 各平台常见安装路径。
  */
 import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 
 export const BROWSER_CANDIDATES = [
   process.env.CHROME,
@@ -49,4 +50,32 @@ export function requireBrowser() {
     process.exit(1);
   }
   return exe;
+}
+
+/**
+ * 收尾杀进程：只杀自己 spawn 的那棵子树。
+ *
+ * Windows 用 taskkill /T /F；Linux/macOS 用 SIGKILL（子进程一般是直接 spawn 的，
+ * 没有独立进程组，所以按 pid 杀即可）。**必须吞掉 spawn 的 error 事件**：
+ * 以前 pwa-test 在 Linux 上直接 spawn('taskkill')，ENOENT 冒成 unhandled 'error'，
+ * 断言全过了却因为收尾崩溃而以 1 退出——CI 上就是这么红的。
+ */
+export function killTree(child) {
+  if (!child || !child.pid || child.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    const p = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    p.on('error', () => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* 已经退了 */
+      }
+    });
+    return;
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    /* 已经退了 */
+  }
 }
