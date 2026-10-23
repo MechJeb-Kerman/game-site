@@ -508,6 +508,11 @@ async function expressBrowserPhase(browser, sink, disk) {
 
   const swState = await evalRC(cdp,
     '(async function () { var reg = await navigator.serviceWorker.ready;'
+    // ready 只代表「有 active worker」，clients.claim() 是它之后的一次异步接管；
+    // 首次安装要先把 38 个预缓存页面灌进 Cache，Linux 无头 Chrome 上常常慢半拍，
+    // 所以这里最多等 3 秒，而不是 ready 之后立刻读一次 controller。
+    + ' for (var i = 0; i < 30 && !navigator.serviceWorker.controller; i++) {'
+    + ' await new Promise(function (r) { setTimeout(r, 100); }); }'
     + ' return { active: !!(reg.active), script: reg.active ? reg.active.scriptURL : "", scope: reg.scope,'
     + ' controller: !!navigator.serviceWorker.controller }; })()', true);
   check('navigator.serviceWorker.ready 后 active 存在', !!(swState && swState.active), JSON.stringify(swState));
