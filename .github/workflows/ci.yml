@@ -47,6 +47,10 @@ jobs:
       - name: 构建静态站（dist-cf）
         run: node tools/build-pages.mjs --cf --base=/ --out=dist-cf
 
+      # 部分用例（mail-admin 等）直接读写 data/games.db，CI 里没有现成库，先建一次。
+      - name: 准备测试数据库
+        run: npm run reset
+
       # test-all 会自己起一个临时端口跑 account / feature / play-api 这三组整合测试，
       # 跑完自动关掉，不依赖外部服务。
       - name: 单元 + 整合测试

@@ -718,7 +718,7 @@ async function sectionB() {
   section('B 段（真浏览器侧）：无头 Edge + 真 IndexedDB + 真 fetch，收集器 ' + PAGE_URL);
   const exe = findBrowser();
   if (!exe) {
-    check('B0 找到 Edge/Chrome 可执行文件', false, '四个候选路径都不存在');
+    console.log('  skip B0 本机没有 Edge/Chrome，跳过浏览器侧（纯函数断言已全部跑完）');
     return;
   }
   check('B0 找到无头浏览器可执行文件', true, exe);
