@@ -24,6 +24,7 @@ const ROOT = path.dirname(HERE);
 const SUITES = [
   ['hot', 'hot-test.mjs', '热度打分 / 趋势 / 站点地图 / robots'],
   ['seo', 'seo-test.mjs', 'sitemap / robots / JSON-LD 文案'],
+  ['render', 'render-test.mjs', '42 个页面模板的渲染冒烟'],
   ['rules', 'rules-test.mjs', '五子棋/黑白棋/象棋等规则'],
   ['rules-chess', 'rules-chess-test.mjs', '象棋规则细化'],
   ['rules-xiangqi', 'rules-xiangqi-test.mjs', '象棋走子与将军'],

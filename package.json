@@ -13,6 +13,7 @@
     "check:forum": "node tools/check-forum-host.mjs",
     "test:hot": "node tools/hot-test.mjs",
     "test:seo": "node tools/seo-test.mjs",
+    "test:render": "node tools/render-test.mjs",
     "test:all": "node tools/test-all.mjs",
     "test:account": "node tools/account-test.mjs",
     "test:features": "node tools/feature-test.mjs",
