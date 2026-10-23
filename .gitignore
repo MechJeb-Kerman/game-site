@@ -36,3 +36,6 @@ public/og/
 # 系统垃圾
 .DS_Store
 Thumbs.db
+
+# 本机临时脚本（不在仓库里）
+tools/.smoke-attach.mjs

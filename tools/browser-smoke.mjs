@@ -6,6 +6,7 @@
 // 注意：auth 相关目标会用默认管理员 admin / admin123 真登录，并对 2048 投一票、加一次收藏，
 // 所以跑完数据库里会多出用户会话与一条评分。想回到干净状态就停掉服务删除 data/games.db 再启动。
 import { spawn } from 'node:child_process';
+import { requireBrowser } from './browser.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -16,14 +17,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.BASE || 'http://127.0.0.1:3000';
 const OUT = process.env.SHOTS_DIR || path.join(HERE, '..', 'docs', 'screens');
 const PORT = Number(process.env.CDP_PORT || 9223);
-const CANDIDATES = [
-  process.env.CHROME,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe'
-].filter(Boolean);
-const CHROME = CANDIDATES.find(function (p) { return fs.existsSync(p); });
-if (!CHROME) { console.error('找不到 Chrome / Edge，可用 CHROME 环境变量指定'); process.exit(1); }
+const CHROME = requireBrowser();
 fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };

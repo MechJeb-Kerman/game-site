@@ -2,15 +2,19 @@
 
 ## 它会做什么
 
-一次 run 有这五步真正干活：
+一次 run 分两个 job：`build` 跑下面六步，`browser-e2e` 跑真浏览器验收。
 
 | 步骤 | 命令 | 抓什么 |
 |---|---|---|
 | 语法检查 | `node --check` 扫 `server.js`、`src/**`、`worker/*.js`、`public/js/*.js`、`tools/*.mjs` | 手滑写坏的文件，5 秒内定位 |
+| 轻量 lint | `node tools/lint.mjs` | 相对 `import` 指向不存在的文件、同一模块重复导出、BOM / CRLF / 缺结尾换行、残留 `debugger`。**不做风格争论**：行尾空白、Tab、超长行只统计不判失败，所以不会因为排版习惯变红 |
 | 构建静态站 | `node tools/build-pages.mjs --cf --base=/ --out=dist-cf` | 生成 `dist-cf/`，同时让下一步的静态站冒烟有东西可爬 |
-| 单元 + 整合测试 | `node tools/test-all.mjs` | 44 组脚本：纯函数单测、两线（Node/Worker）功能对等、以及自带临时站点的账号/功能/对局接口整合 |
+| 单元 + 整合测试 | `node tools/test-all.mjs` | 45 组脚本：纯函数单测、两线（Node/Worker）功能对等、以及自带临时站点的账号/功能/对局接口整合 |
 | 启动冒烟 | `npm run reset` → `node server.js` → 逐个 `curl` | 真建库、真起服务：首页/热度榜/论坛/每日挑战/PWA/游戏页/静态资源，外加 `/api/hot` 字段齐全 |
 | 传输层断言 | `curl -D -` 比响应头 | 没压缩、缓存分级被改坏、登录页被公共缓存，都会直接红 |
+
+`browser-e2e` 是独立 job：runner 自带 Chrome，所以不需要 `npx playwright install`，仓库仍然只有 express 一个依赖。
+它起一个真服务，然后跑棋盘对战、手柄、离线上传队列、PWA 离线接管四套 CDP 验收脚本——这四套以前只能在开发机上手动跑。
 
 冒烟阶段用 `PORT=3000` 起服务，30 秒内轮询到首页可用就继续；失败会把 `server.log` 尾部打出来。
 

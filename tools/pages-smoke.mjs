@@ -5,6 +5,7 @@
 //
 // 环境变量：CHROME（浏览器路径）、SHOTS_DIR（截图目录）、CDP_PORT
 import { spawn } from "node:child_process";
+import { requireBrowser } from './browser.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,14 +27,7 @@ const PORT = Number(opt("port", "4300"));
 const SHOTS = process.env.SHOTS_DIR || path.join(ROOT, "docs", "screens");
 const CDP_PORT = Number(process.env.CDP_PORT || 9224);
 const BASE = "http://127.0.0.1:" + PORT + base;
-const CANDIDATES = [
-  process.env.CHROME,
-  "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-  "C:/Program Files/Microsoft/Edge/Application/msedge.exe"
-].filter(Boolean);
-const CHROME = CANDIDATES.find(function (p) { return fs.existsSync(p); });
-if (!CHROME) { console.error("找不到 Chrome / Edge，可用 CHROME 环境变量指定"); process.exit(1); }
+const CHROME = requireBrowser();
 const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
 /* ---------- 静态服务器 ---------- */

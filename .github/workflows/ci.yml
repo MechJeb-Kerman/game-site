@@ -42,6 +42,11 @@ jobs:
           done
           exit $fail
 
+      # 轻量 lint：相对 import 是否指向存在的文件、有无重复导出、BOM/CRLF/缺结尾换行、残留 debugger。
+      # 不做风格争论（行尾空白/超长行只统计），所以不会因为「谁的空格」变红。
+      - name: 轻量 lint
+        run: node tools/lint.mjs
+
       # 静态导出先建出来：worker 静态版冒烟（tools/worker-test.mjs）就是拿 dist-cf 当 env.ASSETS 爬链接的，
       # 不先建就会把「/hot 没有对应静态页」误判成 Worker 缺路由。
       - name: 构建静态站（dist-cf）
@@ -99,18 +104,22 @@ jobs:
             || { echo "::error::sitemap.xml 头部异常"; exit 1; }
 
       # 传输层这几条以前靠肉眼比 curl 输出，现在钉死：少了压缩或长缓存，CI 直接红。
+      # 用 3100 而不是 3000：上个步骤的冒烟服务是另一个 shell 起的，trap 只在该 shell 内生效，
+      # 万一没退干净就会抢端口，导致这里起了空壳、curl 打到旧进程上而得到莫名其妙的断言失败。
       - name: 传输层断言（压缩 / 缓存分级）
         run: |
           set -e
-          # 每个 run: 是独立 shell，上一步的服务早被 kill 了，这里要自己起一个
-          PORT=3000 node server.js > transport.log 2>&1 &
+          pkill -f 'node server.js' 2>/dev/null || true
+          PORT=3100 node server.js > transport.log 2>&1 &
           SRV=$!
           trap 'kill $SRV 2>/dev/null || true' EXIT
+          BASE=http://127.0.0.1:3100
           for i in $(seq 1 30); do
-            curl -sf -o /dev/null http://127.0.0.1:3000/ && break
+            curl -sf -o /dev/null "$BASE/" && break
             sleep 1
           done
-          hdrs() { curl -s -D - -o /dev/null -H 'Accept-Encoding: gzip, br' "http://127.0.0.1:3000$1"; }
+          curl -sf -o /dev/null "$BASE/" || { echo "::error::传输层断言用的服务没起来"; tail -30 transport.log; exit 1; }
+          hdrs() { curl -s -D - -o /dev/null -H 'Accept-Encoding: gzip, br' "$BASE$1"; }
 
           hdrs / | grep -qi '^content-encoding: \(gzip\|br\)' \
             || { echo "::error::HTML 没有压缩"; exit 1; }
@@ -131,4 +140,57 @@ jobs:
 
       - name: 失败时打印服务日志
         if: failure()
-        run: tail -50 server.log || true
+        run: |
+          echo "== server.log =="; tail -50 server.log 2>/dev/null || true
+          echo "== transport.log =="; tail -30 transport.log 2>/dev/null || true
+
+  # 浏览器 E2E：单独一个 job，用 runner 自带的 Chrome（不下载 Playwright，因此仍然零 npm 依赖）。
+  # 以前这几套只能在开发机上手动跑，CI 里「有没有浏览器」靠运气；现在固定在这里，红了就是真红。
+  browser-e2e:
+    name: 浏览器 E2E（真实 Chrome）
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 准备测试数据库
+        run: npm run reset
+
+      - name: 启动服务
+        run: |
+          pkill -f 'node server.js' 2>/dev/null || true
+          PORT=3000 node server.js > e2e-server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:3000/ || { echo "::error::服务没起来"; tail -40 e2e-server.log; exit 1; }
+
+      # 三套都是「起 headless Chrome → 连 CDP → 真点」的验收脚本，共用 tools/browser.mjs 找浏览器。
+      - name: 棋盘对战 / 手柄 / 离线上传队列
+        run: |
+          node tools/board-games-test.mjs
+          node tools/gamepad-test.mjs
+          node tools/offline-queue-test.mjs
+
+      # PWA 这条会自己建 dist-cf 再起静态壳，worker 线由 build job 里的 worker-* 套件覆盖。
+      - name: PWA 离线接管
+        run: node tools/pwa-test.mjs --no-worker
+
+      - name: 收尾
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
+
+      - name: 失败时打印服务日志
+        if: failure()
+        run: tail -60 e2e-server.log || true
+

@@ -11,18 +11,12 @@
  * 所以父页面调 window.__pad.set(...) 就等于在按 iframe 里那台手柄，能验证真实详情页路径。
  */
 import { spawn } from "node:child_process";
+import { requireBrowser } from './browser.mjs';
 import fs from "node:fs";
 import path from "node:path";
 
 const BASE = process.env.BASE || "http://127.0.0.1:3000";
-const CANDIDATES = [
-  process.env.CHROME,
-  "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-  "C:/Program Files/Microsoft/Edge/Application/msedge.exe"
-].filter(Boolean);
-const CHROME = CANDIDATES.find(function (p) { return fs.existsSync(p); });
-if (!CHROME) { console.error("找不到 Chrome / Edge，可用 CHROME 环境变量指定"); process.exit(1); }
+const CHROME = requireBrowser();
 const SHOTS = process.env.SHOTS_DIR || "D:/CODE/game-site/docs/screens";
 const PORT = Number(process.env.CDP_PORT || 9225);
 const PROFILE = process.env.PROFILE || "D:/CODE/shots/_gpprofile";

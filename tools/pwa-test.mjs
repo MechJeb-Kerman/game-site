@@ -16,6 +16,7 @@
  * 浏览器：无头 Edge，独立 user-data-dir（mkdtemp），退出时删掉。
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { findBrowser } from './browser.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -51,12 +52,6 @@ const OFFLINE_GAMES = [
   { slug: 'connect4', title: '四子棋' }
 ];
 
-const CHROME_CANDIDATES = [
-  process.env.CHROME,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe'
-].filter(Boolean);
 
 let pass = 0;
 let fail = 0;
@@ -339,7 +334,7 @@ class CDP {
 }
 
 async function launchBrowser() {
-  const exe = CHROME_CANDIDATES.filter((p) => fs.existsSync(p))[0];
+  const exe = findBrowser();
   if (!exe) throw new Error('找不到 Edge/Chrome，可用 CHROME 环境变量指定');
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'pwa-cdp-'));
   const args = ['--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars', '--disable-extensions',

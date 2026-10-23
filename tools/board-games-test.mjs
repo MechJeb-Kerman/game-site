@@ -5,6 +5,7 @@
 //   node tools/board-games-test.mjs        # 或 pnpm test:boards
 // 环境变量：BASE、CHROME、SHOTS_DIR。
 import { spawn } from 'node:child_process';
+import { requireBrowser } from './browser.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,14 +19,7 @@ const PORT = Number(process.env.CDP_PORT || 9231);
 /* 线上（远程 BASE）比本机慢：页面多等一会儿再读状态，联机面板与接口也多给几轮 */
 const REMOTE = !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE);
 const SETTLE = REMOTE ? 1500 : 700;
-const CANDIDATES = [
-  process.env.CHROME,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe'
-].filter(Boolean);
-const CHROME = CANDIDATES.find(function (p) { return fs.existsSync(p); });
-if (!CHROME) { console.error('找不到 Chrome / Edge，可用 CHROME 环境变量指定'); process.exit(1); }
+const CHROME = requireBrowser();
 fs.mkdirSync(OUT, { recursive: true });
 
 const GAMES = [

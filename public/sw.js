@@ -19,8 +19,8 @@
  */
 
 /* PRECACHE:BEGIN —— 本块由 tools/gen-precache.mjs 生成，不要手改（跑 node tools/gen-precache.mjs 刷新） */
-/* 38 条 · 950.9 KB · 最大单文件 95.8 KB */
-const PRECACHE_VERSION = 'p1-d73e9caacbdf';
+/* 38 条 · 946.0 KB · 最大单文件 93.0 KB */
+const PRECACHE_VERSION = 'p1-1c5ffc930251';
 const PRECACHE_FALLBACK = [
   '/',
   '/games/2048/index.html',

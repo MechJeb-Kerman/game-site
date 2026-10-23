@@ -1,11 +1,11 @@
 {
-  "version": "p1-d73e9caacbdf",
-  "generatedAt": "2026-10-20T09:20:25.875Z",
+  "version": "p1-1c5ffc930251",
+  "generatedAt": "2026-10-23T00:21:43.571Z",
   "generator": "tools/gen-precache.mjs",
   "note": "PWA 离线清单：sw.js 在 install 时按 urls 逐条预缓存（单条失败只计数，不整体失败）",
   "count": 38,
-  "bytes": 973683,
-  "maxBytes": 98130,
+  "bytes": 968703,
+  "maxBytes": 95216,
   "urls": [
     {
       "url": "/",
@@ -17,15 +17,15 @@
     {
       "url": "/games/2048/index.html",
       "kind": "game",
-      "revision": "4e5d45f2e45a",
-      "bytes": 12374,
+      "revision": "9daa1508adec",
+      "bytes": 12072,
       "file": "games/2048/index.html"
     },
     {
       "url": "/games/blackhole/index.html",
       "kind": "game",
-      "revision": "3ed31b1a6bc7",
-      "bytes": 98130,
+      "revision": "7f80917f5563",
+      "bytes": 95216,
       "file": "games/blackhole/index.html"
     },
     {
@@ -38,8 +38,8 @@
     {
       "url": "/games/chess/index.html",
       "kind": "game",
-      "revision": "4bf4d50dfea7",
-      "bytes": 48927,
+      "revision": "ab54d7a4ec34",
+      "bytes": 47787,
       "file": "games/chess/index.html"
     },
     {
@@ -59,8 +59,8 @@
     {
       "url": "/games/gomoku/index.html",
       "kind": "game",
-      "revision": "e881040a70b3",
-      "bytes": 42405,
+      "revision": "8916d8265045",
+      "bytes": 41385,
       "file": "games/gomoku/index.html"
     },
     {
@@ -94,8 +94,8 @@
     {
       "url": "/games/memory/index.html",
       "kind": "game",
-      "revision": "6cbf2046502d",
-      "bytes": 8575,
+      "revision": "e4166bcadd3a",
+      "bytes": 8379,
       "file": "games/memory/index.html"
     },
     {
@@ -122,8 +122,8 @@
     {
       "url": "/games/snake/index.html",
       "kind": "game",
-      "revision": "5863791f072c",
-      "bytes": 13933,
+      "revision": "7199a6e54b35",
+      "bytes": 13599,
       "file": "games/snake/index.html"
     },
     {
@@ -150,50 +150,50 @@
     {
       "url": "/games/tetris/index.html",
       "kind": "game",
-      "revision": "ab27fc7e7386",
-      "bytes": 16271,
+      "revision": "0802d6ad2d45",
+      "bytes": 15873,
       "file": "games/tetris/index.html"
     },
     {
       "url": "/games/tictactoe/index.html",
       "kind": "game",
-      "revision": "a0e4b2eb6d4a",
-      "bytes": 8947,
+      "revision": "f8a79cb5e493",
+      "bytes": 8715,
       "file": "games/tictactoe/index.html"
     },
     {
       "url": "/games/whack/index.html",
       "kind": "game",
-      "revision": "d9ac0dbda657",
-      "bytes": 9474,
+      "revision": "42e3370d457a",
+      "bytes": 9268,
       "file": "games/whack/index.html"
     },
     {
       "url": "/games/xiangqi/index.html",
       "kind": "game",
-      "revision": "260874afdc2f",
-      "bytes": 45492,
+      "revision": "d0d15471ca0f",
+      "bytes": 44423,
       "file": "games/xiangqi/index.html"
     },
     {
       "url": "/static/js/app-static.js",
       "kind": "script",
-      "revision": "1adcd48de606",
-      "bytes": 13792,
+      "revision": "707ee24c5f60",
+      "bytes": 14574,
       "file": "public/js/app-static.js"
     },
     {
       "url": "/static/js/app.js",
       "kind": "script",
-      "revision": "dac983bc2ce3",
-      "bytes": 20880,
+      "revision": "d76391da11b2",
+      "bytes": 21564,
       "file": "public/js/app.js"
     },
     {
       "url": "/static/js/gamepad.js",
       "kind": "script",
-      "revision": "e4ac01732d42",
-      "bytes": 10212,
+      "revision": "17f32a701cea",
+      "bytes": 9981,
       "file": "public/js/gamepad.js"
     },
     {
@@ -220,8 +220,8 @@
     {
       "url": "/static/css/style.css",
       "kind": "style",
-      "revision": "586e01e41d2e",
-      "bytes": 49829,
+      "revision": "0f01775795f6",
+      "bytes": 51425,
       "file": "public/css/style.css"
     },
     {

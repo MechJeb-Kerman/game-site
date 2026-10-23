@@ -11,6 +11,7 @@
  * 端口只占 3123 / 9391，绝不碰 3000 / 4400，也不读真实 data/games.db。
  */
 import fs from 'node:fs';
+import { findBrowser as sharedFindBrowser } from './browser.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -609,16 +610,7 @@ function startCollector() {
 }
 
 /* ---------- B 段工具：无头浏览器 + CDP ---------- */
-function findBrowser() {
-  const cands = [
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-  ];
-  for (const c of cands) if (fs.existsSync(c)) return c;
-  return null;
-}
+function findBrowser() { return sharedFindBrowser(); }
 function getJson(url) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, (res) => {

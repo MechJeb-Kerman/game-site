@@ -1,0 +1,18 @@
+# 全仓统一：LF、UTF-8、两空格缩进、结尾留一个换行。
+# Windows 上编辑器默认存 CRLF，会让 CI 的 lint（tools/lint.mjs）直接报错；
+# 这里把规则写进仓库，比口头约定可靠。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
